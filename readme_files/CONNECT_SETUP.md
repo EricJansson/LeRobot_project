@@ -1,4 +1,15 @@
 ## 🚀 Start the SO-101 Project in WSL 2 
+
+<!-- Top navigation -->
+<p align="center">
+  <a href="../README.md">Home</a> |
+  <b><u><a href="./CONNECT_SETUP.md">Start Manual</a></u></b> |
+  <a href="./SOURCES.md">Sources</a>
+</p>
+
+---
+
+
 ### 1. Connect the Robot 
 Plug in the Feetech / CH343 USB adapter. 
 ### 2. Share the USB Device with WSL 

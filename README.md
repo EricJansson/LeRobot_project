@@ -1,5 +1,15 @@
 # SO-101 Personal Project Workspace
 
+<!-- Top navigation -->
+<p align="center">
+  <b><u><a href="./README.md">Home</a></u></b> |
+  <a href="./readme_files/CONNECT_SETUP.md">Start Manual</a> |
+  <a href="./readme_files/SOURCES.md">Sources</a>
+</p>
+
+---
+
+
 This repository is my personal workspace for experimenting with and developing around the **SO-101 robotic arm** using the [LeRobot](https://huggingface.co/docs/lerobot) framework.  
 It includes configuration files, setup notes, and references to the environment and hardware.
 
@@ -17,7 +27,7 @@ The goal of this space is to:
 ## Getting Started
 
 To connect and prepare the robot for use, follow the startup guide:  
-**[Start Manual → path_to_CONNECT_SETUP.md](path_to_CONNECT_SETUP.md)**
+**[Start Manual → readme_files/CONNECT_SETUP.md](readme_files/CONNECT_SETUP.md)**
 
 It includes all necessary steps for:
 - Attaching the robot to WSL
@@ -29,7 +39,7 @@ It includes all necessary steps for:
 ## References and Sources
 
 Further documentation and official resources can be found here:  
-**[Sources → path_to_SOURCES.md](path_to_SOURCES.md)**
+**[Sources → readme_files/SOURCES.md](readme_files/SOURCES.md)**
 
 ---
 
