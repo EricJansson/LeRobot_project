@@ -24,7 +24,6 @@ It contains some interesting segments:
   * Training
   * Running
 
-
 Link: https://www.youtube.com/watch?v=DeBLc2D6bvg  
 His custom Github repo: https://github.com/IliaLarchenko/lerobot
 <p>&nbsp;</p>
