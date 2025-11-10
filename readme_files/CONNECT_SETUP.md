@@ -9,6 +9,32 @@
 
 ---
 
+## Windows
+
+### 1. Connect the Robot
+Plug in the Feetech / CH343 USB adapter and note the assigned COM port 
+(e.g., `COM3`, `COM4`, etc.). 
+You can find it in **Device Manager → Ports (COM & LPT)**.
+
+### 2. Activate the Environment
+```powershell
+conda activate lerobot
+```
+
+### 3. Navigate to the Project Folder
+```powershell
+cd C:\Users\rapid\Documents\GitHub\LeRobot_project
+```
+
+### 4. Run the Robot arm script with controller 
+```powershell
+python -m scripts.run_controller_so101
+```
+
+#### The robot is now ready for use on Windows.
+
+---
+
 ## Linux (WSL 2)
 
 ### 1. Connect the Robot
@@ -46,27 +72,3 @@ python robot_program/read_motors.py --port /dev/ttyACM0
 #### The robot is now ready for use under WSL 2.
 
 ---
-
-## Windows (Native)
-
-### 1. Connect the Robot
-Plug in the Feetech / CH343 USB adapter and note the assigned COM port 
-(e.g., `COM3`, `COM4`, etc.). 
-You can find it in **Device Manager → Ports (COM & LPT)**.
-
-### 2. Activate the Environment
-```powershell
-conda activate lerobot
-```
-
-### 3. Navigate to the Project Folder
-```powershell
-cd C:\Users\rapid\Documents\GitHub\LeRobot_project
-```
-
-### 4. Run the Control Script
-```powershell
-python robot_program\read_motors.py --port COM3
-```
-
-#### The robot is now ready for use on Windows.
