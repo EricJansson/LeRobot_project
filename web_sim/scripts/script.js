@@ -41,9 +41,39 @@ const base = {
 };
 
 // const L0 = 180;
+const BASE_COL_HEIGHT = ARM_HEIGHT_CM * CM_TO_PX; // height of column from table to arm base
+
+function getTableY() {
+    // table is at the bottom of the base column
+    return base.y + BASE_COL_HEIGHT;
+}
+
 const L0 = ARM_L0_CM * CM_TO_PX;
 const L1 = ARM_L1_CM * CM_TO_PX;
 const L2 = ARM_L2_CM * CM_TO_PX;
+
+
+// --- Base sprite (column from table to arm base) ---
+const BASE_IMG_URL = "images/robot_base.png";    // <-- your actual path
+const BASE_IMG_NATIVE = { w: 450, h: 450 };   // replace with real size if different
+const BASE_IMG_ASPECT = BASE_IMG_NATIVE.h / BASE_IMG_NATIVE.w;
+
+// A simple scale factor for the base sprite
+const BASE_IMG_SCALE = 1.14;                  // tweak to taste
+
+// Height of sprite ~ column height; width from aspect
+const BASE_IMG_SIZE = {
+    h: Math.round(BASE_COL_HEIGHT * BASE_IMG_SCALE),
+    w: Math.round((BASE_COL_HEIGHT * BASE_IMG_SCALE) / BASE_IMG_ASPECT)
+};
+
+// Anchor bottom-center at the arm base joint
+const BASE_IMG_ANCHOR = { u: 0.2, v: 0.116 };
+const BASE_IMG_OFFSET = { x: 0, y: 0 };
+
+const BASE_IMG = new Image();
+BASE_IMG.onload = () => draw();
+BASE_IMG.src = BASE_IMG_URL;
 
 
 // ===== Arm state =====
@@ -109,14 +139,14 @@ L2_IMG.src = L2_IMG_URL;
 
 
 // Limits (deg) — tune as needed
-const ANG0_MIN_DEG = 13, ANG0_MAX_DEG = 203;  // joint 0 (base)
+const ANG0_MIN_DEG = 1, ANG0_MAX_DEG = 206;  // joint 0 (base)
 const ANG1_MIN_DEG = -20, ANG1_MAX_DEG = 160; // joint 1 (relative to J0)
 const ANG2_MIN_DEG = -93, ANG2_MAX_DEG = 93; // joint 2 (relative to J1)
 
 // Joint angles (radians)
 let angle0Rad = 0;  // J0 local (also global for first link)
 let angle1Rad = 0;  // J1 local (global phi1 = angle0 + angle1)
-let angle2Rad = 0; // J2 local (global phi2 = angle0 + angle1 + angle2)
+let angle2Rad = 0;  // J2 local (global phi2 = angle0 + angle1 + angle2)
 
 // Canvas styling
 const HANDLE_R = 4;
@@ -138,6 +168,15 @@ let showHardware = showHardwareEl.checked;
 const viewModeEl = document.getElementById("viewMode");
 let viewMode = "both";
 
+const eeOut = document.getElementById("eeOut");
+const blockTableHitEl = document.getElementById("blockTableHit");
+let blockTableHit = true;
+
+blockTableHitEl.addEventListener("change", () => {
+    blockTableHit = blockTableHitEl.checked;
+});
+
+
 angle0Range.min = String(ANG0_MIN_DEG);
 angle0Range.max = String(ANG0_MAX_DEG);
 angle0Range.step = "1";
@@ -157,30 +196,50 @@ function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
 function degToRad(d) { return (d * Math.PI) / 180; }
 function radToDeg(r) { return (r * 180) / Math.PI; }
 
-// Setters (rounded label, slider sync, redraw)
-function setAngle0FromDeg(deg) {
-    const c = clamp(deg, ANG0_MIN_DEG, ANG0_MAX_DEG);
-    angle0Rad = degToRad(c);
-    angle0Out.textContent = (Math.round(c * 10) / 10).toFixed(1);
-    if (angle0Range.value !== String(Math.round(c))) angle0Range.value = String(Math.round(c));
-    draw();
+
+function makeAngleSetter({ minDeg, maxDeg, assignRad, getRad, outEl, rangeEl }) {
+    return function setAngleFromDegGeneric(deg) {
+        const c = Math.max(minDeg, Math.min(maxDeg, deg));
+        const prevRad = getRad();
+        const newRad = (c * Math.PI) / 180;
+
+        // Tentatively apply new angle
+        assignRad(newRad);
+
+        // If we block on table hit and the end effector goes below the table, revert
+        if (blockTableHit && !isEndEffectorAboveTable()) {
+            assignRad(prevRad);
+            return; // reject this move
+        }
+
+        // Otherwise, accept and update UI
+        outEl.textContent = (Math.round(c * 10) / 10).toFixed(1);
+        const rounded = String(Math.round(c));
+        if (rangeEl.value !== rounded) rangeEl.value = rounded;
+        draw();
+    };
 }
 
-function setAngle1FromDeg(deg) {
-    const c = clamp(deg, ANG1_MIN_DEG, ANG1_MAX_DEG);
-    angle1Rad = degToRad(c);
-    angle1Out.textContent = (Math.round(c * 10) / 10).toFixed(1);
-    if (angle1Range.value !== String(Math.round(c))) angle1Range.value = String(Math.round(c));
-    draw();
-}
+const setAngle0FromDeg = makeAngleSetter({
+    minDeg: ANG0_MIN_DEG, maxDeg: ANG0_MAX_DEG,
+    assignRad: (r) => (angle0Rad = r),
+    getRad: () => angle0Rad,
+    outEl: angle0Out, rangeEl: angle0Range
+});
 
-function setAngle2FromDeg(deg) {
-    const c = clamp(deg, ANG2_MIN_DEG, ANG2_MAX_DEG);
-    angle2Rad = degToRad(c);
-    angle2Out.textContent = (Math.round(c * 10) / 10).toFixed(1);
-    if (angle2Range.value !== String(Math.round(c))) angle2Range.value = String(Math.round(c));
-    draw();
-}
+const setAngle1FromDeg = makeAngleSetter({
+    minDeg: ANG1_MIN_DEG, maxDeg: ANG1_MAX_DEG,
+    assignRad: (r) => (angle1Rad = r),
+    getRad: () => angle1Rad,
+    outEl: angle1Out, rangeEl: angle1Range
+});
+
+const setAngle2FromDeg = makeAngleSetter({
+    minDeg: ANG2_MIN_DEG, maxDeg: ANG2_MAX_DEG,
+    assignRad: (r) => (angle2Rad = r),
+    getRad: () => angle2Rad,
+    outEl: angle2Out, rangeEl: angle2Range
+});
 
 
 angle0Range.addEventListener("input", () => setAngle0FromDeg(parseInt(angle0Range.value, 10)));
@@ -227,6 +286,14 @@ function getJointPositions() {
     return { p0, p1, p2, p3, phi0, phi1, phi2 };
 }
 
+function isEndEffectorAboveTable() {
+    const { p3 } = getJointPositions();
+    const tableY = getTableY();
+    // smaller y = visually higher (since screen Y goes down)
+    return p3.y <= tableY;
+}
+
+
 /*          DRAW         */
 
 // Draw the real L-shaped arm (right-angle motor mount) over link 0
@@ -272,6 +339,23 @@ function drawLinkSprite(origin, phi, img, size, anchor, offsetPx) {
     ctx.restore();
 }
 
+// Draw the robot base at the arm base joint (no rotation; column is vertical)
+function drawBaseSprite(origin, img, size, anchor, offsetPx) {
+    if (!img || !img.complete) return;
+
+    ctx.save();
+    ctx.translate(origin.x, origin.y);
+
+    // extra tweak offset in local space
+    ctx.translate(offsetPx.x, offsetPx.y);
+
+    // move so that chosen anchor lands on the joint
+    ctx.translate(-anchor.u * size.w, -anchor.v * size.h);
+
+    ctx.drawImage(img, 0, 0, size.w, size.h);
+    ctx.restore();
+}
+
 
 
 function strokeSegment(pA, pB, width, color) {
@@ -297,7 +381,22 @@ function draw() {
     ctx.clearRect(0, 0, cv.width, cv.height);
     const { p0, p1, p2, p3, phi0, phi1, phi2 } = getJointPositions();
 
+    // End effector info (relative to base joint, in cm)
+    if (eeOut) {
+        // use CM_TO_PX if you want physical units
+        const x_px = p3.x - base.x;       // right is positive
+        const y_px = base.y - p3.y;       // up is positive (invert screen Y)
+        const x_cm = x_px / CM_TO_PX;
+        const y_cm = (y_px / CM_TO_PX) + ARM_HEIGHT_CM;
+        eeOut.textContent = `x=${x_cm.toFixed(1)} cm, y=${(y_cm.toFixed(1))} cm`;
+    }
+
+    // --- Base column from table to arm base ---
+    const baseBottom = { x: base.x, y: base.y + BASE_COL_HEIGHT };
+
     if (viewMode === "graphics" || viewMode === "both") {
+        // base column
+        drawBaseSprite(base, BASE_IMG, BASE_IMG_SIZE, BASE_IMG_ANCHOR, BASE_IMG_OFFSET);
         // Link 0
         drawLinkSprite(p0, phi0, L0_IMG, L0_IMG_SIZE, L0_IMG_ANCHOR, L0_IMG_OFFSET);
         // Link 1
@@ -306,6 +405,8 @@ function draw() {
         drawLinkSprite(p2, phi2, L2_IMG, L2_IMG_SIZE, L2_IMG_ANCHOR, L2_IMG_OFFSET);
     }
     if (viewMode === "lines" || viewMode === "both") {
+        // base column
+        strokeSegment(baseBottom, base, 6, "#9ca3af");   // grey column line
         // Link 0 (with conditional)
         if (showKinematic) strokeSegment(p0, p1, 6, "#7dd3fc");
         if (showHardware) drawRightAngleMountOverlay(p0, phi0, "#7dd3fc");

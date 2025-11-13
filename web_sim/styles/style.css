@@ -9,9 +9,6 @@ body {
     /* removes gaps */
     margin: auto;
     margin-top: 40px;
-    width: 50vw;
-    /* CSS size */
-    height: 50vh;
     min-width: 1400px;
     min-height: 700px;
     background: #0f172a;
