@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SO101 Arm Simulator</title>
+    <link rel="stylesheet" href="styles/style.css" />
+</head>
+
+<body>
+    <canvas id="cv"></canvas>
+
+    <div id="ui">
+        <div>
+            <label class="angleRanges" for="angle2Range">J2 Angle: <span id="angle2Out">0.0</span>°</label>
+            <input id="angle2Range" type="range" />
+        </div>
+        <div>
+            <label class="angleRanges" for="angle1Range">J1 Angle: <span id="angle1Out">0.0</span>°</label>
+            <input id="angle1Range" type="range" />
+        </div>
+        <div>
+            <label class="angleRanges" for="angle0Range">J0 Angle: <span id="angle0Out">0.0</span>°</label>
+            <input id="angle0Range" type="range" />
+        </div>
+        <div>
+            <label><input id="showKinematic" type="checkbox" /> Show kinematic (green)</label>
+        </div>
+        <div>
+            <label><input id="showHardware" type="checkbox" checked /> Show hardware (blue)</label>
+        </div>
+        <div>
+            <label for="viewMode">View: </label>
+            <select id="viewMode">
+                <option value="lines">Lines</option>
+                <option value="graphics">Graphics</option>
+                <option value="both" selected>Both</option>
+            </select>
+        </div>
+
+
+    </div>
+
+    <script src="scripts/script.js"></script>
+    <script src="scripts/interactions.js"></script> <!-- NEW -->
+    <script src="scripts/startUp.js"></script>
+</body>
+
+</html>

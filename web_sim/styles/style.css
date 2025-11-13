@@ -1,0 +1,47 @@
+body {
+    margin: 0;
+    height: 100%;
+    background: #b3b3b3;
+}
+
+#cv {
+    display: block;
+    /* removes gaps */
+    margin: auto;
+    margin-top: 40px;
+    width: 50vw;
+    /* CSS size */
+    height: 50vh;
+    min-width: 1400px;
+    min-height: 700px;
+    background: #0f172a;
+    /* darker canvas bg */
+}
+
+#ui {
+    position: fixed;
+    left: 12px;
+    bottom: 12px;
+    background: rgba(17, 24, 39, 0.9);
+    color: #e5e7eb;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 8px 10px;
+    display: flex;
+    gap: 10px;
+    display: flex;
+    flex-direction: column;
+}
+
+#ui div {
+    display: flex;
+}
+
+#ui .angleRanges {
+    font-size: 13px;
+    width: 90px;
+}
+
+#ui input[type="range"] {
+    width: 240px;
+}
