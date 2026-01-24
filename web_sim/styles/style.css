@@ -9,7 +9,6 @@ body {
     /* removes gaps */
     margin: auto;
     margin-top: 40px;
-    min-width: 1400px;
     min-height: 700px;
     background: #0f172a;
     /* darker canvas bg */
@@ -26,7 +25,6 @@ body {
     padding: 8px 10px;
     display: flex;
     gap: 10px;
-    display: flex;
     flex-direction: column;
 }
 
@@ -41,4 +39,24 @@ body {
 
 #ui input[type="range"] {
     width: 240px;
+}
+
+#eeStick {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: #222;
+    position: relative;
+    touch-action: none;
+    user-select: none;
+}
+
+#eeStickKnob {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #aaa;
+    position: absolute;
+    left: 46px;
+    top: 46px;
 }

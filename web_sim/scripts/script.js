@@ -3,12 +3,12 @@ const cv = document.getElementById("cv");
 const ctx = cv.getContext("2d");
 
 function resizeCanvas() {
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const cssW = cv.clientWidth;
-    const cssH = cv.clientHeight;
-    cv.width = Math.max(1, Math.floor(cssW * dpr));
-    cv.height = Math.max(1, Math.floor(cssH * dpr));
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const w = cv.clientWidth;
+    const h = cv.clientHeight;
+    cv.width = w;
+    cv.height = h;
+    // Reset transform so 1 unit = 1 pixel
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     draw();
 }
 window.addEventListener("resize", resizeCanvas);
@@ -40,7 +40,6 @@ const base = {
     y: CANVAS_SIZE_Y - (CM_TO_PX * ARM_HEIGHT_CM)
 };
 
-// const L0 = 180;
 const BASE_COL_HEIGHT = ARM_HEIGHT_CM * CM_TO_PX; // height of column from table to arm base
 
 function getTableY() {
@@ -54,14 +53,10 @@ const L2 = ARM_L2_CM * CM_TO_PX;
 
 
 // --- Base sprite (column from table to arm base) ---
-const BASE_IMG_URL = "images/robot_base.png";    // <-- your actual path
-const BASE_IMG_NATIVE = { w: 450, h: 450 };   // replace with real size if different
-const BASE_IMG_ASPECT = BASE_IMG_NATIVE.h / BASE_IMG_NATIVE.w;
+const BASE_IMG_URL = "images/robot_base.png";
+const BASE_IMG_ASPECT = (450 / 450); // aspect ratio of native image
+const BASE_IMG_SCALE = 1.14;
 
-// A simple scale factor for the base sprite
-const BASE_IMG_SCALE = 1.14;                  // tweak to taste
-
-// Height of sprite ~ column height; width from aspect
 const BASE_IMG_SIZE = {
     h: Math.round(BASE_COL_HEIGHT * BASE_IMG_SCALE),
     w: Math.round((BASE_COL_HEIGHT * BASE_IMG_SCALE) / BASE_IMG_ASPECT)
@@ -69,7 +64,6 @@ const BASE_IMG_SIZE = {
 
 // Anchor bottom-center at the arm base joint
 const BASE_IMG_ANCHOR = { u: 0.2, v: 0.116 };
-const BASE_IMG_OFFSET = { x: 0, y: 0 };
 
 const BASE_IMG = new Image();
 BASE_IMG.onload = () => draw();
@@ -78,22 +72,16 @@ BASE_IMG.src = BASE_IMG_URL;
 
 // ===== Arm state =====
 // --- L0 sprite (scaled to the link length) ---
-const L0_IMG_URL = "images/L0.png";     // <-- your path
-const L0_IMG_NATIVE = { w: 580, h: 260 };  // original pixels
-const L0_IMG_ASPECT = L0_IMG_NATIVE.h / L0_IMG_NATIVE.w; // ≈ 0.4483
-const L0_IMG_SCALE = 1.434;  // 1.0 = current size, >1 bigger, <1 smaller
+const L0_IMG_URL = "images/L0.png";
+const L0_IMG_ASPECT = (260 / 580); // aspect ratio
+const L0_IMG_SCALE = 1.434;
 
-// Width of the drawn sprite = kinematic link length (L0), height keeps aspect
 const L0_IMG_SIZE = {
     w: Math.round(L0 * L0_IMG_SCALE),
     h: Math.round(L0 * L0_IMG_ASPECT * L0_IMG_SCALE)
 };
 
-// Anchor: pivot near the left edge, slightly below vertical center (tweak as needed)
 const L0_IMG_ANCHOR = { u: 0.159, v: 0.284 };
-
-// Extra offset in local (rotated) space; small downwards nudge (tweak as needed)
-const L0_IMG_OFFSET = { x: 0, y: 0 };
 
 // Preload
 const L0_IMG = new Image();
@@ -101,36 +89,32 @@ L0_IMG.onload = () => draw();
 L0_IMG.src = L0_IMG_URL;
 
 // --- L1 sprite (scaled to the second link length) ---
-const L1_IMG_URL = "images/L1.png";     // <-- your actual path
-const L1_IMG_NATIVE = { w: 580, h: 260 };  // replace with real size if different
-const L1_IMG_ASPECT = L1_IMG_NATIVE.h / L1_IMG_NATIVE.w;
+const L1_IMG_URL = "images/L1.png";
+const L1_IMG_ASPECT = (260 / 580); // aspect ratio
+const L1_IMG_SCALE = 1.2;
 
-const L1_IMG_SCALE = 1.2; // start same as L0, tweak later
 const L1_IMG_SIZE = {
     w: Math.round(L1 * L1_IMG_SCALE),
     h: Math.round(L1 * L1_IMG_SCALE * L1_IMG_ASPECT)
 };
 
-const L1_IMG_ANCHOR = { u: 0.081, v: 0.567 }; // tweak per image
-const L1_IMG_OFFSET = { x: 0, y: 0 };
+const L1_IMG_ANCHOR = { u: 0.081, v: 0.567 };
 
 const L1_IMG = new Image();
 L1_IMG.onload = () => draw();
 L1_IMG.src = L1_IMG_URL;
 
 // --- L2 sprite (scaled to the third link length) ---
-const L2_IMG_URL = "images/L2.png";     // <-- your actual path
-const L2_IMG_NATIVE = { w: 580, h: 260 };  // replace with real size if different
-const L2_IMG_ASPECT = L2_IMG_NATIVE.h / L2_IMG_NATIVE.w;
+const L2_IMG_URL = "images/L2.png";
+const L2_IMG_ASPECT = (260 / 580); // aspect ratio
+const L2_IMG_SCALE = 1.2;
 
-const L2_IMG_SCALE = 1.2; // start same as others
 const L2_IMG_SIZE = {
     w: Math.round(L2 * L2_IMG_SCALE),
     h: Math.round(L2 * L2_IMG_SCALE * L2_IMG_ASPECT)
 };
 
-const L2_IMG_ANCHOR = { u: 0.085, v: 0.567 }; // tweak per image
-const L2_IMG_OFFSET = { x: 0, y: 0 };
+const L2_IMG_ANCHOR = { u: 0.085, v: 0.567 };
 
 const L2_IMG = new Image();
 L2_IMG.onload = () => draw();
@@ -143,16 +127,39 @@ const ANG0_MIN_DEG = 1, ANG0_MAX_DEG = 206;  // joint 0 (base)
 const ANG1_MIN_DEG = -20, ANG1_MAX_DEG = 160; // joint 1 (relative to J0)
 const ANG2_MIN_DEG = -93, ANG2_MAX_DEG = 93; // joint 2 (relative to J1)
 
-// Joint angles (radians)
-let angle0Rad = 0;  // J0 local (also global for first link)
-let angle1Rad = 0;  // J1 local (global phi1 = angle0 + angle1)
-let angle2Rad = 0;  // J2 local (global phi2 = angle0 + angle1 + angle2)
+// ===== Unified Application State =====
+const state = {
+    // Joint angles (radians)
+    angles: {
+        j0: 0,  // J0 local (also global for first link)
+        j1: 0,  // J1 local (global phi1 = angle0 + angle1)
+        j2: 0   // J2 local (global phi2 = angle0 + angle1 + angle2)
+    },
+    // End effector target position (cm)
+    endEffector: {
+        x: -16.0,
+        y: 6.1
+    },
+    // Stick control state
+    stick: {
+        active: false,
+        dx: 0,
+        dy: 0
+    },
+    // Display and UI flags
+    display: {
+        showKinematic: true,
+        showHardware: true,
+        viewMode: "both",
+        blockTableHit: true
+    }
+};
 
 // Canvas styling
 const HANDLE_R = 4;
 const ARM_LINE_WIDTH = 8;
 
-// UI
+// UI element references
 const angle0Range = document.getElementById("angle0Range");
 const angle0Out = document.getElementById("angle0Out");
 const angle1Range = document.getElementById("angle1Range");
@@ -162,19 +169,16 @@ const angle2Out = document.getElementById("angle2Out");
 
 const showKinematicEl = document.getElementById("showKinematic");
 const showHardwareEl = document.getElementById("showHardware");
-let showKinematic = showKinematicEl.checked;
-let showHardware = showHardwareEl.checked;
-
 const viewModeEl = document.getElementById("viewMode");
-let viewMode = "both";
-
 const eeOut = document.getElementById("eeOut");
 const blockTableHitEl = document.getElementById("blockTableHit");
-let blockTableHit = true;
 
-blockTableHitEl.addEventListener("change", () => {
-    blockTableHit = blockTableHitEl.checked;
-});
+// Initialize display state from UI elements
+state.display.showKinematic = showKinematicEl.checked;
+state.display.showHardware = showHardwareEl.checked;
+state.display.viewMode = viewModeEl.value;
+state.display.blockTableHit = blockTableHitEl.checked;
+
 
 
 angle0Range.min = String(ANG0_MIN_DEG);
@@ -197,18 +201,18 @@ function degToRad(d) { return (d * Math.PI) / 180; }
 function radToDeg(r) { return (r * 180) / Math.PI; }
 
 
-function makeAngleSetter({ minDeg, maxDeg, assignRad, getRad, outEl, rangeEl }) {
+function makeAngleSetter({ minDeg, maxDeg, stateKey, outEl, rangeEl }) {
     return function setAngleFromDegGeneric(deg) {
         const c = Math.max(minDeg, Math.min(maxDeg, deg));
-        const prevRad = getRad();
+        const prevRad = state.angles[stateKey];
         const newRad = (c * Math.PI) / 180;
 
         // Tentatively apply new angle
-        assignRad(newRad);
+        state.angles[stateKey] = newRad;
 
         // If we block on table hit and the end effector goes below the table, revert
-        if (blockTableHit && !isEndEffectorAboveTable()) {
-            assignRad(prevRad);
+        if (state.display.blockTableHit && !isEndEffectorAboveTable()) {
+            state.angles[stateKey] = prevRad;
             return; // reject this move
         }
 
@@ -216,28 +220,29 @@ function makeAngleSetter({ minDeg, maxDeg, assignRad, getRad, outEl, rangeEl }) 
         outEl.textContent = (Math.round(c * 10) / 10).toFixed(1);
         const rounded = String(Math.round(c));
         if (rangeEl.value !== rounded) rangeEl.value = rounded;
+
+        // NEW: keep EE state consistent with angles
+        syncEndEffectorFromFK();
+
         draw();
     };
 }
 
 const setAngle0FromDeg = makeAngleSetter({
     minDeg: ANG0_MIN_DEG, maxDeg: ANG0_MAX_DEG,
-    assignRad: (r) => (angle0Rad = r),
-    getRad: () => angle0Rad,
+    stateKey: "j0",
     outEl: angle0Out, rangeEl: angle0Range
 });
 
 const setAngle1FromDeg = makeAngleSetter({
     minDeg: ANG1_MIN_DEG, maxDeg: ANG1_MAX_DEG,
-    assignRad: (r) => (angle1Rad = r),
-    getRad: () => angle1Rad,
+    stateKey: "j1",
     outEl: angle1Out, rangeEl: angle1Range
 });
 
 const setAngle2FromDeg = makeAngleSetter({
     minDeg: ANG2_MIN_DEG, maxDeg: ANG2_MAX_DEG,
-    assignRad: (r) => (angle2Rad = r),
-    getRad: () => angle2Rad,
+    stateKey: "j2",
     outEl: angle2Out, rangeEl: angle2Range
 });
 
@@ -248,26 +253,161 @@ angle2Range.addEventListener("input", () => setAngle2FromDeg(parseInt(angle2Rang
 
 
 showKinematicEl.addEventListener("change", () => {
-    showKinematic = !!showKinematicEl.checked;
+    state.display.showKinematic = !!showKinematicEl.checked;
     draw();
 });
 
 showHardwareEl.addEventListener("change", () => {
-    showHardware = !!showHardwareEl.checked;
+    state.display.showHardware = !!showHardwareEl.checked;
     draw();
 });
 
 viewModeEl.addEventListener("change", () => {
-    viewMode = viewModeEl.value; // "lines" | "graphics" | "both"
+    state.display.viewMode = viewModeEl.value; // "lines" | "graphics" | "both"
     draw();
 });
+
+blockTableHitEl.addEventListener("change", () => {
+    state.display.blockTableHit = blockTableHitEl.checked;
+});
+
+function solveIK_EndEffector({ xCm, yCm, phiDegOpt = null, elbow = "auto" }) {
+    // Target is specified in your displayed coordinate system:
+    // xCm: right from base
+    // yCm: height above table (since eeOut adds ARM_HEIGHT_CM)
+
+    // Convert target EE position to "arm math space" relative to base:
+    // In math space: +x right, +y up (NOT screen y)
+    const tx = xCm * CM_TO_PX;
+    const ty = (yCm - ARM_HEIGHT_CM) * CM_TO_PX; // remove base height offset
+
+    // Choose desired end-effector global orientation phi2 (deg)
+    const { phi2 } = getJointPositions();
+    const currentPhi2Deg = radToDeg(phi2);
+    const phi2Deg = (phiDegOpt === null || Number.isNaN(phiDegOpt))
+        ? currentPhi2Deg
+        : phiDegOpt;
+
+    const phi2Rad = degToRad(phi2Deg);
+
+    // Wrist target (joint p2): p2 = p3 - L2 * dir(phi2)
+    const wx = tx - Math.cos(phi2Rad) * L2;
+    const wy = ty - Math.sin(phi2Rad) * L2;
+
+    // 2-link IK for L0, L1 reaching (wx, wy)
+    const r2 = wx * wx + wy * wy;
+    const r = Math.sqrt(r2);
+
+    // Basic reachability check
+    const maxReach = L0 + L1;
+    const minReach = Math.abs(L0 - L1);
+
+    if (r > maxReach + 1e-6 || r < minReach - 1e-6) {
+        console.warn(`❌ IK FAILED: Target out of reach`, {
+            targetX_cm: xCm.toFixed(2),
+            targetY_cm: yCm.toFixed(2),
+            distance_px: r.toFixed(2),
+            maxReach_px: maxReach.toFixed(2),
+            minReach_px: minReach.toFixed(2),
+            reason: r > maxReach ? "too far" : "too close"
+        });
+        return { ok: false, reason: "Target out of reach", anglesDeg: null };
+    }
+
+    // Law of cosines for angle1 (local joint between L0 and L1)
+    let c1 = (r2 - L0 * L0 - L1 * L1) / (2 * L0 * L1);
+    c1 = clamp(c1, -1, 1);
+
+    const s1_pos = Math.sqrt(Math.max(0, 1 - c1 * c1));
+    const s1_neg = -s1_pos;
+
+    // Two solutions for angle1
+    const a1_up = Math.atan2(s1_pos, c1);
+    const a1_down = Math.atan2(s1_neg, c1);
+
+    // angle0 from geometry: atan2(wy,wx) - atan2(L1*sin(a1), L0 + L1*cos(a1))
+    function angle0For(a1) {
+        const k1 = L0 + L1 * Math.cos(a1);
+        const k2 = L1 * Math.sin(a1);
+        return Math.atan2(wy, wx) - Math.atan2(k2, k1);
+    }
+
+    const a0_up = angle0For(a1_up);
+    const a0_down = angle0For(a1_down);
+
+    // angle2 to hit desired phi2
+    function angle2For(a0, a1) {
+        return phi2Rad - a0 - a1;
+    }
+
+    const a2_up = angle2For(a0_up, a1_up);
+    const a2_down = angle2For(a0_down, a1_down);
+
+    // Convert to degrees
+    const candUp = {
+        a0: radToDeg(a0_up),
+        a1: radToDeg(a1_up),
+        a2: radToDeg(a2_up),
+        tag: "up",
+    };
+    const candDown = {
+        a0: radToDeg(a0_down),
+        a1: radToDeg(a1_down),
+        a2: radToDeg(a2_down),
+        tag: "down",
+    };
+
+    // Pick solution
+    const cur0 = radToDeg(state.angles.j0);
+    const cur1 = radToDeg(state.angles.j1);
+    const cur2 = radToDeg(state.angles.j2);
+
+    function score(c) {
+        // closeness to current joint angles (avoid flipping)
+        return Math.abs(c.a0 - cur0) + Math.abs(c.a1 - cur1) + Math.abs(c.a2 - cur2);
+    }
+
+    let chosen = candDown;
+    if (elbow === "up") chosen = candUp;
+    else if (elbow === "down") chosen = candDown;
+    else chosen = score(candUp) < score(candDown) ? candUp : candDown;
+
+    return { ok: true, reason: "", anglesDeg: chosen };
+}
+
+function applyIK_EndEffector(xCm, yCm, phiDegOpt, elbowMode, statusEl) {
+    const res = solveIK_EndEffector({ xCm, yCm, phiDegOpt, elbow: elbowMode });
+
+    if (!res.ok) {
+        if (statusEl) statusEl.textContent = res.reason;
+        return false;
+    }
+
+    const { a0, a1, a2 } = res.anglesDeg;
+
+    console.log(`✅ IK SUCCESS: Applied solution`, {
+        targetX_cm: xCm.toFixed(2),
+        targetY_cm: yCm.toFixed(2),
+        solution: res.anglesDeg.tag,
+        angles_deg: { a0: a0.toFixed(2), a1: a1.toFixed(2), a2: a2.toFixed(2) }
+    });
+
+    // IMPORTANT: apply via your existing setters (keeps limits + table blocking)
+    setAngle0FromDeg(a0);
+    setAngle1FromDeg(a1);
+    setAngle2FromDeg(a2);
+
+    if (statusEl) statusEl.textContent = `ok (${res.anglesDeg.tag})`;
+    return true;
+}
+
 
 
 // FK helpers (CCW on screen: y -= sin)
 function getJointPositions() {
-    const phi0 = angle0Rad;
-    const phi1 = angle0Rad + angle1Rad;
-    const phi2 = angle0Rad + angle1Rad + angle2Rad;
+    const phi0 = state.angles.j0;
+    const phi1 = state.angles.j0 + state.angles.j1;
+    const phi2 = state.angles.j0 + state.angles.j1 + state.angles.j2;
 
     const p0 = { x: base.x, y: base.y };
     const p1 = {
@@ -291,6 +431,16 @@ function isEndEffectorAboveTable() {
     const tableY = getTableY();
     // smaller y = visually higher (since screen Y goes down)
     return p3.y <= tableY;
+}
+
+function syncEndEffectorFromFK() {
+    const { p3 } = getJointPositions();
+
+    const x_px = p3.x - base.x;          // right +
+    const y_px = base.y - p3.y;          // up +
+
+    state.endEffector.x = x_px / CM_TO_PX;
+    state.endEffector.y = (y_px / CM_TO_PX) + ARM_HEIGHT_CM;
 }
 
 
@@ -318,40 +468,24 @@ function drawRightAngleMountOverlay(origin /* p0 */, phi0, lineColor = "#22c55e"
 }
 
 // Draw a link sprite at 'origin' rotated by global angle 'phi' (CCW math).
-function drawLinkSprite(origin, phi, img, size, anchor, offsetPx) {
+function drawLinkSprite(origin, phi, img, size, anchor) {
     if (!img || !img.complete) return;
 
     ctx.save();
     ctx.translate(origin.x, origin.y);
-
-    // Canvas positive rotation is clockwise (because y grows down).
-    // Our phi is CCW in math space, so rotate by -phi to align visually.
-    ctx.rotate(-phi);
-
-    // apply extra tweak offset (in the rotated local space)
-    ctx.translate(offsetPx.x, offsetPx.y);
-
-    // move so that the chosen anchor lands on the joint (origin)
+    ctx.rotate(-phi); // Rotate: -phi because canvas y grows down
     ctx.translate(-anchor.u * size.w, -anchor.v * size.h);
-
-    // draw at chosen size (independent of the image's intrinsic size)
     ctx.drawImage(img, 0, 0, size.w, size.h);
     ctx.restore();
 }
 
 // Draw the robot base at the arm base joint (no rotation; column is vertical)
-function drawBaseSprite(origin, img, size, anchor, offsetPx) {
+function drawBaseSprite(origin, img, size, anchor) {
     if (!img || !img.complete) return;
 
     ctx.save();
     ctx.translate(origin.x, origin.y);
-
-    // extra tweak offset in local space
-    ctx.translate(offsetPx.x, offsetPx.y);
-
-    // move so that chosen anchor lands on the joint
     ctx.translate(-anchor.u * size.w, -anchor.v * size.h);
-
     ctx.drawImage(img, 0, 0, size.w, size.h);
     ctx.restore();
 }
@@ -394,22 +528,22 @@ function draw() {
     // --- Base column from table to arm base ---
     const baseBottom = { x: base.x, y: base.y + BASE_COL_HEIGHT };
 
-    if (viewMode === "graphics" || viewMode === "both") {
+    if (state.display.viewMode === "graphics" || state.display.viewMode === "both") {
         // base column
-        drawBaseSprite(base, BASE_IMG, BASE_IMG_SIZE, BASE_IMG_ANCHOR, BASE_IMG_OFFSET);
+        drawBaseSprite(base, BASE_IMG, BASE_IMG_SIZE, BASE_IMG_ANCHOR);
         // Link 0
-        drawLinkSprite(p0, phi0, L0_IMG, L0_IMG_SIZE, L0_IMG_ANCHOR, L0_IMG_OFFSET);
+        drawLinkSprite(p0, phi0, L0_IMG, L0_IMG_SIZE, L0_IMG_ANCHOR);
         // Link 1
-        drawLinkSprite(p1, phi1, L1_IMG, L1_IMG_SIZE, L1_IMG_ANCHOR, L1_IMG_OFFSET);
+        drawLinkSprite(p1, phi1, L1_IMG, L1_IMG_SIZE, L1_IMG_ANCHOR);
         // Link 2
-        drawLinkSprite(p2, phi2, L2_IMG, L2_IMG_SIZE, L2_IMG_ANCHOR, L2_IMG_OFFSET);
+        drawLinkSprite(p2, phi2, L2_IMG, L2_IMG_SIZE, L2_IMG_ANCHOR);
     }
-    if (viewMode === "lines" || viewMode === "both") {
+    if (state.display.viewMode === "lines" || state.display.viewMode === "both") {
         // base column
         strokeSegment(baseBottom, base, 6, "#9ca3af");   // grey column line
         // Link 0 (with conditional)
-        if (showKinematic) strokeSegment(p0, p1, 6, "#7dd3fc");
-        if (showHardware) drawRightAngleMountOverlay(p0, phi0, "#7dd3fc");
+        if (state.display.showKinematic) strokeSegment(p0, p1, 6, "#7dd3fc");
+        if (state.display.showHardware) drawRightAngleMountOverlay(p0, phi0, "#7dd3fc");
         // Link 1
         strokeSegment(p1, p2, 6, "#38bdf8");
         // Link 2
@@ -427,7 +561,9 @@ function draw() {
     drawHandle(p3, HANDLE_R, "#bd3333ff");   // J2 handle
 }
 
+
 // expose for other files
+window.state = state;
 window.resizeCanvas = resizeCanvas;
 window.setAngle0FromDeg = setAngle0FromDeg;
 window.setAngle1FromDeg = setAngle1FromDeg;
@@ -444,10 +580,4 @@ window.ANG1_MIN_DEG = ANG1_MIN_DEG;
 window.ANG1_MAX_DEG = ANG1_MAX_DEG;
 window.ANG2_MIN_DEG = ANG2_MIN_DEG;
 window.ANG2_MAX_DEG = ANG2_MAX_DEG;
-window.angle0Rad = angle0Rad;
-window.angle1Rad = angle1Rad;
-window.angle2Rad = angle2Rad;
-Object.defineProperty(window, "angle0Rad", { get: () => angle0Rad });
-Object.defineProperty(window, "angle1Rad", { get: () => angle1Rad });
-Object.defineProperty(window, "angle2Rad", { get: () => angle2Rad });
 
