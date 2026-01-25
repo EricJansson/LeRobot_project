@@ -1,0 +1,16 @@
+# Development dependencies for testing and code quality
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Code quality
+pylint>=2.15.0
+black>=23.0.0
+flake8>=5.0.0
+
+# Type checking
+mypy>=0.990
+
+# Additional testing utilities
+pytest-xdist>=3.0.0  # For parallel test execution

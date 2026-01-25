@@ -363,14 +363,39 @@ function solveIK_EndEffector({ xCm, yCm, phiDegOpt = null, elbow = "auto" }) {
     const cur2 = radToDeg(state.angles.j2);
 
     function score(c) {
-        // closeness to current joint angles (avoid flipping)
-        return Math.abs(c.a0 - cur0) + Math.abs(c.a1 - cur1) + Math.abs(c.a2 - cur2);
+        return (
+            3.0 * angleDistDeg(c.a0, cur0) + // base matters most
+            1.5 * angleDistDeg(c.a1, cur1) +
+            1.0 * angleDistDeg(c.a2, cur2)
+        );
+    }
+
+    // Ensure memory exists BEFORE using it
+    if (state._lastIKTag === undefined) {
+        state._lastIKTag = candDown.tag; // or candUp, your default
     }
 
     let chosen = candDown;
-    if (elbow === "up") chosen = candUp;
-    else if (elbow === "down") chosen = candDown;
-    else chosen = score(candUp) < score(candDown) ? candUp : candDown;
+    if (elbow === "up") {
+        chosen = candUp;
+    } else if (elbow === "down") {
+        chosen = candDown;
+    } else {
+        const sUp = score(candUp);
+        const sDown = score(candDown);
+
+        // hysteresis: don't switch unless clearly better
+        if (candUp.tag !== state._lastIKTag && sUp < sDown * 0.85) {
+            chosen = candUp;
+        } else if (candDown.tag !== state._lastIKTag && sDown < sUp * 0.85) {
+            chosen = candDown;
+        } else {
+            chosen = state._lastIKTag === "up" ? candUp : candDown;
+        }
+    }
+
+    // Update memory AFTER decision
+    state._lastIKTag = chosen.tag;
 
     return { ok: true, reason: "", anglesDeg: chosen };
 }
@@ -385,12 +410,13 @@ function applyIK_EndEffector(xCm, yCm, phiDegOpt, elbowMode, statusEl) {
 
     const { a0, a1, a2 } = res.anglesDeg;
 
+    /*
     console.log(`✅ IK SUCCESS: Applied solution`, {
         targetX_cm: xCm.toFixed(2),
         targetY_cm: yCm.toFixed(2),
         solution: res.anglesDeg.tag,
         angles_deg: { a0: a0.toFixed(2), a1: a1.toFixed(2), a2: a2.toFixed(2) }
-    });
+    });*/
 
     // IMPORTANT: apply via your existing setters (keeps limits + table blocking)
     setAngle0FromDeg(a0);
@@ -401,6 +427,33 @@ function applyIK_EndEffector(xCm, yCm, phiDegOpt, elbowMode, statusEl) {
     return true;
 }
 
+function projectToReachableEE(xCm, yCm) {
+    // convert to arm math space (same as IK)
+    const tx = xCm * CM_TO_PX;
+    const ty = (yCm - ARM_HEIGHT_CM) * CM_TO_PX;
+
+    const r = Math.hypot(tx, ty);
+    if (r < 1e-6) return { xCm, yCm };
+
+    const maxReach = L0 + L1;
+    const minReach = Math.abs(L0 - L1);
+
+    const rClamped = clamp(r, minReach, maxReach);
+
+    if (rClamped === r) {
+        return { xCm, yCm }; // already legal
+    }
+
+    const scale = rClamped / r;
+
+    const px = tx * scale;
+    const py = ty * scale;
+
+    return {
+        xCm: px / CM_TO_PX,
+        yCm: (py / CM_TO_PX) + ARM_HEIGHT_CM
+    };
+}
 
 
 // FK helpers (CCW on screen: y -= sin)
@@ -441,6 +494,12 @@ function syncEndEffectorFromFK() {
 
     state.endEffector.x = x_px / CM_TO_PX;
     state.endEffector.y = (y_px / CM_TO_PX) + ARM_HEIGHT_CM;
+}
+
+function angleDistDeg(a, b) {
+    let d = a - b;
+    d = ((d + 180) % 360) - 180; // wrap to [-180, 180]
+    return Math.abs(d);
 }
 
 
