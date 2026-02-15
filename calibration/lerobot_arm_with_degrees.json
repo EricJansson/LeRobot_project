@@ -1,0 +1,66 @@
+{
+    "motor_resolution": 4096,
+    "total_degree_range": 240,
+    "center_position": 2048,
+    "note": "degrees = ((raw_value - 2048) / 4096) * 240",
+    "shoulder_pan": {
+        "id": 1,
+        "drive_mode": 0,
+        "homing_offset": -1414,
+        "range_min": 706,
+        "range_max": 3412,
+        "degree_min": -78.63,
+        "degree_max": 79.92,
+        "degree_range": 158.55
+    },
+    "shoulder_lift": {
+        "id": 2,
+        "drive_mode": 0,
+        "homing_offset": -1548,
+        "range_min": 886,
+        "range_max": 3275,
+        "degree_min": -68.09,
+        "degree_max": 71.89,
+        "degree_range": 139.98
+    },
+    "elbow_flex": {
+        "id": 3,
+        "drive_mode": 0,
+        "homing_offset": 1773,
+        "range_min": 839,
+        "range_max": 3053,
+        "degree_min": -70.84,
+        "degree_max": 58.89,
+        "degree_range": 129.73
+    },
+    "wrist_flex": {
+        "id": 4,
+        "drive_mode": 0,
+        "homing_offset": -239,
+        "range_min": 900,
+        "range_max": 3240,
+        "degree_min": -67.27,
+        "degree_max": 69.84,
+        "degree_range": 137.11
+    },
+    "wrist_roll": {
+        "id": 5,
+        "drive_mode": 0,
+        "homing_offset": -873,
+        "range_min": 140,
+        "range_max": 3976,
+        "degree_min": -111.80,
+        "degree_max": 112.97,
+        "degree_range": 224.77
+    },
+    "gripper": {
+        "id": 6,
+        "drive_mode": 0,
+        "homing_offset": 1633,
+        "range_min": 2001,
+        "range_max": 3550,
+        "degree_min": -2.75,
+        "degree_max": 88.01,
+        "degree_range": 90.76
+    }
+}
