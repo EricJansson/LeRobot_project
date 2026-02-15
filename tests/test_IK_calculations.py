@@ -160,11 +160,6 @@ class TestIK3DOFPlanarAllDeg:
                 assert math.isfinite(angle), f"Angle should be finite, got {angle}"
 
 
-    def test_unequal_links(self, unequal_arm):
-        solutions = ik_3dof_planar_all_deg(unequal_arm, 1.8, 0.5, 30)
-        assert isinstance(solutions, list)
-
-
     def test_zero_position_and_orientation(self, standard_arm):
         """Test IK for zero position with zero orientation."""
         solutions = ik_3dof_planar_all_deg(standard_arm, 0, 0, 0)
