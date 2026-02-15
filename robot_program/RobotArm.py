@@ -25,10 +25,17 @@ class ArmModel:
 
     UNITS CONTRACT
     - All linear quantities are centimeters (cm).
+    
+    Default link lengths based on robot specifications:
+    - L0: First link (calculated from motor offset geometry)
+      ARM_A = 11.3 cm, ARM_B = 3.8 cm (perpendicular)
+      L0 = hypot(ARM_A, ARM_B) ≈ 11.92 cm
+    - L1: Second link = 13.5 cm
+    - L2: Third link (end-effector) = 17.0 cm
     """
-    links: Tuple[float, float, float]   # (l1, l2, l3)
-    shoulder_z: float                   # cm (height above table)
-    base_offset: float                  # cm (XY offset from yaw axis)
+    links: Tuple[float, float, float] = (11.92, 13.5, 17.0)   # (l1, l2, l3) in cm
+    shoulder_z: float = 11.0                                   # cm (height above table)
+    base_offset: float = 4.0                                   # cm (XY offset from yaw axis)
 
 
 class RobotArm:
@@ -56,14 +63,73 @@ class RobotArm:
         self,
         target_xyz: Tuple[float, float, float],  # (x, y, z) in cm
         phi_deg: float,
-        yaw_step_deg: float = 5.0,
-        lateral_tol: float = 0.5
+        lateral_tol: float = 0.5,
+        allow_phi_adaptation: bool = True,
+        phi_adaptation_range: float = 45.0,
+        phi_adaptation_step: float = 5.0
     ) -> Optional[RobotState]:
         """
         Compute a new IK solution (does NOT update self.state).
         Returns RobotState or None.
+        
+        Args:
+            target_xyz: Target position (x, y, z) in cm
+            phi_deg: Desired end-effector orientation in degrees
+            lateral_tol: Tolerance for lateral positioning
+            allow_phi_adaptation: If True, search for alternative phi if target unreachable
+            phi_adaptation_range: Max phi deviation to search (degrees)
+            phi_adaptation_step: Step size when searching phi values (degrees)
         """
 
+        tx, ty, tz = target_xyz
+        
+        # Try with desired phi first
+        result = self._solve_ik_for_phi(
+            target_xyz, phi_deg, lateral_tol
+        )
+        if result is not None:
+            return result
+        
+        # If allow_phi_adaptation, try alternative orientations
+        if allow_phi_adaptation:
+            # Search range: phi_deg ± phi_adaptation_range
+            min_phi = phi_deg - phi_adaptation_range
+            max_phi = phi_deg + phi_adaptation_range
+            
+            # Search outward from desired phi (prefer solutions close to target phi)
+            search_phis = []
+            for offset in range(
+                int(phi_adaptation_step),
+                int(phi_adaptation_range) + int(phi_adaptation_step),
+                int(phi_adaptation_step)
+            ):
+                search_phis.append(phi_deg + offset)
+                search_phis.append(phi_deg - offset)
+            
+            best_result = None
+            best_phi_error = float('inf')
+            
+            for try_phi in search_phis:
+                result = self._solve_ik_for_phi(target_xyz, try_phi, lateral_tol)
+                if result is not None:
+                    phi_error = abs(try_phi - phi_deg)
+                    if phi_error < best_phi_error:
+                        best_result = result
+                        best_phi_error = phi_error
+            
+            return best_result
+        
+        return None
+
+    def _solve_ik_for_phi(
+        self,
+        target_xyz: Tuple[float, float, float],
+        phi_deg: float,
+        lateral_tol: float = 0.5
+    ) -> Optional[RobotState]:
+        """
+        Internal helper: solve IK for a specific phi_deg value.
+        """
         tx, ty, tz = target_xyz
         candidates: List[Tuple[float, float, float, float]] = []
 
@@ -71,7 +137,6 @@ class RobotArm:
         yaw_candidates = find_base_yaw_candidates(
             base_offset=self.model.base_offset,
             target_xy=(tx, ty),
-            yaw_step_deg=yaw_step_deg,
             lateral_tol=lateral_tol,
         )
         if not yaw_candidates:
@@ -147,18 +212,30 @@ class RobotArm:
         self,
         target_xyz: Tuple[float, float, float],
         phi_deg: float,
-        yaw_step_deg: float = 5.0,
-        lateral_tol: float = 0.5
+        lateral_tol: float = 0.5,
+        allow_phi_adaptation: bool = True,
+        phi_adaptation_range: float = 45.0,
+        phi_adaptation_step: float = 5.0
     ) -> bool:
         """
         High-level command: solve IK and update internal state if solvable.
         Returns True on success, False if unreachable.
+        
+        Args:
+            target_xyz: Target position (x, y, z) in cm
+            phi_deg: Desired end-effector orientation in degrees
+            lateral_tol: Tolerance for lateral positioning
+            allow_phi_adaptation: If True, search for alternative phi if target unreachable at desired phi
+            phi_adaptation_range: Max phi deviation to search (degrees)
+            phi_adaptation_step: Step size when searching phi values (degrees)
         """
         sol = self.solve_base_plus_planar_ik(
             target_xyz=target_xyz,
             phi_deg=phi_deg,
-            yaw_step_deg=yaw_step_deg,
             lateral_tol=lateral_tol,
+            allow_phi_adaptation=allow_phi_adaptation,
+            phi_adaptation_range=phi_adaptation_range,
+            phi_adaptation_step=phi_adaptation_step,
         )
         if sol is None:
             return False
@@ -169,11 +246,8 @@ class RobotArm:
 
 
 if __name__ == "__main__":
-    model = ArmModel(
-        links=(12.0, 10.0, 6.0),  # cm
-        shoulder_z=10.0,          # cm
-        base_offset=4.0           # cm
-    )
+    # Use default arm model (or customize as needed)
+    model = ArmModel()
 
     arm = RobotArm(
         model=model,

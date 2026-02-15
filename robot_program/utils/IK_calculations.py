@@ -15,115 +15,9 @@ import utils.FK_calculations as forward_kinematics
 
 # ============================================================
 
-def solve_base_plus_planar_ik(
-    links,
-    shoulder_z,                 # cm
-    base_offset,                # cm (4)
-    target_xyz,                 # (x, y, z) in cm
-    phi_deg,
-    prev_solution=None,
-    yaw_step_deg=5.0,
-    lateral_tol=0.5,
-):
-    """
-    Solve IK for a yawing base + planar arm.
-
-    Returns:
-        (base_yaw_deg, θ1_deg, θ2_deg, θ3_deg)
-        or None if unreachable
-    """
-
-    tx, ty, tz = target_xyz
-    candidates = []
-
-    # ------------------------------------------------------------
-    # 1. Find candidate base yaw angles
-    # ------------------------------------------------------------
-    yaw_candidates = find_base_yaw_candidates(
-        base_offset=base_offset,
-        target_xy=(tx, ty),
-        yaw_step_deg=yaw_step_deg,
-        lateral_tol=lateral_tol,
-    )
-
-    if not yaw_candidates:
-        return None
-
-    # ------------------------------------------------------------
-    # 2. Try planar IK for each yaw candidate
-    # ------------------------------------------------------------
-    for yaw_deg in yaw_candidates:
-        yaw = math.radians(yaw_deg)
-
-        # Shoulder position in world frame
-        sx = base_offset * math.cos(yaw)
-        sy = base_offset * math.sin(yaw)
-        sz = shoulder_z
-
-        # Vector from shoulder to target
-        vx = tx - sx
-        vy = ty - sy
-        vz = tz - sz
-
-        # Arm plane axes
-        ex = math.cos(yaw)
-        ey = math.sin(yaw)
-
-        # Project into planar frame
-        x_planar = vx * ex + vy * ey
-        y_planar = vz
-
-        # --------------------------------------------------------
-        # Planar IK (unchanged)
-        # --------------------------------------------------------
-        planar_solutions = ik_3dof_planar_all_deg(
-            links,
-            x_planar,
-            y_planar,
-            phi_deg,
-        )
-
-        if not planar_solutions:
-            continue
-
-        # Continuity hint
-        prev_planar = None
-        if prev_solution is not None:
-            _, t1, t2, t3 = prev_solution
-            prev_planar = (t1, t2, t3)
-
-        chosen = select_ik_solution_deg(
-            planar_solutions,
-            prev_angles_deg=prev_planar,
-        )
-
-        if chosen is None:
-            continue
-
-        candidates.append((yaw_deg, *chosen))
-
-    # ------------------------------------------------------------
-    # 3. Choose best full solution
-    # ------------------------------------------------------------
-    if not candidates:
-        return None
-
-    if prev_solution is None:
-        return candidates[0]
-
-    prev_yaw = prev_solution[0]
-
-    def yaw_dist(a, b):
-        return abs(((a - b + 180) % 360) - 180)
-
-    candidates.sort(key=lambda c: yaw_dist(c[0], prev_yaw))
-    return candidates[0]
-
-
 def find_base_yaw_candidates(
     base_offset: float,            # cm
     target_xy: Tuple[float, float],
-    yaw_step_deg: float = 5.0,
     lateral_tol: float = 0.5       # cm
 ) -> List[float]:
     """
@@ -134,7 +28,8 @@ def find_base_yaw_candidates(
     tx, ty = target_xy
     candidates = []
 
-    for yaw_deg in range(-180, 181, int(yaw_step_deg)):
+    # Search all yaw angles in 1-degree increments
+    for yaw_deg in range(-180, 181, 1):
         yaw = math.radians(yaw_deg)
 
         # Shoulder XY position
@@ -180,9 +75,8 @@ def ik_3dof_planar_all_deg(
         Returns [] if no solution exists.
     """
 
-# yaw calculations
-# guardrails/restrictions for motor degrees rather than IK calculations
-
+    # yaw calculations
+    # guardrails/restrictions for motor degrees rather than IK calculations
 
     TOL = 1e-6  # cm-scale numeric tolerance
 
@@ -197,7 +91,6 @@ def ik_3dof_planar_all_deg(
     # ------------------------------------------------------------
     wx = x - l3 * math.cos(phi)
     wy = y - l3 * math.sin(phi)
-
 
     r2 = wx * wx + wy * wy
     l1pl2 = l1 + l2
