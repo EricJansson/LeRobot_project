@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
 import math
+import json
+from pathlib import Path
 from utils.IK_calculations import find_base_yaw_candidates, ik_3dof_planar_all_deg, select_ik_solution_deg
 
 
@@ -38,6 +40,56 @@ class ArmModel:
     base_offset: float = 4.0                                   # cm (XY offset from yaw axis)
 
 
+def load_joint_limits_from_calibration(
+    calibration_path: Optional[Path] = None
+) -> List[Tuple[float, float]]:
+    """
+    Load joint limits from the calibration JSON file.
+    
+    MAPPING:
+    - Motor 1 (shoulder_pan): base_yaw_deg (NOT included in returned limits)
+    - Motor 2 (shoulder_lift): theta1_deg -> limits[0]
+    - Motor 3 (elbow_flex): theta2_deg -> limits[1]
+    - Motor 4 (wrist_flex): theta3_deg -> limits[2]
+    
+    Args:
+        calibration_path: Path to calibration JSON. 
+                         If None, uses default location relative to this file.
+    
+    Returns:
+        List of (min_deg, max_deg) tuples for the first 3 planar joints.
+        Format: [(theta1_min, theta1_max), (theta2_min, theta2_max), (theta3_min, theta3_max)]
+    """
+    if calibration_path is None:
+        # Default location relative to this file
+        root = Path(__file__).parent.parent  # robot_program -> repo root
+        calibration_path = root / "calibration" / "lerobot_arm_with_degrees.json"
+    elif not isinstance(calibration_path, Path):
+        calibration_path = Path(calibration_path)
+    
+    if not calibration_path.exists():
+        raise FileNotFoundError(f"Calibration file not found: {calibration_path}")
+    
+    with open(calibration_path, 'r') as f:
+        config = json.load(f)
+    
+    motors = config.get("motors", [])
+    
+    # Extract limits for motors 2, 3, 4 (indices 1, 2, 3)
+    # These map to theta1, theta2, theta3 in the planar arm
+    joint_limits = []
+    for motor_id in [2, 3, 4]:  # Motor IDs are 1-indexed, we want 2, 3, 4
+        motor = next((m for m in motors if m["id"] == motor_id), None)
+        if motor is None:
+            raise ValueError(f"Motor {motor_id} not found in calibration file")
+        
+        degree_min = motor["degree_min"]
+        degree_max = motor["degree_max"]
+        joint_limits.append((degree_min, degree_max))
+    
+    return joint_limits
+
+
 class RobotArm:
     """
     Robot model + current state.
@@ -50,10 +102,34 @@ class RobotArm:
     def __init__(
         self,
         model: ArmModel,
-        joint_limits_deg: Optional[List[Tuple[float, float]]] = None
+        joint_limits_deg: Optional[List[Tuple[float, float]]] = None,
+        calibration_path: Optional[Path] = None,
+        auto_load_limits: bool = True
     ):
+        """
+        Initialize RobotArm with model and optional joint limits.
+        
+        Args:
+            model: ArmModel geometry specification
+            joint_limits_deg: Manual joint limits [(min, max), ...] for theta1, theta2, theta3.
+                            If None and auto_load_limits=True, loads from calibration file.
+            calibration_path: Path to calibration JSON file. Used if auto_load_limits=True.
+            auto_load_limits: If True and joint_limits_deg=None, automatically load limits from calibration.
+        """
         self.model = model
-        self.joint_limits_deg = joint_limits_deg
+        
+        # Load or use provided joint limits
+        if joint_limits_deg is not None:
+            self.joint_limits_deg = joint_limits_deg
+        elif auto_load_limits:
+            try:
+                self.joint_limits_deg = load_joint_limits_from_calibration(calibration_path)
+            except (FileNotFoundError, ValueError, KeyError) as e:
+                # If auto-load fails, warn but continue without limits
+                print(f"Warning: Could not auto-load joint limits: {e}")
+                self.joint_limits_deg = None
+        else:
+            self.joint_limits_deg = None
 
         # Current commanded/estimated state (degrees)
         self.state = RobotState()
@@ -80,8 +156,6 @@ class RobotArm:
             phi_adaptation_range: Max phi deviation to search (degrees)
             phi_adaptation_step: Step size when searching phi values (degrees)
         """
-
-        tx, ty, tz = target_xyz
         
         # Try with desired phi first
         result = self._solve_ik_for_phi(
@@ -92,15 +166,12 @@ class RobotArm:
         
         # If allow_phi_adaptation, try alternative orientations
         if allow_phi_adaptation:
-            # Search range: phi_deg ± phi_adaptation_range
-            min_phi = phi_deg - phi_adaptation_range
-            max_phi = phi_deg + phi_adaptation_range
-            
             # Search outward from desired phi (prefer solutions close to target phi)
+            # Range: phi_deg ± phi_adaptation_range
             search_phis = []
             for offset in range(
                 int(phi_adaptation_step),
-                int(phi_adaptation_range) + int(phi_adaptation_step),
+                int(phi_adaptation_range) + 1,
                 int(phi_adaptation_step)
             ):
                 search_phis.append(phi_deg + offset)
@@ -175,19 +246,10 @@ class RobotArm:
             if not planar_solutions:
                 continue
 
-            # Optional: filter by joint limits (if you want selection to respect them)
-            if self.joint_limits_deg is not None:
-                planar_solutions = [
-                    s for s in planar_solutions
-                    if all(lo <= a <= hi for a, (lo, hi) in zip(s, self.joint_limits_deg))
-                ]
-                if not planar_solutions:
-                    continue
-
             chosen = select_ik_solution_deg(
                 planar_solutions,
                 prev_angles_deg=prev_planar,
-                joint_limits_deg=None,   # already filtered above
+                joint_limits_deg=self.joint_limits_deg,
             )
             if chosen is None:
                 continue
@@ -249,10 +311,10 @@ if __name__ == "__main__":
     # Use default arm model (or customize as needed)
     model = ArmModel()
 
-    arm = RobotArm(
-        model=model,
-        joint_limits_deg=[(-180, 180), (-120, 120), (-120, 120)]
-    )
+    # Automatically loads joint limits from calibration file
+    arm = RobotArm(model=model)
+    
+    print(f"Joint limits loaded: {arm.joint_limits_deg}")
 
     ok = arm.move_end_effector(
         target_xyz=(18.0, 5.0, 12.0),
