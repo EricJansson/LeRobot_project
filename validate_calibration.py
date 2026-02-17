@@ -40,12 +40,18 @@ def validate_calibration(calibration_file):
     print("=" * 80)
     
     all_valid = True
-    
+
+    # Support both array format {"motors": [...]} and flat dict format
+    if "motors" in data and isinstance(data["motors"], list):
+        motors_iter = {m["name"]: m for m in data["motors"]}.items()
+    else:
+        motors_iter = {
+            k: v for k, v in data.items()
+            if k not in ['motor_resolution', 'total_degree_range', 'center_position', 'note']
+        }.items()
+
     # Process each motor (skip metadata keys)
-    for motor_name, motor_data in data.items():
-        if motor_name in ['motor_resolution', 'total_degree_range', 'center_position', 'note']:
-            continue
-        
+    for motor_name, motor_data in motors_iter:
         range_min = motor_data['range_min']
         range_max = motor_data['range_max']
         degree_min_stored = motor_data['degree_min']
