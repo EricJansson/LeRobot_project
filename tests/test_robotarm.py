@@ -16,62 +16,6 @@ from robot_program.utils.IK_calculations import ik_3dof_planar_all_deg
 import robot_program.utils.FK_calculations as forward_kinematics
 
 
-def fk_4dof_deg(
-    links: tuple,
-    base_yaw_deg: float,
-    planar_angles_deg: tuple,
-    shoulder_z: float,
-    base_offset: float
-) -> tuple:
-    """
-    Forward kinematics for 4-DOF robot (yaw + 3-DOF planar).
-    
-    Args:
-        links: (l1, l2, l3) link lengths in cm
-        base_yaw_deg: Base yaw angle in degrees
-        planar_angles_deg: (theta1, theta2, theta3) in degrees
-        shoulder_z: Height of shoulder above table in cm
-        base_offset: XY offset from yaw axis in cm
-    
-    Returns:
-        (x, y, z, phi_deg) end-effector position and orientation in world frame
-    """
-    l1, l2, l3 = links
-    t1, t2, t3 = map(math.radians, planar_angles_deg)
-    yaw = math.radians(base_yaw_deg)
-    
-    # Shoulder position in world frame
-    sx = base_offset * math.cos(yaw)
-    sy = base_offset * math.sin(yaw)
-    sz = shoulder_z
-    
-    # Planar arm end-effector relative to shoulder
-    t12 = t1 + t2
-    t123 = t12 + t3
-    
-    x_planar = (
-        l1 * math.cos(t1)
-        + l2 * math.cos(t12)
-        + l3 * math.cos(t123)
-    )
-    y_planar = (
-        l1 * math.sin(t1)
-        + l2 * math.sin(t12)
-        + l3 * math.sin(t123)
-    )
-    
-    # Transform planar coordinates to world frame (arm plane)
-    ex = math.cos(yaw)  # Arm plane X axis
-    ey = math.sin(yaw)  # Arm plane Y axis
-    
-    x = sx + x_planar * ex
-    y = sy + x_planar * ey
-    z = sz + y_planar
-    
-    phi_deg = math.degrees(t123)
-    return x, y, z, phi_deg
-
-
 class TestRobotState:
     """Tests for RobotState dataclass."""
 
@@ -632,12 +576,11 @@ class TestRobotArmIntegration:
             state = standard_arm.state
             
             # Compute FK of the IK solution
-            x_fk, y_fk, z_fk, phi_fk = fk_4dof_deg(
-                standard_arm.model.links,
+            x_fk, y_fk, z_fk, phi_fk = standard_arm.forward_kinematics(
                 state.base_yaw_deg,
-                state.planar_angles,
-                standard_arm.model.shoulder_z,
-                standard_arm.model.base_offset
+                state.theta1_deg,
+                state.theta2_deg,
+                state.theta3_deg
             )
             
             # Verify FK matches target within tolerance
@@ -665,12 +608,11 @@ class TestRobotArmIntegration:
             state = arm.state
             
             # Verify FK
-            x_fk, y_fk, z_fk, phi_fk = fk_4dof_deg(
-                arm.model.links,
+            x_fk, y_fk, z_fk, phi_fk = arm.forward_kinematics(
                 state.base_yaw_deg,
-                state.planar_angles,
-                arm.model.shoulder_z,
-                arm.model.base_offset
+                state.theta1_deg,
+                state.theta2_deg,
+                state.theta3_deg
             )
             
             assert abs(x_fk - target_xyz[0]) <= tolerance
@@ -692,12 +634,11 @@ class TestRobotArmIntegration:
             if ok:
                 state = standard_arm.state
                 
-                x_fk, y_fk, z_fk, phi_fk = fk_4dof_deg(
-                    standard_arm.model.links,
+                x_fk, y_fk, z_fk, phi_fk = standard_arm.forward_kinematics(
                     state.base_yaw_deg,
-                    state.planar_angles,
-                    standard_arm.model.shoulder_z,
-                    standard_arm.model.base_offset
+                    state.theta1_deg,
+                    state.theta2_deg,
+                    state.theta3_deg
                 )
                 
                 assert abs(x_fk - target_xyz[0]) <= tolerance, \
@@ -781,12 +722,11 @@ class TestPhiAdaptation:
             print(f"    - Theta 3 (motor 3):   {result.theta3_deg:8.2f} deg")
             
             # Verify with FK
-            x_fk, y_fk, z_fk, phi_fk = fk_4dof_deg(
-                standard_arm.model.links,
+            x_fk, y_fk, z_fk, phi_fk = standard_arm.forward_kinematics(
                 result.base_yaw_deg,
-                result.planar_angles,
-                standard_arm.model.shoulder_z,
-                standard_arm.model.base_offset
+                result.theta1_deg,
+                result.theta2_deg,
+                result.theta3_deg
             )
             
             print(f"    FK Verification:")
@@ -819,12 +759,11 @@ class TestPhiAdaptation:
         
         if result is not None:
             # Verify FK to get actual phi
-            x_fk, y_fk, z_fk, phi_fk = fk_4dof_deg(
-                standard_arm.model.links,
+            x_fk, y_fk, z_fk, phi_fk = standard_arm.forward_kinematics(
                 result.base_yaw_deg,
-                result.planar_angles,
-                standard_arm.model.shoulder_z,
-                standard_arm.model.base_offset
+                result.theta1_deg,
+                result.theta2_deg,
+                result.theta3_deg
             )
             
             print(f"  [OK] SOLUTION FOUND:")
@@ -919,12 +858,11 @@ class TestPhiAdaptation:
         
         if result is not None:
             # Verify FK
-            x_fk, y_fk, z_fk, phi_fk = fk_4dof_deg(
-                standard_arm.model.links,
+            x_fk, y_fk, z_fk, phi_fk = standard_arm.forward_kinematics(
                 result.base_yaw_deg,
-                result.planar_angles,
-                standard_arm.model.shoulder_z,
-                standard_arm.model.base_offset
+                result.theta1_deg,
+                result.theta2_deg,
+                result.theta3_deg
             )
             
             print(f"  [OK] SOLUTION FOUND:")
@@ -973,12 +911,11 @@ class TestPhiAdaptation:
                 assert math.isfinite(state.theta3_deg)
                 
                 # Verify with FK
-                x_fk, y_fk, z_fk, phi_fk = fk_4dof_deg(
-                    standard_arm.model.links,
+                x_fk, y_fk, z_fk, phi_fk = standard_arm.forward_kinematics(
                     state.base_yaw_deg,
-                    state.planar_angles,
-                    standard_arm.model.shoulder_z,
-                    standard_arm.model.base_offset
+                    state.theta1_deg,
+                    state.theta2_deg,
+                    state.theta3_deg
                 )
                 
                 pos_error_x = abs(x_fk - x)
@@ -1050,12 +987,11 @@ class TestPhiAdaptation:
             
             if result is not None:
                 # Verify with FK
-                x_fk, y_fk, z_fk, phi_fk = fk_4dof_deg(
-                    standard_arm.model.links,
+                x_fk, y_fk, z_fk, phi_fk = standard_arm.forward_kinematics(
                     result.base_yaw_deg,
-                    result.planar_angles,
-                    standard_arm.model.shoulder_z,
-                    standard_arm.model.base_offset
+                    result.theta1_deg,
+                    result.theta2_deg,
+                    result.theta3_deg
                 )
                 
                 phi_error = abs(((phi_fk - phi + 180) % 360) - 180)
@@ -1144,12 +1080,11 @@ class TestPhiAdaptation:
             assert math.isfinite(result.theta3_deg)
             
             # Verify FK accuracy
-            x_fk, y_fk, z_fk, phi_fk = fk_4dof_deg(
-                standard_arm.model.links,
+            x_fk, y_fk, z_fk, phi_fk = standard_arm.forward_kinematics(
                 result.base_yaw_deg,
-                result.planar_angles,
-                standard_arm.model.shoulder_z,
-                standard_arm.model.base_offset
+                result.theta1_deg,
+                result.theta2_deg,
+                result.theta3_deg
             )
             
             pos_error_x = abs(x_fk - target_xyz[0])
@@ -1311,12 +1246,11 @@ class TestRobotArmStress:
                     f"[{description}] {sol_type}: theta3 out of range: {solution.theta3_deg}"
                 
                 # Verify FK consistency for this solution
-                x_fk, y_fk, z_fk, phi_fk = fk_4dof_deg(
-                    standard_arm.model.links,
+                x_fk, y_fk, z_fk, phi_fk = standard_arm.forward_kinematics(
                     solution.base_yaw_deg,
-                    solution.planar_angles,
-                    standard_arm.model.shoulder_z,
-                    standard_arm.model.base_offset
+                    solution.theta1_deg,
+                    solution.theta2_deg,
+                    solution.theta3_deg
                 )
                 
                 # Print FK verification results
@@ -1427,12 +1361,11 @@ class TestRobotArmStress:
             print(f"    Theta3:      {solution.theta3_deg:.2f} deg")
             
             # Verify FK
-            x_fk, y_fk, z_fk, phi_fk = fk_4dof_deg(
-                standard_arm.model.links,
+            x_fk, y_fk, z_fk, phi_fk = standard_arm.forward_kinematics(
                 solution.base_yaw_deg,
-                solution.planar_angles,
-                standard_arm.model.shoulder_z,
-                standard_arm.model.base_offset
+                solution.theta1_deg,
+                solution.theta2_deg,
+                solution.theta3_deg
             )
             
             pos_error = math.sqrt(

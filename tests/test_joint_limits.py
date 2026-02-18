@@ -37,8 +37,8 @@ class TestLoadJointLimitsFromCalibration:
         theta1_min, theta1_max = limits[0]
         
         # Expected values from lerobot_arm_with_degrees.json
-        assert abs(theta1_min - (-102.13)) < 0.01, "theta1 min should match motor 2 degree_min"
-        assert abs(theta1_max - 107.84) < 0.01, "theta1 max should match motor 2 degree_max"
+        assert abs(theta1_min - (-108.11)) < 0.01, "theta1 min should match motor 2 degree_min"
+        assert abs(theta1_max - 102.13) < 0.01, "theta1 max should match motor 2 degree_max"
 
     def test_load_limits_motor_3_elbow_flex(self):
         """Test that motor 3 (elbow_flex) limits are correctly extracted."""
@@ -46,8 +46,8 @@ class TestLoadJointLimitsFromCalibration:
         theta2_min, theta2_max = limits[1]
         
         # Expected values from lerobot_arm_with_degrees.json
-        assert abs(theta2_min - (-106.26)) < 0.01, "theta2 min should match motor 3 degree_min"
-        assert abs(theta2_max - 88.33) < 0.01, "theta2 max should match motor 3 degree_max"
+        assert abs(theta2_min - (-94.92)) < 0.01, "theta2 min should match motor 3 degree_min"
+        assert abs(theta2_max - 100.46) < 0.01, "theta2 max should match motor 3 degree_max"
 
     def test_load_limits_motor_4_wrist_flex(self):
         """Test that motor 4 (wrist_flex) limits are correctly extracted."""
@@ -55,8 +55,8 @@ class TestLoadJointLimitsFromCalibration:
         theta3_min, theta3_max = limits[2]
         
         # Expected values from lerobot_arm_with_degrees.json
-        assert abs(theta3_min - (-100.90)) < 0.01, "theta3 min should match motor 4 degree_min"
-        assert abs(theta3_max - 104.77) < 0.01, "theta3 max should match motor 4 degree_max"
+        assert abs(theta3_min - (-104.24)) < 0.01, "theta3 min should match motor 4 degree_min"
+        assert abs(theta3_max - 102.74) < 0.01, "theta3 max should match motor 4 degree_max"
 
     def test_load_limits_with_custom_path(self):
         """Test loading limits from a custom calibration file path."""
@@ -101,9 +101,9 @@ class TestRobotArmAutoLoadLimits:
         
         # Expected limits from calibration file
         expected_limits = [
-            (-102.13, 107.84),   # theta1 (motor 2)
-            (-106.26, 88.33),    # theta2 (motor 3)
-            (-100.90, 104.77),   # theta3 (motor 4)
+            (-108.11, 102.13),   # theta1 (motor 2)
+            (-94.92, 100.46),    # theta2 (motor 3)
+            (-104.24, 102.74),   # theta3 (motor 4)
         ]
         
         for i, (loaded, expected) in enumerate(zip(arm.joint_limits_deg, expected_limits)):

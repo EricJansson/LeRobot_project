@@ -27,17 +27,24 @@ class ArmModel:
 
     UNITS CONTRACT
     - All linear quantities are centimeters (cm).
-    
-    Default link lengths based on robot specifications:
-    - L0: First link (calculated from motor offset geometry)
-      ARM_A = 11.3 cm, ARM_B = 3.8 cm (perpendicular)
-      L0 = hypot(ARM_A, ARM_B) ≈ 11.92 cm
-    - L1: Second link = 13.5 cm
-    - L2: Third link (end-effector) = 17.0 cm
+
+    joint_offsets_deg : (offset1, offset2, offset3)
+        Added to each joint angle before kinematics.
+        theta1=0 points upward  → offset = +90°
+        theta2=0 points forward → offset = -90°
+        theta3 has no mechanical offset → 0°
+
+    joint_signs : (sign1, sign2, sign3)
+        Each value is +1.0 or -1.0, describing whether the physical
+        motor's positive direction matches the geometric model's positive
+        direction. Set to -1.0 for a motor that is mounted in reverse.
+        Applied before the offset: geometric = motor * sign + offset
     """
     links: Tuple[float, float, float] = (11.92, 13.5, 17.0)   # (l1, l2, l3) in cm
     shoulder_z: float = 11.0                                   # cm (height above table)
     base_offset: float = 4.0                                   # cm (XY offset from yaw axis)
+    joint_offsets_deg: Tuple[float, float, float] = (90.0, -90.0, 0.0)
+    joint_signs: Tuple[float, float, float] = (-1.0, -1.0, -1.0)
 
 
 def load_joint_limits_from_calibration(
@@ -134,6 +141,63 @@ class RobotArm:
         # Current commanded/estimated state (degrees)
         self.state = RobotState()
 
+    def forward_kinematics(
+        self,
+        base_yaw_deg: float,
+        theta1_deg: float,
+        theta2_deg: float,
+        theta3_deg: float,
+        verbose: bool = False
+    ) -> Tuple[float, float, float, float]:
+        """
+        Compute forward kinematics for given joint angles.
+        
+        Args:
+            base_yaw_deg: Base rotation angle in degrees
+            theta1_deg: First planar joint angle in degrees (0° = straight up)
+            theta2_deg: Second planar joint angle in degrees (0° = forward relative to theta1)
+            theta3_deg: Third planar joint angle in degrees (0° = forward relative to theta1+theta2)
+        
+        Returns:
+            (x, y, z, phi_deg) - End-effector position (cm) and orientation (degrees)
+        """
+        l1, l2, l3 = self.model.links
+        o1, o2, o3 = self.model.joint_offsets_deg
+        s1, s2, s3 = self.model.joint_signs
+
+        t1 = math.radians(theta1_deg * s1 + o1)
+        t2 = math.radians(theta2_deg * s2 + o2)
+        t3 = math.radians(theta3_deg * s3 + o3)
+        yaw = math.radians(base_yaw_deg)
+        
+        # Shoulder position in world frame
+        sx = self.model.base_offset * math.cos(yaw)
+        sy = self.model.base_offset * math.sin(yaw)
+        sz = self.model.shoulder_z
+        
+        # Planar arm end-effector relative to shoulder
+        t12 = t1 + t2
+        t123 = t12 + t3
+        
+        x_planar = l1 * math.cos(t1) + l2 * math.cos(t12) + l3 * math.cos(t123)
+        y_planar = l1 * math.sin(t1) + l2 * math.sin(t12) + l3 * math.sin(t123)
+        
+        # Transform planar coordinates to world frame
+        ex = math.cos(yaw)  # Arm plane X axis
+        ey = math.sin(yaw)  # Arm plane Y axis
+        
+        x = sx + x_planar * ex
+        y = sy + x_planar * ey
+        z = sz + y_planar
+        
+        phi_deg = math.degrees(t123)
+
+        if verbose:
+            print(f"[FK] Input angles (deg): base_yaw = {base_yaw_deg:.2f}  theta1 = {theta1_deg:.2f}  theta2 = {theta2_deg:.2f}  theta3 = {theta3_deg:.2f}")
+            # print(f"[FK] Planar end-effector (cm): x_planar = {x_planar:.2f}    y_planar = {y_planar:.2f}  phi = {phi_deg:.2f} deg")
+            print(f"[FK] World end-effector (cm):         x = {x:.2f}           y = {y:.2f}    z = {z:.2f}\n")
+        return x, y, z, phi_deg
+
 
     def solve_base_plus_planar_ik(
         self,
@@ -202,9 +266,10 @@ class RobotArm:
         Internal helper: solve IK for a specific phi_deg value.
         """
         tx, ty, tz = target_xyz
+        o1, o2, o3 = self.model.joint_offsets_deg
+        s1, s2, s3 = self.model.joint_signs
         candidates: List[Tuple[float, float, float, float]] = []
 
-        # 1) get yaw candidates (deg)
         yaw_candidates = find_base_yaw_candidates(
             base_offset=self.model.base_offset,
             target_xy=(tx, ty),
@@ -213,27 +278,43 @@ class RobotArm:
         if not yaw_candidates:
             return None
 
-        # continuity hint from current state
-        prev_planar = self.state.planar_angles
+        # The IK solver works in raw geometric angles (no offsets/signs).
+        # phi in the solver frame = phi_world - sum(offsets)
+        total_offset_deg = o1 + o2 + o3
+        phi_solver_deg = phi_deg - total_offset_deg
+
+        # continuity hint: convert current state back to solver frame
+        # geometric = motor * sign + offset
+        prev_planar_solver = (
+            self.state.theta1_deg * s1 + o1,
+            self.state.theta2_deg * s2 + o2,
+            self.state.theta3_deg * s3 + o3,
+        )
+
+        # Joint limits are in motor frame; convert to solver/geometric frame.
+        # When sign is -1, min and max swap: geo_min = motor_max * sign + offset
+        solver_limits: Optional[List[Tuple[float, float]]] = None
+        if self.joint_limits_deg is not None:
+            solver_limits = []
+            for (lo, hi), s, o in zip(self.joint_limits_deg, (s1, s2, s3), (o1, o2, o3)):
+                geo_lo = lo * s + o
+                geo_hi = hi * s + o
+                solver_limits.append((min(geo_lo, geo_hi), max(geo_lo, geo_hi)))
 
         for yaw_deg in yaw_candidates:
             yaw = math.radians(yaw_deg)
 
-            # Shoulder position in world frame (cm)
             sx = self.model.base_offset * math.cos(yaw)
             sy = self.model.base_offset * math.sin(yaw)
             sz = self.model.shoulder_z
 
-            # Vector from shoulder to target
             vx = tx - sx
             vy = ty - sy
             vz = tz - sz
 
-            # Arm plane axes (in world XY)
             ex = math.cos(yaw)
             ey = math.sin(yaw)
 
-            # Project into planar frame (cm)
             x_planar = vx * ex + vy * ey
             y_planar = vz
 
@@ -241,25 +322,30 @@ class RobotArm:
                 self.model.links,
                 x_planar,
                 y_planar,
-                phi_deg,
+                phi_solver_deg,      # ← solver-frame phi
             )
             if not planar_solutions:
                 continue
 
             chosen = select_ik_solution_deg(
                 planar_solutions,
-                prev_angles_deg=prev_planar,
-                joint_limits_deg=self.joint_limits_deg,
+                prev_angles_deg=prev_planar_solver,   # ← solver-frame continuity
+                joint_limits_deg=solver_limits,       # ← solver-frame limits
             )
             if chosen is None:
                 continue
 
-            candidates.append((yaw_deg, *chosen))
+            # Convert solver-frame angles back to motor/user frame
+            # motor = (geometric - offset) * sign  (sign is ±1 so 1/sign == sign)
+            t1 = (chosen[0] - o1) * s1
+            t2 = (chosen[1] - o2) * s2
+            t3 = (chosen[2] - o3) * s3
+
+            candidates.append((yaw_deg, t1, t2, t3))
 
         if not candidates:
             return None
 
-        # Choose best candidate: smallest yaw change from current state
         prev_yaw = self.state.base_yaw_deg
 
         def yaw_dist(a, b):
@@ -314,12 +400,34 @@ if __name__ == "__main__":
     # Automatically loads joint limits from calibration file
     arm = RobotArm(model=model)
     
-    print(f"Joint limits loaded: {arm.joint_limits_deg}")
+    print(f"Joint limits loaded: {arm.joint_limits_deg}\n")
 
-    ok = arm.move_end_effector(
-        target_xyz=(18.0, 5.0, 12.0),
+    param_list = [
+        (0.0, 0.0, 0.0, 0.0, "Section 1"),
+        (0.0, -90.0, 90.0, 0.0, "Section 3"), 
+        (0.0, 46.5, 50.8, -86.75, "Section 4"), 
+        (0.0, 1.7, 37.27, 55.37, "Section 5"), 
+        (-90.0, 0.0, 0.0, 0.0, "Section 6"),
+    ]
+
+    for base_yaw_deg, theta1_deg, theta2_deg, theta3_deg, desc in param_list:
+        print(f"    Testing FK with angles: {desc}")
+        x, y, z, phi = arm.forward_kinematics(
+            base_yaw_deg,
+            theta1_deg,
+            theta2_deg,
+            theta3_deg,
+            verbose=True
+        )
+
+    print(f"Before move_end_effector command: \n   {arm.state}")
+    arm.move_end_effector(
+        target_xyz=(34.5, 0.0, 22.92),
         phi_deg=0.0,
     )
-
-    print("Move OK?", ok)
-    print("New state:", arm.state)
+    print(f"After move_end_effector command, new state: \n   {arm.state}")
+    arm.move_end_effector(
+        target_xyz=(22.58, 0.0, 11.0),
+        phi_deg=0.0,
+    )
+    print(f"After second move_end_effector command AGAIN, new state: \n   {arm.state}")
