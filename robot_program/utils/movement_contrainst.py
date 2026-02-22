@@ -4,7 +4,7 @@
 # ARM CONSTRAINTS
 # ============================================================
     
-from utils.FK_calculations import fk_points_3dof_planar_deg
+from .FK_calculations import fk_points_3dof_planar_deg
 
 
 def check_workspace_limits(

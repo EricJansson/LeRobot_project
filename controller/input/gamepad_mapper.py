@@ -198,13 +198,15 @@ class Gamepad:
                         if profile:
                             self._emit_safety_stop(profile)
 
-                # Normal button callbacks (still respect deadman gating)
+                # Normal button callbacks (still respect deadman gating).
+                # Exception: the deadman button's own release always fires so
+                # callers can reliably track its held state.
                 if pressed:
                     if self._maybe_deadman():
                         cb = profile.buttons_down.get(name)
                         if cb: cb(name, True)
                 else:
-                    if self._maybe_deadman():
+                    if self._maybe_deadman() or name == self.deadman_name:
                         cb = profile.buttons_up.get(name)
                         if cb: cb(name, False)
 

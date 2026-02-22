@@ -64,12 +64,47 @@ Building and programming a LeRobot 101 robot arm with focus on motion control th
 - **IK Guardrails**: [IK_guardrails.py](robot_program/utils/IK_guardrails.py) - Safety constraints and boundary checks
 - **Movement Constraints**: [movement_contrainst.py](robot_program/utils/movement_contrainst.py)
 
-#### 4.2 Control Integration
+#### 4.2 Motor Orientation & Kinematics Frame Fix
+**Status:** ✅ Complete (Feb 18, 2026)
+
+A critical bug was identified and fixed: all three planar motors were mounted in reverse, causing commanded angles to move in the opposite direction (e.g., commanding −90° moved the joint to +90°).
+
+**Changes made in `robot_program/RobotArm.py`:**
+
+- **`ArmModel` — new `joint_signs` field**  
+  Each value is `+1.0` or `−1.0` describing whether the physical motor's positive direction matches the geometric model's positive direction.  
+  All three planar joints are set to `−1.0` (motors mounted in reverse):
+  ```python
+  joint_signs: Tuple[float, float, float] = (-1.0, -1.0, -1.0)
+  ```
+
+- **`ArmModel` — new `joint_offsets_deg` field**  
+  Zero-position offset applied to each joint **after** the sign correction, so that the solver's geometric frame aligns with physical reality:
+  ```python
+  joint_offsets_deg: Tuple[float, float, float] = (90.0, -90.0, 0.0)
+  # theta1 = 0° means straight up  → +90° offset
+  # theta2 = 0° means forward rel. to theta1 → −90° offset
+  # theta3 has no mechanical offset → 0°
+  ```
+  The full conversion is: `geometric = motor × sign + offset`
+
+- **`forward_kinematics()` method moved into `RobotArm`**  
+  Previously a standalone helper in the test suite (`fk_4dof_deg`), FK is now a first-class method on `RobotArm`. It applies `joint_signs` and `joint_offsets_deg` before computing the world-frame end-effector position:
+  ```python
+  x, y, z, phi = arm.forward_kinematics(base_yaw_deg, theta1_deg, theta2_deg, theta3_deg)
+  ```
+
+- **IK solver now works in the geometric (solver) frame**  
+  The `_solve_ik_for_phi()` method converts motor angles → solver frame before calling the core IK algorithms, then converts results back to motor frame. Joint limits from the calibration file are also transformed into the solver frame before filtering.
+
+- **Known issue (tracked):** The second pitch joint has a slight offset error; the end-effector height is not perfectly corrected yet.
+
+#### 4.3 Control Integration
 - **Main Control Module**: [robot_program/input_control.py](robot_program/input_control.py)
 - **Keyboard Control**: [robot_program/keyboard_control.py](robot_program/keyboard_control.py)
 - **Motor Interface**: [robot_program/read_motors.py](robot_program/read_motors.py)
 
-#### 4.3 Gamepad Support (Controller Input)
+#### 4.4 Gamepad Support (Controller Input)
 - **Location**: [controller/input/](controller/input/)
 - **Gamepad Mapper**: [controller/input/gamepad_mapper.py](controller/input/gamepad_mapper.py)
 - **Teleop Profile**: [controller/input/teleop_profile.py](controller/input/teleop_profile.py)
@@ -113,6 +148,7 @@ Building and programming a LeRobot 101 robot arm with focus on motion control th
 ## Next Steps & Milestones
 
 ### Immediate (In Progress)
+- [ ] Fix second pitch joint offset (end-effector height slightly off after motor orientation correction)
 - [ ] Expand test coverage for all kinematics calculations
 - [ ] Add integration tests for control flow
 - [ ] Validate safety constraints with physical testing
@@ -153,6 +189,6 @@ Building and programming a LeRobot 101 robot arm with focus on motion control th
 
 ---
 
-**Last Updated**: January 24, 2026  
+**Last Updated**: February 22, 2026  
 **Current Phase**: Phase 5 - Testing & Risk Mitigation  
 **Status**: 🚀 Active Development

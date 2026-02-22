@@ -30,6 +30,26 @@ Joint limits are now enforced in the `_solve_ik_for_phi()` method:
 - Any solution violating the limits is rejected
 - If no valid solution exists within the limits, the method returns `None`
 
+### 4. **Joint Limits are Stored in Motor Frame, Converted for IK**
+Because the physical motors are all mounted in reverse (`joint_signs = (-1.0, -1.0, -1.0)`) and have mechanical zero-offsets (`joint_offsets_deg = (90.0, -90.0, 0.0)`), the raw limits from the calibration file are in **motor frame** (i.e., the raw commanded degrees). Before passing them to the IK solver, they are converted to the geometric/solver frame:
+
+```
+geometric = motor × sign + offset
+```
+
+When `sign = -1`, min and max swap:
+
+```python
+# Inside _solve_ik_for_phi()
+solver_limits = []
+for (lo, hi), s, o in zip(self.joint_limits_deg, joint_signs, joint_offsets_deg):
+    geo_lo = lo * s + o
+    geo_hi = hi * s + o
+    solver_limits.append((min(geo_lo, geo_hi), max(geo_lo, geo_hi)))
+```
+
+This ensures that position/orientation constraints are correctly respected even for reversed motors.
+
 ## Usage
 
 ### Default Behavior (Recommended)
@@ -141,6 +161,12 @@ This tests:
   - Added `load_joint_limits_from_calibration()` function
   - Updated `RobotArm.__init__()` to support auto-loading
   - Simplified `_solve_ik_for_phi()` to use `select_ik_solution_deg()` for filtering
+  - **(Feb 18, 2026)** Added `joint_signs` and `joint_offsets_deg` to `ArmModel`
+  - **(Feb 18, 2026)** `_solve_ik_for_phi()` now converts limits from motor frame → geometric frame before passing to IK
+  - **(Feb 18, 2026)** Added `forward_kinematics()` as a method on `RobotArm` (replaces old test-only `fk_4dof_deg()`)
 
 - **test_joint_limits.py** (NEW)
   - Test suite for joint limits functionality
+
+- **tests/test_robotarm.py**
+  - **(Feb 18, 2026)** Removed local `fk_4dof_deg()` helper; tests now call `arm.forward_kinematics()` directly

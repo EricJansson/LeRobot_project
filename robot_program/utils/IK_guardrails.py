@@ -13,7 +13,7 @@
 
 import math
 from typing import List, Optional, Tuple
-from utils.FK_calculations import fk_points_3dof_planar_deg
+from .FK_calculations import fk_points_3dof_planar_deg
 
 def is_solution_valid(
     solution: Tuple[float, float, float],

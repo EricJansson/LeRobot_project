@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 from lerobot.robots.so101_follower.so101_follower import SO101Follower
 from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
-from utils.ports import normalize_port, auto_port
+from .utils.ports import normalize_port, auto_port
 
 CALIB_PATH = Path(__file__).parent.parent / "calibration" / "lerobot_arm_with_degrees.json"
 

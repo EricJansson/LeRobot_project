@@ -1123,7 +1123,7 @@ class TestRobotArmStress:
         ((20.0, 4.0, 13.0), 0.0, "medium_3"),
         ((15.0, 8.0, 10.0), 0.0, "medium_4"),
         
-        # Far range targets (near limit) TODO: Where are the links pointing??
+        # Far range targets (near limit)
         ((40.0, 0.0, 0.0), 0.0, "far_1"),
         ((22.0, 8.0, 14.0), 0.0, "far_2"),
         ((20.0, -5.0, 16.0), 0.0, "far_3"),

@@ -5,7 +5,7 @@ from typing import Optional, Tuple, List
 import math
 import json
 from pathlib import Path
-from utils.IK_calculations import find_base_yaw_candidates, ik_3dof_planar_all_deg, select_ik_solution_deg
+from .utils.IK_calculations import find_base_yaw_candidates, ik_3dof_planar_all_deg, select_ik_solution_deg
 
 
 @dataclass
@@ -47,54 +47,95 @@ class ArmModel:
     joint_signs: Tuple[float, float, float] = (-1.0, -1.0, -1.0)
 
 
+def load_all_motor_limits(
+    calibration_path: Optional[Path] = None,
+    required_motors: Optional[List[str]] = None,
+) -> dict:
+    """
+    Load degree limits for every motor in the calibration JSON.
+
+    Parameters
+    ----------
+    calibration_path:
+        Path to the calibration JSON.  If None, the default repo location is used.
+    required_motors:
+        If provided, raises ValueError if any of these motor names are absent
+        from the file.  Pass the full list of motor names the caller depends on.
+
+    Returns
+    -------
+    dict[str, tuple[float, float]]
+        Keyed by motor name, value is (degree_min, degree_max).
+
+    Raises
+    ------
+    FileNotFoundError
+        If the calibration file does not exist.
+    ValueError
+        If a motor entry is missing 'degree_min'/'degree_max', or if a required
+        motor name is missing from the file.
+    """
+    if calibration_path is None:
+        root = Path(__file__).parent.parent
+        calibration_path = root / "calibration" / "lerobot_arm_with_degrees.json"
+    elif not isinstance(calibration_path, Path):
+        calibration_path = Path(calibration_path)
+
+    if not calibration_path.exists():
+        raise FileNotFoundError(
+            f"Calibration file not found: {calibration_path}\n"
+            "Joint limits cannot be determined — refusing to initialise to avoid "
+            "sending unsafe motor commands."
+        )
+
+    with open(calibration_path, "r") as f:
+        config = json.load(f)
+
+    limits = {}
+    for m in config.get("motors", []):
+        name = m["name"]
+        if "degree_min" not in m or "degree_max" not in m:
+            raise ValueError(
+                f"Motor '{name}' in {calibration_path} is missing "
+                "'degree_min' or 'degree_max'."
+            )
+        limits[name] = (m["degree_min"], m["degree_max"])
+
+    if required_motors:
+        missing = [n for n in required_motors if n not in limits]
+        if missing:
+            raise ValueError(
+                f"Calibration file {calibration_path} is missing entries for: {missing}\n"
+                "Cannot determine safe joint limits."
+            )
+
+    return limits
+
+
 def load_joint_limits_from_calibration(
     calibration_path: Optional[Path] = None
 ) -> List[Tuple[float, float]]:
     """
-    Load joint limits from the calibration JSON file.
-    
-    MAPPING:
-    - Motor 1 (shoulder_pan): base_yaw_deg (NOT included in returned limits)
-    - Motor 2 (shoulder_lift): theta1_deg -> limits[0]
-    - Motor 3 (elbow_flex): theta2_deg -> limits[1]
-    - Motor 4 (wrist_flex): theta3_deg -> limits[2]
-    
-    Args:
-        calibration_path: Path to calibration JSON. 
-                         If None, uses default location relative to this file.
-    
-    Returns:
-        List of (min_deg, max_deg) tuples for the first 3 planar joints.
-        Format: [(theta1_min, theta1_max), (theta2_min, theta2_max), (theta3_min, theta3_max)]
+    Load joint limits for the three planar joints from the calibration JSON.
+
+    MAPPING (matches RobotState fields):
+    - shoulder_lift -> theta1_deg  -> limits[0]
+    - elbow_flex    -> theta2_deg  -> limits[1]
+    - wrist_flex    -> theta3_deg  -> limits[2]
+
+    shoulder_pan (base_yaw_deg) is intentionally excluded; it is not part
+    of the planar IK model.
+
+    Returns
+    -------
+    List of (min_deg, max_deg) tuples for the three planar joints.
     """
-    if calibration_path is None:
-        # Default location relative to this file
-        root = Path(__file__).parent.parent  # robot_program -> repo root
-        calibration_path = root / "calibration" / "lerobot_arm_with_degrees.json"
-    elif not isinstance(calibration_path, Path):
-        calibration_path = Path(calibration_path)
-    
-    if not calibration_path.exists():
-        raise FileNotFoundError(f"Calibration file not found: {calibration_path}")
-    
-    with open(calibration_path, 'r') as f:
-        config = json.load(f)
-    
-    motors = config.get("motors", [])
-    
-    # Extract limits for motors 2, 3, 4 (indices 1, 2, 3)
-    # These map to theta1, theta2, theta3 in the planar arm
-    joint_limits = []
-    for motor_id in [2, 3, 4]:  # Motor IDs are 1-indexed, we want 2, 3, 4
-        motor = next((m for m in motors if m["id"] == motor_id), None)
-        if motor is None:
-            raise ValueError(f"Motor {motor_id} not found in calibration file")
-        
-        degree_min = motor["degree_min"]
-        degree_max = motor["degree_max"]
-        joint_limits.append((degree_min, degree_max))
-    
-    return joint_limits
+    all_limits = load_all_motor_limits(calibration_path)
+    planar_joint_names = ["shoulder_lift", "elbow_flex", "wrist_flex"]
+    missing = [n for n in planar_joint_names if n not in all_limits]
+    if missing:
+        raise ValueError(f"Calibration file is missing entries for: {missing}")
+    return [all_limits[name] for name in planar_joint_names]
 
 
 class RobotArm:
@@ -129,12 +170,9 @@ class RobotArm:
         if joint_limits_deg is not None:
             self.joint_limits_deg = joint_limits_deg
         elif auto_load_limits:
-            try:
-                self.joint_limits_deg = load_joint_limits_from_calibration(calibration_path)
-            except (FileNotFoundError, ValueError, KeyError) as e:
-                # If auto-load fails, warn but continue without limits
-                print(f"Warning: Could not auto-load joint limits: {e}")
-                self.joint_limits_deg = None
+            # Raises FileNotFoundError / ValueError if calibration is unavailable or corrupt.
+            # Do NOT catch: operating without joint limits risks physical damage.
+            self.joint_limits_deg = load_joint_limits_from_calibration(calibration_path)
         else:
             self.joint_limits_deg = None
 

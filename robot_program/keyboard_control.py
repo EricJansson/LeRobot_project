@@ -4,7 +4,7 @@ import argparse
 import keyboard  # pip install keyboard
 from lerobot.robots.so101_follower.so101_follower import SO101Follower
 from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
-from utils.ports import normalize_port, auto_port
+from .utils.ports import normalize_port, auto_port
 
 # ---- Speed/feel knobs ----
 BASE_STEP_DEG     = 0.6   # main speed per tick (↑ to move faster)

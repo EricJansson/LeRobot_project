@@ -2,7 +2,7 @@
 
 import math
 from typing import List, Tuple, Optional
-import utils.FK_calculations as forward_kinematics
+from . import FK_calculations as forward_kinematics
 
 # ============================================================
 # 3-DOF PLANAR IK (ALL SOLUTIONS)
