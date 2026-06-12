@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-scripts/teleop_ps_controller.py
+Teleop with controller
 
 PS controller teleop for the SO101 arm using Cartesian IK control.
 Instead of moving individual joints, the sticks move the end-effector

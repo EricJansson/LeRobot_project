@@ -27,8 +27,16 @@ cd C:\Users\rapid\Documents\GitHub\LeRobot_project
 ```
 
 ### 4. Run the Robot arm script with controller 
+Here you can choose between two control modes:
+
+1. With axis control (teleop):
 ```powershell
-python -m scripts.run_controller_so101
+  python -m scripts.teleop_axis_control
+```
+
+2. With inverse kinematics control:
+```powershell
+  python -m scripts.teleop_ik_control
 ```
 
 #### The robot is now ready for use on Windows.
