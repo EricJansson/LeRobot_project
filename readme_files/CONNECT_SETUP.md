@@ -31,12 +31,12 @@ Here you can choose between two control modes:
 
 1. With axis control (teleop):
 ```powershell
-  python -m scripts.teleop_axis_control
+python -m scripts.teleop_axis_control
 ```
 
 2. With inverse kinematics control:
 ```powershell
-  python -m scripts.teleop_ik_control
+python -m scripts.teleop_ik_control
 ```
 
 #### The robot is now ready for use on Windows.

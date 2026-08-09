@@ -11,6 +11,23 @@ import time
 import warnings
 import pygame
 
+try:
+    from dashboard_panels import (
+        build_manual_panel,
+        default_telemetry_file,
+        read_command,
+        read_motor_limits,
+        write_command,
+    )
+except ModuleNotFoundError:  # in case it is run as a package module
+    from scripts.dashboard_panels import (
+        build_manual_panel,
+        default_telemetry_file,
+        read_command,
+        read_motor_limits,
+        write_command,
+    )
+
 # Optional: silence setuptools/pkg_resources deprecation warning from pygame
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated.*", category=UserWarning, module="pygame.pkgdata")
 
@@ -195,6 +212,10 @@ def main():
     ap = argparse.ArgumentParser(description="Visual controller dashboard")
     ap.add_argument("-i", "--index", type=int, default=0, help="Joystick index (default 0)")
     ap.add_argument("--deadzone", type=float, default=DEADZONE, help="Axis deadzone for sticks")
+    ap.add_argument("--cmd-file", type=str, default=None,
+                    help="Path to the JSON command file used to talk to teleop (enables manual motor panel).")
+    ap.add_argument("--telemetry-file", type=str, default=str(default_telemetry_file()),
+                    help="Path to the telemetry file teleop streams positions back through.")
     args = ap.parse_args()
 
     DEADZONE = args.deadzone
@@ -224,6 +245,27 @@ def main():
     small = pygame.font.SysFont("consolas,menlo,monospace", 15)
     title = pygame.font.SysFont("consolas,menlo,monospace", 22, bold=True)
 
+    # Optional manual-motor panel (active whenever teleop passes --cmd-file)
+    limits = {}
+    if args.cmd_file:
+        try:
+            limits = read_motor_limits()
+        except Exception as e:  # pragma: no cover - depends on calibration file presence
+            print(f"Warning: could not load motor limits for manual panel: {e}")
+    manual_panel = build_manual_panel(
+        cmd_file=args.cmd_file,
+        telemetry_file=args.telemetry_file,
+        limits=limits,
+        font=font,
+        small=small,
+    )
+    if manual_panel is not None:
+        pygame.key.start_text_input()
+
+    # Tracks the last mute state written to the command file (starts "active").
+    _panel_muted = False
+    _last_mute_write = 0.0
+
     last_hat = (0, 0)
 
     # main loop
@@ -235,6 +277,8 @@ def main():
             if e.type == pygame.JOYDEVICEREMOVED and e.instance_id == js.get_instance_id(): running = False
             if e.type == pygame.JOYHATMOTION:
                 last_hat = e.value
+            if manual_panel is not None:
+                manual_panel.handle_event(e)
 
         # Live reads (polling)
         axes = [js.get_axis(i) for i in range(na)]
@@ -309,13 +353,40 @@ def main():
         draw_text(screen, "Raw buttons:", (16, raw_y), small, MUTED); raw_y += 20
         for i, val in enumerate(buttons):
             t = f"B{i}: {'1' if val else '0'}"
-            draw_text(screen, t, (16 + (i%12)*60, raw_y + (i//12)*18), small, FG)
+            draw_text(screen, t, (16 + (i%8)*56, raw_y + (i//8)*18), small, FG)
+
+        # Manual motor panel (right side), plus controller mute signalling.
+        # We keep the command file fresh (throttled) so teleop can detect via
+        # timestamp whether the dashboard is alive or was closed mid-typing.
+        if manual_panel is not None:
+            # Consume any "done" ack (re-populates fields) BEFORE writing fresh
+            # mute/active status, so the ack is never clobbered in the same frame.
+            manual_panel.handle_status()
+            manual_panel.draw(screen)
+
+            now = time.time()
+            want_muted = manual_panel.focused
+            # Don't clobber an in-flight "pending" goal with a mute/active status;
+            # that must stay put until teleop acks it with "done".
+            command_in_flight = (
+                read_command(args.cmd_file) or {}
+            ).get("status") == "pending"
+            if not command_in_flight and (
+                (want_muted != _panel_muted) or (now - _last_mute_write >= 0.25)
+            ):
+                write_command(args.cmd_file, {"status": "muted" if want_muted else "active"})
+                _panel_muted = want_muted
+                _last_mute_write = now
 
 
 
 
         pygame.display.flip()
         clock.tick(FPS)
+
+    # On clean exit, make sure we leave the controller unmuted for teleop.
+    if manual_panel is not None and _panel_muted:
+        write_command(args.cmd_file, {"status": "active"})
 
     pygame.quit()
     return 0
