@@ -36,7 +36,7 @@ python -m scripts.teleop_axis_control
 
 2. With inverse kinematics control:
 ```powershell
-python -m scripts.teleop_ik_control
+python -m scripts.main_teleop_ik
 ```
 
 #### The robot is now ready for use on Windows.
