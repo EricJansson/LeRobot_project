@@ -67,3 +67,6 @@ htmlcov/
 
 # Project runtime IPC files (dashboard <-> teleop communication)
 .runtime/
+
+# Dashboard log output
+scripts/dashboard_log.txt
