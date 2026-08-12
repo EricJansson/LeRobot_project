@@ -77,6 +77,11 @@ PRESET_MAX_STEP_DEG = 20.0   # full-speed deg/tick at speed=1.0 (tune this)
 # dashboard is alive; older values mean it was closed/crashed -> don't stay muted.
 STALE_DASHBOARD_S = 0.8
 
+# If no fresh dashboard status is seen for this long, assume the dashboard was
+# closed and shut the whole teleop system down cleanly. The dashboard refreshes
+# every ~0.25s, so a generous threshold avoids spurious exits on transient hiccups.
+DASHBOARD_DEAD_S = 2.0
+
 # How often (seconds) live joint positions are pushed to the dashboard.
 TELEMETRY_INTERVAL_S = 0.1
 
@@ -631,9 +636,24 @@ def run_ik_teleop_loop(
     """
     dt = 1.0 / RATE_HZ
     try:
+        # Grace period before we start treating a missing/stale dashboard as dead.
+        # The dashboard is launched in parallel and may take a moment to write its
+        # first status, so don't shut down during normal startup.
+        startup_deadline = time.time() + DASHBOARD_DEAD_S
         while True:
             if not gp.step():
                 break  # controller disconnected
+
+            # If the dashboard hasn't refreshed its status for a while it has
+            # been closed/crashed, so shut the whole arm system down cleanly.
+            dashboard_cmd = read_command(cmd_file)
+            stale = (
+                dashboard_cmd is None
+                or (time.time() - dashboard_cmd.get("ts", 0)) > DASHBOARD_DEAD_S
+            )
+            if stale and time.time() > startup_deadline:
+                print("\nDashboard closed; shutting down arm teleop.")
+                break
 
             # The dashboard always receives live telemetry; its manual-Act
             # commands are locked out during an animation (see handle_dashboard_command).

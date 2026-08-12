@@ -58,7 +58,10 @@ def main() -> None:
     # (its own console closes too fast to read), the traceback survives here.
     dashboard_log = Path(__file__).parent / "dashboard_log.txt"
 
-    # Launch the controller dashboard in a separate process
+    # Launch the controller dashboard in a separate process.
+    # Windows: use CREATE_NO_WINDOW so no extra (empty) console window pops up;
+    # stdout/stderr are already captured to the log file below.
+    CREATE_NO_WINDOW = 0x08000000
     dashboard_script = Path(__file__).parent / "controller_dashboard.py"
     with open(dashboard_log, "w") as dlf:
         dashboard_proc = subprocess.Popen(
@@ -66,7 +69,7 @@ def main() -> None:
              "--cmd-file", str(cmd_file), "--telemetry-file", str(telemetry_file)],
             stdout=dlf,
             stderr=subprocess.STDOUT,
-            creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0,
+            creationflags=CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
     print(f"Controller dashboard launched (PID {dashboard_proc.pid}).")
     print(f"Dashboard log: {dashboard_log}")
