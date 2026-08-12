@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import math
 import time
+from typing import Callable
 
 # Ensure the project root is on sys.path regardless of how this script is invoked
 
@@ -76,11 +77,6 @@ PRESET_MAX_STEP_DEG = 20.0   # full-speed deg/tick at speed=1.0 (tune this)
 # The dashboard refreshes this every ~0.25s, so a value <= this means the
 # dashboard is alive; older values mean it was closed/crashed -> don't stay muted.
 STALE_DASHBOARD_S = 0.8
-
-# If no fresh dashboard status is seen for this long, assume the dashboard was
-# closed and shut the whole teleop system down cleanly. The dashboard refreshes
-# every ~0.25s, so a generous threshold avoids spurious exits on transient hiccups.
-DASHBOARD_DEAD_S = 2.0
 
 # How often (seconds) live joint positions are pushed to the dashboard.
 TELEMETRY_INTERVAL_S = 0.1
@@ -627,6 +623,7 @@ def run_ik_teleop_loop(
     hat: list[int],
     cmd_file,
     telemetry_file,
+    dashboard_alive: Callable[[], bool] | None = None,
 ) -> None:
     """Run the live controller game loop until disconnect or KeyboardInterrupt.
 
@@ -639,19 +636,11 @@ def run_ik_teleop_loop(
         # Grace period before we start treating a missing/stale dashboard as dead.
         # The dashboard is launched in parallel and may take a moment to write its
         # first status, so don't shut down during normal startup.
-        startup_deadline = time.time() + DASHBOARD_DEAD_S
         while True:
             if not gp.step():
                 break  # controller disconnected
 
-            # If the dashboard hasn't refreshed its status for a while it has
-            # been closed/crashed, so shut the whole arm system down cleanly.
-            dashboard_cmd = read_command(cmd_file)
-            stale = (
-                dashboard_cmd is None
-                or (time.time() - dashboard_cmd.get("ts", 0)) > DASHBOARD_DEAD_S
-            )
-            if stale and time.time() > startup_deadline:
+            if dashboard_alive is not None and not dashboard_alive():
                 print("\nDashboard closed; shutting down arm teleop.")
                 break
 

@@ -163,6 +163,20 @@ def motor_names_from_limits(limits: Dict[str, Tuple[float, float]]) -> List[str]
 
 # ---------------------------------------------------------------- the panel
 
+PANEL_MARGIN = 16  # gap from the window edges
+
+
+def _default_panel_rect(window_size: Optional[Tuple[int, int]] = None) -> pygame.Rect:
+    """Compute a panel rect anchored to the bottom-right corner of the window."""
+    w, h = window_size if window_size else (1020, 700)
+    return pygame.Rect(
+        w - ManualJointPanel.FRAME_W - PANEL_MARGIN,
+        h - ManualJointPanel.FRAME_H - PANEL_MARGIN,
+        ManualJointPanel.FRAME_W,
+        ManualJointPanel.FRAME_H,
+    )
+
+
 class ManualJointPanel:
     """
     Six text fields (one per motor) + Act button + live validation.
@@ -187,12 +201,18 @@ class ManualJointPanel:
         limits: Dict[str, Tuple[float, float]],
         font,
         small_font,
-        panel_rect=pygame.Rect(590, 455, 400, 215),
+        panel_rect=None,
+        window_size: Optional[Tuple[int, int]] = None,
     ) -> None:
         self.cmd_file = Path(cmd_file)
         self.telemetry_file = Path(telemetry_file)
         self.font = font
         self.small = small_font
+
+        # Anchor to the bottom-right corner of the window by default.
+        self._window_size = tuple(window_size) if window_size else (1020, 700)
+        if panel_rect is None:
+            panel_rect = _default_panel_rect(self._window_size)
         self.panel_rect = pygame.Rect(panel_rect)
 
         self.names: List[str] = motor_names_from_limits(limits)
@@ -218,6 +238,12 @@ class ManualJointPanel:
         self._lazy_build_rects()
 
     # ---------------------------------------------------------- geometry
+    def reposition(self, window_size: Tuple[int, int]) -> None:
+        """Re-anchor the panel to the bottom-right corner of a (possibly resized) window."""
+        self._window_size = tuple(window_size)
+        self.panel_rect = _default_panel_rect(self._window_size)
+        self._lazy_build_rects()
+
     def _lazy_build_rects(self) -> None:
         px, py = self.panel_rect.topleft
         self.field_rects: Dict[str, pygame.Rect] = {}
@@ -458,7 +484,7 @@ class ManualJointPanel:
         return r
 
 
-def build_manual_panel(cmd_file, telemetry_file, limits, font, small) -> Optional[ManualJointPanel]:
+def build_manual_panel(cmd_file, telemetry_file, limits, font, small, window_size=None) -> Optional[ManualJointPanel]:
     """Small factory used by the dashboard. Requires command + telemetry paths and limits."""
     if not cmd_file or not telemetry_file or not limits:
         return None
@@ -468,4 +494,5 @@ def build_manual_panel(cmd_file, telemetry_file, limits, font, small) -> Optiona
         limits=limits,
         font=font,
         small_font=small,
+        window_size=window_size,
     )

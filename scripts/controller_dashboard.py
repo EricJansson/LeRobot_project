@@ -6,7 +6,6 @@ Controller Dashboard (pygame)
 """
 
 import argparse
-import math
 import time
 import warnings
 import pygame
@@ -32,7 +31,7 @@ except ModuleNotFoundError:  # in case it is run as a package module
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated.*", category=UserWarning, module="pygame.pkgdata")
 
 # ---- Config ----
-WINDOW_W, WINDOW_H = 1020, 700
+WINDOW_W, WINDOW_H = 720, 480
 BG = (18, 18, 20)
 FG = (230, 230, 235)
 MUTED = (140, 140, 150)
@@ -43,8 +42,9 @@ ERR = (240, 90, 90)
 
 FPS = 90
 DEADZONE = 0.08
-AXIS_BAR_W = 220
-AXIS_BAR_H = 10
+# If the controller briefly drops out (USB/driver hiccup), wait this long for it
+# to reconnect before giving up and closing the dashboard.
+CONTROLLER_RECONNECT_S = 1.5
 
 # --- Controller mapping (edit these to match your gamepad) ---
 # Give friendly labels to the *indices* reported by pygame/SDL for YOUR controller.
@@ -72,15 +72,6 @@ BUTTON_LABELS = {
     9: "R3",        # Left stick click
     10: "Guide (Unused?)" # Rename to "Unused" if it never lights up
 }
-# Optional layout rows (indices) – adjust as you like. Any buttons not listed here will be appended after.
-BUTTON_ROWS = [
-    [4, 5],          # Shoulders: LB, RB
-    [0, 1, 2, 3],    # Face: Cross, Circle, Square/MR, Triangle/ML
-    [8, 9],          # Stick clicks: L3, R3
-    [6, 7, 10],      # System: Back, Start, Guide/Unused
-]
-HIDDEN_BUTTONS = {10}
-
 
 TRIGGER_NAMES = {"LT", "RT"}
 
@@ -99,37 +90,9 @@ def draw_text(surf, text, pos, font, color=FG, align="topleft"):
     surf.blit(img, r)
     return r
 
-def draw_axis_bar(surf, x, y, label, value, is_trigger, font):
-    # value: sticks in [-1..1], triggers in [0..1]
-    label_color = FG
-    pygame.draw.rect(surf, (35, 35, 40), (x, y, AXIS_BAR_W, AXIS_BAR_H), border_radius=4)
-
-    if is_trigger:
-        # 0..1 fill to the right
-        fill_w = int(AXIS_BAR_W * clamp(value, 0, 1))
-        pygame.draw.rect(surf, ACCENT, (x, y, fill_w, AXIS_BAR_H), border_radius=4)
-        val_txt = f"{value:0.3f}"
-    else:
-        # center at zero, negative fills left, positive fills right
-        cx = x + AXIS_BAR_W // 2
-        zero_rect = pygame.Rect(x, y, AXIS_BAR_W, AXIS_BAR_H)
-        pygame.draw.line(surf, MUTED, (cx, y-3), (cx, y+AXIS_BAR_H+3), 1)
-
-        v = clamp(value, -1, 1)
-        if v >= 0:
-            fill = pygame.Rect(cx, y, int((AXIS_BAR_W//2) * v), AXIS_BAR_H)
-        else:
-            fill = pygame.Rect(cx + int((AXIS_BAR_W//2) * v), y, int((AXIS_BAR_W//2) * -v), AXIS_BAR_H)
-        pygame.draw.rect(surf, ACCENT, fill, border_radius=4)
-        val_txt = f"{value:+0.3f}"
-
-    draw_text(surf, f"{label}", (x, y-20), font, label_color)
-    draw_text(surf, val_txt, (x+AXIS_BAR_W+10, y-6), font, MUTED)
-
-def draw_stick_circle(surf, x, y, r, label, xv, yv, font):
+def draw_stick_circle(surf, x, y, r, xv, yv, clicked=False):
     # xv,yv in [-1..1]; draw dot position
     pygame.draw.circle(surf, (35, 35, 40), (x, y), r, width=0)
-    pygame.draw.circle(surf, MUTED, (x, y), r, width=1)
     pygame.draw.line(surf, MUTED, (x-r, y), (x+r, y), 1)
     pygame.draw.line(surf, MUTED, (x, y-r), (x, y+r), 1)
     # deadzone ring
@@ -140,53 +103,78 @@ def draw_stick_circle(surf, x, y, r, label, xv, yv, font):
     px = int(x + clamp(xv, -1, 1) * (r-3))
     py = int(y + clamp(yv, -1, 1) * (r-3))
     pygame.draw.circle(surf, ACCENT, (px, py), 5)
-    draw_text(surf, label, (x, y + r + 8), font, MUTED, align="midtop")
-    draw_text(surf, f"({xv:+.2f}, {yv:+.2f})", (x, y + r + 28), font, FG, align="midtop")
+    # highlight on L3/R3 click: brighter ring + inner glow
+    if clicked:
+        pygame.draw.circle(surf, OK, (x, y), r - 2, width=4)
+        glow = pygame.Surface((r*2, r*2), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (90, 200, 140, 60), (r, r), r)
+        surf.blit(glow, (x - r, y - r))
+    else:
+        pygame.draw.circle(surf, MUTED, (x, y), r, width=1)
 
-def draw_buttons_grid(surf, x, y, button_states, font, button_labels, button_rows=None, hidden_buttons=None):
-    if hidden_buttons is None:
-        hidden_buttons = set()
-    pad_x = 8
-    pad_y = 10
-    pill_w, pill_h = 96, 26  # room for "Triangle / ML"
+def draw_button_pill(surf, x, y, w, h, label, pressed, font, off_color=(50, 50, 55)):
+    rect = pygame.Rect(x, y, w, h)
+    color = OK if pressed else off_color
+    pygame.draw.rect(surf, color, rect, border_radius=8)
+    if not pressed:
+        pygame.draw.rect(surf, MUTED, rect, width=1, border_radius=8)
+    draw_text(surf, label, rect.center, font, FG, align="center")
+    return rect
 
-    drawn = set()
+def draw_trigger_bar(surf, x, y, label, value, font, bar_w=14, bar_h=60):
+    # Vertical bar that fills upward; value in [0..1].
+    pygame.draw.rect(surf, (35, 35, 40), (x, y, bar_w, bar_h), border_radius=4)
+    fill_h = int(bar_h * clamp(value, 0, 1))
+    pygame.draw.rect(surf, ACCENT, (x, y + bar_h - fill_h, bar_w, fill_h), border_radius=4)
+    draw_text(surf, label, (x + bar_w//2, y + bar_h + 6), font, MUTED, align="midtop")
 
-    def draw_row(row_indices, row_y):
-        bx = x
-        for idx in row_indices:
-            if idx in hidden_buttons or idx < 0 or idx >= len(button_states):
-                continue
-            pressed = bool(button_states[idx])
-            label = button_labels.get(idx, f"B{idx}")
-            rect = pygame.Rect(bx, row_y, pill_w, pill_h)
-            color = OK if pressed else (50, 50, 55)
-            border = 0 if pressed else 1
-            pygame.draw.rect(surf, color, rect, border_radius=8)
-            if border: pygame.draw.rect(surf, MUTED, rect, width=1, border_radius=8)
-            draw_text(surf, label, rect.center, font, FG, align="center")
-            bx += pill_w + pad_x
-            drawn.add(idx)
+def draw_face_pill(surf, cx, cy, radius, shape_idx, pressed):
+    # Circular face button with a PlayStation-style shape glyph inside.
+    color = OK if pressed else (50, 50, 55)
+    pygame.draw.circle(surf, color, (cx, cy), radius)
+    if not pressed:
+        pygame.draw.circle(surf, MUTED, (cx, cy), radius, width=1)
 
-    # Draw configured rows
-    row_y = y
-    if button_rows:
-        for row in button_rows:
-            draw_row(row, row_y)
-            row_y += pill_h + pad_y
+    # Glyph color: dark on green-fill (pressed), light otherwise
+    gcol = BG if pressed else FG
+    s = radius * 0.55
 
-    # Any remaining buttons not in the rows (append)
-    leftover = [i for i in range(len(button_states)) if i not in drawn and i not in hidden_buttons]
-    if leftover:
-        draw_row(leftover, row_y)
+    if shape_idx == 3:      # Triangle (drawn a bit smaller to stay inside)
+        kh = s * 0.8
+        pts = [(cx, cy - kh - 1), (cx - kh, cy + s*0.8 - 1), (cx + kh, cy + s*0.8 - 1)]
+        pygame.draw.polygon(surf, gcol, pts, width=2)
+    elif shape_idx == 2:    # Square
+        sq = pygame.Rect(0, 0, int(s*2), int(s*2))
+        sq.center = (cx, cy)
+        pygame.draw.rect(surf, gcol, sq, width=2, border_radius=2)
+    elif shape_idx == 1:    # Circle
+        pygame.draw.circle(surf, gcol, (cx, cy), int(s), width=2)
+    else:                   # Cross (drawn a bit smaller to stay inside)
+        kh = s * 0.75
+        pygame.draw.line(surf, gcol, (cx - kh, cy - kh), (cx + kh, cy + kh), 2)
+        pygame.draw.line(surf, gcol, (cx - kh, cy + kh), (cx + kh, cy - kh), 2)
+
+def draw_face_diamond(surf, cx, cy, r, button_states, radius=11):
+    # PlayStation-style diamond. button_states indices:
+    #   0 Cross (top), 1 Circle (right), 2 Square (left), 3 Triangle (top)
+    layout = [
+        (3, 0, -1),   # Triangle   -> top
+        (2, -1, 0),   # Square     -> left
+        (1, 1, 0),    # Circle     -> right
+        (0, 0, 1),    # Cross      -> bottom
+    ]
+    for idx, dx, dy in layout:
+        if idx < 0 or idx >= len(button_states):
+            continue
+        px = int(cx + dx * r)
+        py = int(cy + dy * r)
+        draw_face_pill(surf, px, py, radius, idx, bool(button_states[idx]))
 
 
 
 
-def draw_dpad(surf, x, y, hat_xy, font):
+def draw_dpad(surf, x, y, hat_xy, font, size=22):
     # hat_xy is (x,y) in {-1,0,1}
-    size = 22
-    # base squares
     up = pygame.Rect(x+size, y, size, size)
     down = pygame.Rect(x+size, y+2*size, size, size)
     left = pygame.Rect(x, y+size, size, size)
@@ -204,8 +192,7 @@ def draw_dpad(surf, x, y, hat_xy, font):
     if hx < 0: pygame.draw.rect(surf, ACCENT, left, border_radius=5)
     if hx > 0: pygame.draw.rect(surf, ACCENT, right, border_radius=5)
 
-    draw_text(surf, "D-Pad", (x+size*1.5, y+3*size+10), font, MUTED, align="midtop")
-    draw_text(surf, f"{hat_xy}", (x+size*1.5, y+3*size+30), font, FG, align="midtop")
+    # draw_text(surf, "D-Pad", (x+size*1.5, y+3*size+10), font, MUTED, align="midtop")
 
 def main():
     global DEADZONE
@@ -237,7 +224,7 @@ def main():
     name = js.get_name()
     na, nb, nh = js.get_numaxes(), js.get_numbuttons(), js.get_numhats()
 
-    screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
+    screen = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.RESIZABLE)
     pygame.display.set_caption("Controller Dashboard")
     clock = pygame.time.Clock()
 
@@ -258,32 +245,96 @@ def main():
         limits=limits,
         font=font,
         small=small,
+        window_size=(WINDOW_W, WINDOW_H),
     )
+    if args.cmd_file:
+        write_command(args.cmd_file, {"status": "active"})
     if manual_panel is not None:
         pygame.key.start_text_input()
+    elif args.cmd_file:
+        print(
+            "[dashboard] WARNING: manual motor panel disabled "
+            "because motor limits could not be loaded."
+        )
+        
 
-    # Tracks the last mute state written to the command file (starts "active").
+    # Tracks whether the controller should be muted (teleop ignores gamepad while true).
     _panel_muted = False
-    _last_mute_write = 0.0
 
     last_hat = (0, 0)
 
+    # Track the live window size (changes on resize).
+    win_w, win_h = WINDOW_W, WINDOW_H
+
     # main loop
     running = True
+    controller_lost_at = None   # set when the joystick drops; grace window before exit
     while running:
         for e in pygame.event.get():
             if e.type == pygame.QUIT: running = False
             if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE: running = False
-            if e.type == pygame.JOYDEVICEREMOVED and e.instance_id == js.get_instance_id(): running = False
+            if e.type == pygame.JOYDEVICEREMOVED and e.instance_id == js.get_instance_id():
+                # Don't exit immediately: USB/driver dropouts can be momentary.
+                if controller_lost_at is None:
+                    controller_lost_at = time.time()
+                    print(f"[dashboard] controller removed (id={e.instance_id}); "
+                          f"waiting {CONTROLLER_RECONNECT_S}s for reconnect...")
             if e.type == pygame.JOYHATMOTION:
                 last_hat = e.value
+            if e.type == pygame.VIDEORESIZE:
+                win_w, win_h = e.w, e.h
+                try:
+                    screen = pygame.display.set_mode((win_w, win_h), pygame.RESIZABLE)
+                except pygame.error as er:
+                    print(f"[dashboard] WARNING: resize failed: {er}")
+                if manual_panel is not None:
+                    manual_panel.reposition((win_w, win_h))
             if manual_panel is not None:
                 manual_panel.handle_event(e)
 
-        # Live reads (polling)
-        axes = [js.get_axis(i) for i in range(na)]
-        buttons = [js.get_button(i) for i in range(nb)]
-        hats = [js.get_hat(i) for i in range(nh)]
+        # If the controller dropped out, try to recover it within the grace window.
+        if controller_lost_at is not None:
+            elapsed = time.time() - controller_lost_at
+            if elapsed > CONTROLLER_RECONNECT_S:
+                print("[dashboard] controller did not reconnect; closing dashboard.")
+                running = False
+                break
+            # Attempt to re-acquire the same device index.
+            recovered = False
+            try:
+                pygame.joystick.quit()
+                pygame.joystick.init()
+                if pygame.joystick.get_count() > args.index:
+                    js = pygame.joystick.Joystick(args.index)
+                    js.init()
+                    name = js.get_name()
+                    na, nb, nh = js.get_numaxes(), js.get_numbuttons(), js.get_numhats()
+                    recovered = True
+            except pygame.error as er:
+                print(f"[dashboard] WARNING: controller recovery error: {er}")
+            if recovered:
+                controller_lost_at = None
+                print(f"[dashboard] controller reconnected: {name}")
+            else:
+                # Nothing recovered yet; keep looping to wait for the grace window.
+                pygame.display.flip()
+                clock.tick(FPS)
+                continue
+
+        # Live reads (polling) - guarded so a mid-poll disconnect can't crash us.
+        try:
+            axes = [js.get_axis(i) for i in range(na)]
+            buttons = [js.get_button(i) for i in range(nb)]
+            hats = [js.get_hat(i) for i in range(nh)]
+        except pygame.error as er:
+            print(f"[dashboard] WARNING: joystick read error: {er}")
+            # Treat like a dropped controller and enter the grace window.
+            if controller_lost_at is None:
+                controller_lost_at = time.time()
+                print(f"[dashboard] controller read failed; waiting {CONTROLLER_RECONNECT_S}s for reconnect...")
+            pygame.display.flip()
+            clock.tick(FPS)
+            continue
         if nh >= 1:
             last_hat = hats[0]
 
@@ -303,7 +354,6 @@ def main():
         draw_text(screen, f"Device: {name}", (16, 44), small, MUTED)
         draw_text(screen, f"Axes:{na} Buttons:{nb} Hats:{nh}  |  Deadzone:{DEADZONE:.2f}", (16, 66), small, MUTED)
 
-        # Left column: sticks as circles
         # Pull labeled values with safe fallbacks
         lx = ax_named.get("LX", axes[0] if na > 0 else 0.0)
         ly = ax_named.get("LY", axes[1] if na > 1 else 0.0)
@@ -314,69 +364,62 @@ def main():
         rt = ax_named.get("RT", norm_trigger(axes[5] if na > 5 else -1.0))
 
 
-        draw_stick_circle(screen, 150, 160, 70, "Left Stick", lx, ly, small)
-        draw_stick_circle(screen, 150, 360, 70, "Right Stick", rx, ry, small)
+        # ---- Controller-style input visualization (compact box) ----
+        BX, BY, BW, BH = 16, 86, 170, 200
+        box_rect = pygame.Rect(BX, BY, BW, BH)
+        pygame.draw.rect(screen, (26, 26, 30), box_rect, border_radius=10)
+        pygame.draw.rect(screen, ACCENT, box_rect, width=1, border_radius=10)
 
-        # Middle: axis bars (sticks + triggers)
-        colx = 300
-        y = 120
-        # Sticks
-        draw_axis_bar(screen, colx, y,   "LX", lx, False, small); y += 34
-        draw_axis_bar(screen, colx, y,   "LY", ly, False, small); y += 34
-        draw_axis_bar(screen, colx, y,   "RX", rx, False, small); y += 34
-        draw_axis_bar(screen, colx, y,   "RY", ry, False, small); y += 48
-        draw_axis_bar(screen, colx, y,   "LT", lt, True, small); y += 34
-        draw_axis_bar(screen, colx, y,   "RT", rt, True, small); y += 48
+        # Pressed states (read once)
+        lb_pressed = bool(buttons[4] if len(buttons) > 4 else False)
+        rb_pressed = bool(buttons[5] if len(buttons) > 5 else False)
+        back_pressed = bool(buttons[6] if len(buttons) > 6 else False)
+        start_pressed = bool(buttons[7] if len(buttons) > 7 else False)
+        l3_pressed = bool(buttons[8] if len(buttons) > 8 else False)
+        r3_pressed = bool(buttons[9] if len(buttons) > 9 else False)
 
-        # Right: buttons grid + D-pad
-        draw_text(screen, "Buttons", (590, 100), small, MUTED)
-        draw_buttons_grid(screen, 590, 120, buttons, small, button_labels=BUTTON_LABELS, button_rows=BUTTON_ROWS, hidden_buttons=HIDDEN_BUTTONS)
+        # Top row: triggers at corners, LB/RB on each half
+        draw_trigger_bar(screen, BX + 4,   BY + 10, "LT", lt, small, bar_w=12, bar_h=36)
+        draw_trigger_bar(screen, BX + BW - 16, BY + 10, "RT", rt, small, bar_w=12, bar_h=36)
+        draw_button_pill(screen, BX + 18, BY + 8, 48, 14, "LB", lb_pressed, small)
+        draw_button_pill(screen, BX + BW - 66, BY + 8, 48, 14, "RB", rb_pressed, small)
 
-        draw_text(screen, "D-Pad", (590, 300), small, MUTED)
-        draw_dpad(screen, 590, 320, last_hat if nh >= 1 else (0, 0), small)
+        # Center row: Back/Start just below LB/RB
+        draw_button_pill(screen, BX + 28, BY + 30, 48, 14, "Back", back_pressed, small)
+        draw_button_pill(screen, BX + BW - 76, BY + 30, 48, 14, "Start", start_pressed, small)
+
+        # Middle row: D-Pad (left), face diamond (right), horizontally aligned
+        draw_dpad(screen, BX + 18, BY + 66, last_hat if nh >= 1 else (0, 0), small, size=18)
+        draw_face_diamond(screen, BX + BW - 50, BY + 93, 20, buttons, radius=11)
+
+        # Bottom row: sticks, below their respective D-Pad / diamond
+        draw_stick_circle(screen, BX + 45, BY + 160, 26, lx, ly, clicked=l3_pressed)
+        draw_stick_circle(screen, BX + BW - 50, BY + 160, 26, rx, ry, clicked=r3_pressed)
 
         # Legend / hints
-        draw_text(screen, "ESC to quit • Close window to quit", (16, WINDOW_H-28), small, MUTED)
-
-
-
-        # Raw indices viewer (helps calibrate mappings)
-        raw_y = 480
-        draw_text(screen, "Raw axes:", (16, raw_y), small, MUTED)
-        raw_y += 20
-        for i, raw in enumerate(axes):
-            t = f"AX{i}: {raw:+.3f}"
-            draw_text(screen, t, (16, raw_y), small, FG)
-            raw_y += 18
-
-        raw_y += 8
-        draw_text(screen, "Raw buttons:", (16, raw_y), small, MUTED); raw_y += 20
-        for i, val in enumerate(buttons):
-            t = f"B{i}: {'1' if val else '0'}"
-            draw_text(screen, t, (16 + (i%8)*56, raw_y + (i//8)*18), small, FG)
+        draw_text(screen, "ESC to quit • Close window to quit", (16, win_h-28), small, MUTED)
 
         # Manual motor panel (right side), plus controller mute signalling.
-        # We keep the command file fresh (throttled) so teleop can detect via
-        # timestamp whether the dashboard is alive or was closed mid-typing.
+        # We write the command file EVERY frame (unthrottled) so teleop's
+        # dashboard-alive check (a fresh timestamp) never fires falsely.
         if manual_panel is not None:
             # Consume any "done" ack (re-populates fields) BEFORE writing fresh
             # mute/active status, so the ack is never clobbered in the same frame.
             manual_panel.handle_status()
             manual_panel.draw(screen)
 
-            now = time.time()
             want_muted = manual_panel.focused
             # Don't clobber an in-flight "pending" goal with a mute/active status;
             # that must stay put until teleop acks it with "done".
             command_in_flight = (
                 read_command(args.cmd_file) or {}
             ).get("status") == "pending"
-            if not command_in_flight and (
-                (want_muted != _panel_muted) or (now - _last_mute_write >= 0.25)
-            ):
-                write_command(args.cmd_file, {"status": "muted" if want_muted else "active"})
+            if not command_in_flight:
+                try:
+                    write_command(args.cmd_file, {"status": "muted" if want_muted else "active"})
+                except Exception as er:
+                    print(f"[dashboard] WARNING: failed to write status file: {er}")
                 _panel_muted = want_muted
-                _last_mute_write = now
 
 
 
@@ -386,7 +429,10 @@ def main():
 
     # On clean exit, make sure we leave the controller unmuted for teleop.
     if manual_panel is not None and _panel_muted:
-        write_command(args.cmd_file, {"status": "active"})
+        try:
+            write_command(args.cmd_file, {"status": "active"})
+        except Exception as er:
+            print(f"[dashboard] WARNING: failed to write active status on exit: {er}")
 
     pygame.quit()
     return 0

@@ -74,32 +74,42 @@ def main() -> None:
     print(f"Controller dashboard launched (PID {dashboard_proc.pid}).")
     print(f"Dashboard log: {dashboard_log}")
 
-    with RobotArmController.from_port(port=port) as robot:
-        # connect() → enable_torque() → sync_from_hardware() already called by __enter__
+    try:
+        with RobotArmController.from_port(port=port) as robot:
+            # connect() → enable_torque() → sync_from_hardware() already called by __enter__
 
-        # Seed targets from the arm's actual current pose
-        state = TeleopState.from_robot(robot)
-        print(f"Connected. Starting pose: x={state.target_x:.2f} y={state.target_y:.2f} "
-              f"z={state.target_z:.2f} phi={state.target_phi:.2f}")
-        print("Hold LB to move. Ctrl+C to exit.\n")
+            # Seed targets from the arm's actual current pose
+            state = TeleopState.from_robot(robot)
+            print(f"Connected. Starting pose: x={state.target_x:.2f} y={state.target_y:.2f} "
+                f"z={state.target_z:.2f} phi={state.target_phi:.2f}")
+            print("Hold LB to move. Ctrl+C to exit.\n")
 
-        # Shared, mutable input containers observed by both the bindings
-        # callbacks and the run loop. "hat" is a 2-element mutable list that the
-        # callback updates in place (setup_teleop_bindings writes hat[0]/hat[1]).
-        axes = {name: 0.0 for name in ("LX", "LY", "RX", "RY", "LT", "RT")}
-        buttons_held: set = set()
-        hat = [0, 0]
+            # Shared, mutable input containers observed by both the bindings
+            # callbacks and the run loop. "hat" is a 2-element mutable list that the
+            # callback updates in place (setup_teleop_bindings writes hat[0]/hat[1]).
+            axes = {name: 0.0 for name in ("LX", "LY", "RX", "RY", "LT", "RT")}
+            buttons_held: set = set()
+            hat = [0, 0]
 
-        bindings = setup_teleop_bindings(robot, state, buttons_held, axes, hat)
+            bindings = setup_teleop_bindings(robot, state, buttons_held, axes, hat)
 
-        gp = setup_gamepad(index=args.index)
-        gp.set_bindings(bindings, profile="xyz_teleop")
-        gp.switch_profile("xyz_teleop")
+            gp = setup_gamepad(index=args.index)
+            gp.set_bindings(bindings, profile="xyz_teleop")
+            gp.switch_profile("xyz_teleop")
 
-        run_ik_teleop_loop(
-            robot, state, gp, buttons_held, axes, hat,
-            cmd_file, telemetry_file,
-        )
+            run_ik_teleop_loop(
+                robot, state, gp, buttons_held, axes, hat,
+                cmd_file, telemetry_file,
+                dashboard_alive=lambda: dashboard_proc.poll() is None,
+            )
+    finally:
+        if dashboard_proc.poll() is None:
+            dashboard_proc.terminate()
+            try:
+                dashboard_proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                dashboard_proc.kill()
+                dashboard_proc.wait()
 
     print("\nDisconnected and torque disabled.")
 
