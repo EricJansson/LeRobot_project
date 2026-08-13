@@ -13,6 +13,8 @@ import pygame
 try:
     from dashboard_panels import (
         build_manual_panel,
+        build_plan_panel,
+        default_plan_cmd_file,
         default_telemetry_file,
         read_command,
         read_motor_limits,
@@ -21,6 +23,8 @@ try:
 except ModuleNotFoundError:  # in case it is run as a package module
     from scripts.dashboard_panels import (
         build_manual_panel,
+        build_plan_panel,
+        default_plan_cmd_file,
         default_telemetry_file,
         read_command,
         read_motor_limits,
@@ -32,6 +36,11 @@ warnings.filterwarnings("ignore", message="pkg_resources is deprecated.*", categ
 
 # ---- Config ----
 WINDOW_W, WINDOW_H = 720, 480
+# Taller window used when the plan panel is enabled.
+WINDOW_H_PLAN = 760
+# Plan panel geometry (bottom-left of the window).
+PLAN_PANEL_W = 680
+PLAN_PANEL_H = 320
 BG = (18, 18, 20)
 FG = (230, 230, 235)
 MUTED = (140, 140, 150)
@@ -203,6 +212,12 @@ def main():
                     help="Path to the JSON command file used to talk to teleop (enables manual motor panel).")
     ap.add_argument("--telemetry-file", type=str, default=str(default_telemetry_file()),
                     help="Path to the telemetry file teleop streams positions back through.")
+    ap.add_argument("--plan-file", type=str, default=None,
+                    help="Path to the plan JSON file. Enables the plan panel "
+                         "(requires teleop_plan_control running).")
+    ap.add_argument("--plan-cmd-file", type=str, default=None,
+                    help="Path to the plan-command file used by the plan panel. "
+                         "Defaults to a project-local runtime file.")
     args = ap.parse_args()
 
     DEADZONE = args.deadzone
@@ -224,7 +239,12 @@ def main():
     name = js.get_name()
     na, nb, nh = js.get_numaxes(), js.get_numbuttons(), js.get_numhats()
 
-    screen = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.RESIZABLE)
+    # When the plan panel is enabled we need a taller window so it can sit below
+    # the manual-motor panel without overlapping the controller visual.
+    plan_mode = bool(args.plan_file)
+    win_h = WINDOW_H_PLAN if plan_mode else WINDOW_H
+
+    screen = pygame.display.set_mode((WINDOW_W, win_h), pygame.RESIZABLE)
     pygame.display.set_caption("Controller Dashboard")
     clock = pygame.time.Clock()
 
@@ -232,7 +252,9 @@ def main():
     small = pygame.font.SysFont("consolas,menlo,monospace", 15)
     title = pygame.font.SysFont("consolas,menlo,monospace", 22, bold=True)
 
-    # Optional manual-motor panel (active whenever teleop passes --cmd-file)
+    # Optional manual-motor panel (active whenever teleop passes --cmd-file).
+    # In plan mode we anchor it to the top-right so it never overlaps the plan
+    # panel at the bottom of the (taller) window.
     limits = {}
     if args.cmd_file:
         try:
@@ -245,7 +267,8 @@ def main():
         limits=limits,
         font=font,
         small=small,
-        window_size=(WINDOW_W, WINDOW_H),
+        panel_rect=(pygame.Rect(WINDOW_W - 416, 90, 400, 215) if plan_mode else None),
+        window_size=(WINDOW_W, win_h),
     )
     if args.cmd_file:
         write_command(args.cmd_file, {"status": "active"})
@@ -256,7 +279,19 @@ def main():
             "[dashboard] WARNING: manual motor panel disabled "
             "because motor limits could not be loaded."
         )
-        
+
+    # Optional plan panel (active whenever teleop passes --plan-file). It is
+    # anchored to the bottom-left, below the manual panel. Plan commands are
+    # sent through a separate file so they don't collide with mute/active.
+    plan_panel = build_plan_panel(
+        cmd_file=args.cmd_file,
+        telemetry_file=args.telemetry_file,
+        plan_path=args.plan_file,
+        plan_cmd_file=args.plan_cmd_file or str(default_plan_cmd_file()),
+        font=font,
+        small=small,
+        panel_rect=pygame.Rect(16, win_h - PLAN_PANEL_H - 16, PLAN_PANEL_W, PLAN_PANEL_H),
+    )
 
     # Tracks whether the controller should be muted (teleop ignores gamepad while true).
     _panel_muted = False
@@ -264,7 +299,7 @@ def main():
     last_hat = (0, 0)
 
     # Track the live window size (changes on resize).
-    win_w, win_h = WINDOW_W, WINDOW_H
+    win_w, win_h = WINDOW_W, win_h
 
     # main loop
     running = True
@@ -288,9 +323,24 @@ def main():
                 except pygame.error as er:
                     print(f"[dashboard] WARNING: resize failed: {er}")
                 if manual_panel is not None:
-                    manual_panel.reposition((win_w, win_h))
+                    if plan_mode:
+                        # Keep the manual panel at the top-right so it never
+                        # overlaps the plan panel (which is bottom-left).
+                        manual_panel.panel_rect = pygame.Rect(win_w - 416, 90, 400, 215)
+                        manual_panel._lazy_build_rects()
+                    else:
+                        manual_panel.reposition((win_w, win_h))
+                if plan_panel is not None:
+                    plan_panel.reposition((win_w, win_h))
             if manual_panel is not None:
                 manual_panel.handle_event(e)
+            if plan_panel is not None:
+                if e.type == pygame.KEYDOWN and e.key == pygame.K_BACKSPACE:
+                    plan_panel.handle_backspace()
+                elif e.type == pygame.TEXTINPUT:
+                    plan_panel.handle_textinput(e)
+                else:
+                    plan_panel.handle_event(e)
 
         # If the controller dropped out, try to recover it within the grace window.
         if controller_lost_at is not None:
@@ -422,6 +472,11 @@ def main():
                 _panel_muted = want_muted
 
 
+        # Plan panel (bottom-left). It reads its data from the telemetry file
+        # and sends edits through the separate plan-command file.
+        if plan_panel is not None:
+            plan_panel.handle_status()
+            plan_panel.draw(screen)
 
 
         pygame.display.flip()

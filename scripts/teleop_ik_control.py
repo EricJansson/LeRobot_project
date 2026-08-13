@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Callable
+from typing import Callable, Optional
 
 # Ensure the project root is on sys.path regardless of how this script is invoked
 
@@ -263,8 +263,14 @@ BUTTON_LABELS = {
 HAT_LABELS    = {0: "DPad"}
 
 
-def setup_gamepad(index: int = 0) -> Gamepad:
-    """Create the Gamepad instance wired with the canonical label set."""
+def setup_gamepad(index: int = 0, *, deadman_button: Optional[str] = "LB") -> Gamepad:
+    """Create the Gamepad instance wired with the canonical label set.
+
+    ``deadman_button`` gates *all* callbacks at the Gamepad level (default "LB"
+    for normal IK teleop). Pass ``None`` to disable that gating so every button /
+    axis callback fires regardless of LB; callers that need a deadman can then
+    enforce it themselves (e.g. the plan mode checks LB in its run loop).
+    """
     return Gamepad(
         index=index,
         axis_labels=AXIS_LABELS,
@@ -274,7 +280,7 @@ def setup_gamepad(index: int = 0) -> Gamepad:
         axis_change_threshold=AX_DELTA_THRESH,
         poll_hz=120,
         triggers_are_unit=True,   # LT/RT reported as 0..1
-        deadman_button="LB",
+        deadman_button=deadman_button,
     )
 
 

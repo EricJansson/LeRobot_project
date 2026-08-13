@@ -70,3 +70,4 @@ htmlcov/
 
 # Dashboard log output
 scripts/dashboard_log.txt
+scripts/dashboard_plan_log.txt
