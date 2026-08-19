@@ -9,6 +9,39 @@ from .utils.IK_calculations import find_base_yaw_candidates, ik_3dof_planar_all_
 
 
 @dataclass
+class WorkspaceLimits:
+    """
+    Cartesian workspace guardrails for the end-effector.
+
+    All values are in centimeters (cm).  Set a bound to None to disable it.
+
+    Default: z_min=3.0 prevents the end-effector from passing through the table.
+    """
+    z_min: Optional[float] = 3.0
+    z_max: Optional[float] = None
+    x_min: Optional[float] = None
+    x_max: Optional[float] = None
+    y_min: Optional[float] = None
+    y_max: Optional[float] = None
+
+    def is_within_limits(self, x: float, y: float, z: float) -> bool:
+        """Return True if (x, y, z) satisfies all configured bounds."""
+        if self.z_min is not None and z < self.z_min:
+            return False
+        if self.z_max is not None and z > self.z_max:
+            return False
+        if self.x_min is not None and x < self.x_min:
+            return False
+        if self.x_max is not None and x > self.x_max:
+            return False
+        if self.y_min is not None and y < self.y_min:
+            return False
+        if self.y_max is not None and y > self.y_max:
+            return False
+        return True
+
+
+@dataclass
 class RobotState:
     """All angles are in degrees."""
     base_yaw_deg: float = 0.0
@@ -138,6 +171,9 @@ def load_joint_limits_from_calibration(
     return [all_limits[name] for name in planar_joint_names]
 
 
+_DEFAULT_WORKSPACE_LIMITS = object()  # sentinel: "use default WorkspaceLimits()"
+
+
 class RobotArm:
     """
     Robot model + current state.
@@ -152,7 +188,8 @@ class RobotArm:
         model: ArmModel,
         joint_limits_deg: Optional[List[Tuple[float, float]]] = None,
         calibration_path: Optional[Path] = None,
-        auto_load_limits: bool = True
+        auto_load_limits: bool = True,
+        workspace_limits: Optional[WorkspaceLimits] = _DEFAULT_WORKSPACE_LIMITS,
     ):
         """
         Initialize RobotArm with model and optional joint limits.
@@ -163,6 +200,10 @@ class RobotArm:
                             If None and auto_load_limits=True, loads from calibration file.
             calibration_path: Path to calibration JSON file. Used if auto_load_limits=True.
             auto_load_limits: If True and joint_limits_deg=None, automatically load limits from calibration.
+            workspace_limits: Cartesian guardrails for the end-effector.  Defaults to
+                              WorkspaceLimits() which enforces z_min=3.0 cm (above table).
+                              Pass None to disable all guardrails.
+                              Pass WorkspaceLimits(z_min=None) to disable only the z guardrail.
         """
         self.model = model
         
@@ -175,6 +216,12 @@ class RobotArm:
             self.joint_limits_deg = load_joint_limits_from_calibration(calibration_path)
         else:
             self.joint_limits_deg = None
+
+        # Cartesian workspace guardrails (default: z_min = 3 cm)
+        if workspace_limits is _DEFAULT_WORKSPACE_LIMITS:
+            self.workspace_limits: Optional[WorkspaceLimits] = WorkspaceLimits()
+        else:
+            self.workspace_limits = workspace_limits  # type: ignore[assignment]
 
         # Current commanded/estimated state (degrees)
         self.state = RobotState()
@@ -415,6 +462,11 @@ class RobotArm:
             phi_adaptation_range: Max phi deviation to search (degrees)
             phi_adaptation_step: Step size when searching phi values (degrees)
         """
+        # Check Cartesian workspace guardrails before solving IK
+        tx, ty, tz = target_xyz
+        if self.workspace_limits is not None and not self.workspace_limits.is_within_limits(tx, ty, tz):
+            return False
+
         sol = self.solve_base_plus_planar_ik(
             target_xyz=target_xyz,
             phi_deg=phi_deg,
