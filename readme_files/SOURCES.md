@@ -1,5 +1,16 @@
 # Project Sources
 
+## Implementation references (reviewed 2026-10-30)
+
+Repository behavior is described in the [architecture reference](ARCHITECTURE.md). Upstream links establish library behavior, not integration status in this workspace.
+
+- [LeRobot 0.4.0 URDF kinematics source](https://raw.githubusercontent.com/huggingface/lerobot/v0.4.0/src/lerobot/model/kinematics.py): RobotKinematics, its transform-based FK/IK interface, and optional placo dependency. This wrapper does not configure collision avoidance.
+- [LeRobot 0.4.0 SO101Follower source](https://github.com/huggingface/lerobot/blob/v0.4.0/src/lerobot/robots/so101_follower/so101_follower.py): hardware interface and normalized gripper configuration. The locally installed file has additional PID tuning; see the [setup guide](CONNECT_SETUP.md#external-lerobot-customization).
+- [Microsoft WSL USB connection guide](https://learn.microsoft.com/en-us/windows/wsl/connect-usb): usbipd installation, device sharing/binding, and attachment. WSL remains an alternate setup requiring local validation.
+- [SO-ARM100/SO101 simulation models](https://github.com/TheRobotStudio/SO-ARM100/tree/main/Simulation/SO101): candidate source for model assets; provenance and compatibility with this repository's URDF still require verification.
+
+The resources below are historical research/setup references. They are not evidence that this repository implements learning, phone control, or collision avoidance.
+
 <!-- Top navigation -->
 <p align="center">
   <a href="../README.md">Home</a> |

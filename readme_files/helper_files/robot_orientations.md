@@ -1,5 +1,7 @@
 # Robot Joint Data Report
 
+Historical physical-pose observations retained as reference images and recorded readings. These are not a current calibration certificate or verified URDF comparison. The motor reader has unit-conversion limitations described in the [run guide](../CONNECT_SETUP.md#motor-reading-and-offline-diagnostics); remeasure reference poses when validating a new model. See [current architecture](../ARCHITECTURE.md).
+
 ## Section 1
 
 <img src="./section-1.png" width="250">

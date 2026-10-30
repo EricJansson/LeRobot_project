@@ -1,194 +1,33 @@
-# LeRobot 101 Robot Arm - Project Progress
+# Project status and history
 
-## Overview
-Building and programming a LeRobot 101 robot arm with focus on motion control through forward and inverse kinematics calculations. The project includes hardware assembly, kinematics simulation, and safe Python-based control software.
+[Home](../README.md) | [Architecture](ARCHITECTURE.md) | [TODO](../TODO.md)
 
----
+Reviewed 2026-10-30. This replaces an outdated phase checklist. Hardware status comes from the owner; implementation status comes from source inspection. No robot commands were executed during the documentation review.
 
-## Phase 1: Initial Setup & Hardware Assembly
-**Status:** ✅ Complete
+## Historical work
 
-### What Was Done
-- **Printed Robot Arm Parts**: Successfully printed all necessary components for the LeRobot 101 robot arm
-- **Hardware Assembly**: Assembled the 3D printed parts into a functional robot arm structure
+- The owner printed and assembled the SO-101 and explored LeRobot setup/calibration.
+- web_sim was an early standalone JavaScript FK/IK visualization. It is now outdated and retained as historical material, not the current simulation or validation workflow.
+- A custom Python model was developed around base yaw and three planar joints, with motor-frame signs/offsets, calibration-derived limits, solution selection, and optional pitch adaptation.
+- Earlier notes dated 2026-02-18 describe reversed planar motors and frame corrections. Those signs/offsets are present in the current model.
+- Earlier notes reported a remaining second-pitch-joint offset and end-effector height error. The owner is uncertain whether it remains; revalidation is required.
 
-### Key Deliverables
-- Fully assembled LeRobot 101 robot arm ready for testing and programming
+## Implemented now
 
----
+| Area | Evidence / status |
+| --- | --- |
+| Direct joint gamepad driving | scripts.teleop_axis_control; used on hardware |
+| Custom Cartesian IK driving | scripts.main_teleop_ik and reusable teleop_ik_control; used on hardware |
+| Plan recording/playback | scripts.main_teleop_plan and reusable teleop_plan_control; used on hardware |
+| Dashboard | Separate pygame process, manual joint targets, telemetry, plan editing |
+| Hardware adapter | RobotArmController integrates custom model with SO101Follower |
+| Offline checks | 159 tests passed under Python 3.12.9 and robot-environment Python 3.10.19 |
+| Current runtime | Native Windows/Conda, LeRobot 0.4.0, pygame 2.6.1; external installed-package PID changes |
 
-## Phase 2: Research & Library Evaluation
-**Status:** ✅ Complete
+Plan playback interpolates recorded joint targets and pauses; it is not collision-aware planning. The guardrail/workspace helper files are not wired into active teleop. Tests cover custom mathematics/model behavior and do not establish hardware or end-to-end safety.
 
-### What Was Done
-- **Downloaded LeRobot OpenSource Library**: Explored the official LeRobot open-source library
-- **Tested Library Functionality**: Evaluated the library's capabilities and integration options
-- **Evaluated Integration Options**: Assessed how the library could be utilized for robot control
+## Planned direction
 
-### Learnings
-- Gained understanding of the existing ecosystem and best practices for robot arm control
-- Identified gaps in functionality that needed custom implementation
+Keep working modes intact and add a separate upstream LeRobot URDF-based FK/IK path. LeRobot's installed RobotKinematics class exists, but placo is absent and no repository control path uses it. The URDF has collision references but its meshes are missing, and its geometry/conventions must be checked against the physical arm.
 
----
-
-## Phase 3: Kinematics Simulation & Validation
-**Status:** ✅ In Progress (Web Simulator Complete)
-
-### What Was Done
-- **Created Web Simulator**: Built a simple web-based simulator in JavaScript
-  - Location: [web_sim/](web_sim/)
-  - Created a UI for controlling the robot and monitoring its state 
-  - Implemented simple forward and inverse kinematics calculations in the browser
-  - Allows visual testing of arm movements before deploying to physical hardware
-
-### Technologies Used
-- **Frontend**: HTML, CSS, JavaScript
-- **Math**: Forward Kinematics (FK) and Inverse Kinematics (IK) algorithms in JavaScript
-
-### Purpose
-- Test kinematic calculations without risking hardware damage
-- Visualize arm movement trajectories
-- Validate mathematical models before Python implementation
-
----
-
-## Phase 4: Python Implementation - Motion Control
-**Status:** 🚀 In Progress
-
-### Current Work
-
-#### 4.1 Forward & Inverse Kinematics (FK/IK) Scripts
-- **Location**: [robot_program/utils/](robot_program/utils/)
-- **FK Implementation**: [FK_calculations.py](robot_program/utils/FK_calculations.py)
-- **IK Implementation**: [IK_calculations.py](robot_program/utils/IK_calculations.py)
-- **IK Guardrails**: [IK_guardrails.py](robot_program/utils/IK_guardrails.py) - Safety constraints and boundary checks
-- **Movement Constraints**: [movement_contrainst.py](robot_program/utils/movement_contrainst.py)
-
-#### 4.2 Motor Orientation & Kinematics Frame Fix
-**Status:** ✅ Complete (Feb 18, 2026)
-
-A critical bug was identified and fixed: all three planar motors were mounted in reverse, causing commanded angles to move in the opposite direction (e.g., commanding −90° moved the joint to +90°).
-
-**Changes made in `robot_program/RobotArm.py`:**
-
-- **`ArmModel` — new `joint_signs` field**  
-  Each value is `+1.0` or `−1.0` describing whether the physical motor's positive direction matches the geometric model's positive direction.  
-  All three planar joints are set to `−1.0` (motors mounted in reverse):
-  ```python
-  joint_signs: Tuple[float, float, float] = (-1.0, -1.0, -1.0)
-  ```
-
-- **`ArmModel` — new `joint_offsets_deg` field**  
-  Zero-position offset applied to each joint **after** the sign correction, so that the solver's geometric frame aligns with physical reality:
-  ```python
-  joint_offsets_deg: Tuple[float, float, float] = (90.0, -90.0, 0.0)
-  # theta1 = 0° means straight up  → +90° offset
-  # theta2 = 0° means forward rel. to theta1 → −90° offset
-  # theta3 has no mechanical offset → 0°
-  ```
-  The full conversion is: `geometric = motor × sign + offset`
-
-- **`forward_kinematics()` method moved into `RobotArm`**  
-  Previously a standalone helper in the test suite (`fk_4dof_deg`), FK is now a first-class method on `RobotArm`. It applies `joint_signs` and `joint_offsets_deg` before computing the world-frame end-effector position:
-  ```python
-  x, y, z, phi = arm.forward_kinematics(base_yaw_deg, theta1_deg, theta2_deg, theta3_deg)
-  ```
-
-- **IK solver now works in the geometric (solver) frame**  
-  The `_solve_ik_for_phi()` method converts motor angles → solver frame before calling the core IK algorithms, then converts results back to motor frame. Joint limits from the calibration file are also transformed into the solver frame before filtering.
-
-- **Known issue (tracked):** The second pitch joint has a slight offset error; the end-effector height is not perfectly corrected yet.
-
-#### 4.3 Control Integration
-- **Main Control Module**: [robot_program/input_control.py](robot_program/input_control.py)
-- **Keyboard Control**: [robot_program/keyboard_control.py](robot_program/keyboard_control.py)
-- **Motor Interface**: [robot_program/read_motors.py](robot_program/read_motors.py)
-
-#### 4.4 Gamepad Support (Controller Input)
-- **Location**: [controller/input/](controller/input/)
-- **Gamepad Mapper**: [controller/input/gamepad_mapper.py](controller/input/gamepad_mapper.py)
-- **Teleop Profile**: [controller/input/teleop_profile.py](controller/input/teleop_profile.py)
-- **Controller Dashboard**: [controller/input/controller_dashboard.py](controller/input/controller_dashboard.py)
-- **Teleop Script**: [controller/scripts/run_teleop.py](controller/scripts/run_teleop.py)
-
----
-
-## Phase 5: Testing & Risk Mitigation
-**Status:** 🔄 In Progress (Safety First)
-
-### Why Testing is Critical
-- Prevent hardware damage from incorrect joint movements
-- Validate kinematics calculations before real-world deployment
-- Ensure safety guardrails are functioning correctly
-
-### Testing Strategy
-- **Unit Tests**: [tests/test_ik_calculations.py](tests/test_ik_calculations.py)
-  - Validates IK calculations against expected outputs
-  - Tests edge cases and boundary conditions
-  - Verifies safety constraints are enforced
-
-### Test Coverage Areas
-1. **Kinematics Validation**
-   - FK calculations produce correct end-effector positions
-   - IK calculations produce valid joint angles
-   - Multiple solution handling
-
-2. **Safety Constraints**
-   - Joint angle limits are enforced
-   - Movement constraints are respected
-   - Unreachable positions are properly identified
-
-3. **Integration Testing**
-   - Control modules communicate correctly
-   - Gamepad input maps to joint movements
-   - Motor commands are generated safely
-
----
-
-## Next Steps & Milestones
-
-### Immediate (In Progress)
-- [ ] Fix second pitch joint offset (end-effector height slightly off after motor orientation correction)
-- [ ] Expand test coverage for all kinematics calculations
-- [ ] Add integration tests for control flow
-- [ ] Validate safety constraints with physical testing
-
-### Short Term
-- [ ] Deploy tested control software to robot arm
-- [ ] Perform safe hardware testing with limited range of motion
-- [ ] Integrate keyboard and gamepad control with real motors
-
-### Medium Term
-- [ ] Expand teleoperator capabilities
-- [ ] Add trajectory planning and motion smoothing
-- [ ] Implement data logging for debugging and analysis
-
-### Long Term
-- [ ] Autonomous task programming
-- [ ] Sensor integration and feedback loops
-- [ ] Advanced motion planning algorithms
-
----
-
-## Key Technologies & Tools
-- **Hardware**: LeRobot 101 3D-printed robot arm
-- **Software Languages**: Python, JavaScript
-- **Motion Control**: Forward/Inverse Kinematics algorithms
-- **Input Devices**: Keyboard, Gamepad/Controller
-- **Testing**: pytest (Python testing framework)
-- **Simulation**: Web-based JavaScript simulator
-
----
-
-## Safety & Best Practices
-✅ Web simulation before hardware testing  
-✅ Comprehensive test suite for kinematics  
-✅ IK guardrails to prevent dangerous positions  
-✅ Movement constraints to enforce safe operation  
-✅ Gradual hardware testing approach (limited range first)  
-
----
-
-**Last Updated**: February 22, 2026  
-**Current Phase**: Phase 5 - Testing & Risk Mitigation  
-**Status**: 🚀 Active Development
+The next milestones are reproducible Windows venv setup with preserved tuning/calibration, separate upstream IK integration, collision checking across motions, then phone control. See [TODO](../TODO.md) for ordered tasks. Phone transport/UI and collision implementation choices have not yet been made.
