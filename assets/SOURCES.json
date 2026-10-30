@@ -1,0 +1,260 @@
+{
+  "repository": "https://github.com/TheRobotStudio/SO-ARM100",
+  "revision": "5f6d2b876a53a4872e405b991dd925556c9e38a4",
+  "source_directory": "Simulation/SO101/assets",
+  "downloaded_on": "2026-10-30",
+  "license": "Apache-2.0",
+  "license_source": "https://raw.githubusercontent.com/TheRobotStudio/SO-ARM100/5f6d2b876a53a4872e405b991dd925556c9e38a4/LICENSE",
+  "local_urdf_sha256": "651ea00a3efe02a3c984b21a1b52273bd1b320ed635b3eae92fd52e99d0a393b",
+  "upstream_urdf_sha256": "3a65d2d35e68a8d2f0c2cc176d19b884506543c93ba72980145b80abe276022c",
+  "files": [
+    {
+      "path": "assets/base_motor_holder_so101_v1.stl",
+      "source_path": "Simulation/SO101/assets/base_motor_holder_so101_v1.stl",
+      "sha256": "8cd2f241037ea377af1191fffe0dd9d9006beea6dcc48543660ed41647072424",
+      "bytes": 1877084,
+      "triangles": 37540,
+      "bounds": {
+        "min": [
+          -0.022350000217556953,
+          0.038100000470876694,
+          -0.020800000056624413
+        ],
+        "max": [
+          0.025297433137893677,
+          0.06949999928474426,
+          0.05939999967813492
+        ]
+      }
+    },
+    {
+      "path": "assets/base_so101_v2.stl",
+      "source_path": "Simulation/SO101/assets/base_so101_v2.stl",
+      "sha256": "bb12b7026575e1f70ccc7240051f9d943553bf34e5128537de6cd86fae33924d",
+      "bytes": 471584,
+      "triangles": 9430,
+      "bounds": {
+        "min": [
+          -0.05546249821782112,
+          2.918672248330978e-16,
+          -0.01600000075995922
+        ],
+        "max": [
+          0.05546249821782112,
+          0.07199999690055847,
+          0.07100000232458115
+        ]
+      }
+    },
+    {
+      "path": "assets/motor_holder_so101_base_v1.stl",
+      "source_path": "Simulation/SO101/assets/motor_holder_so101_base_v1.stl",
+      "sha256": "31242ae6fb59d8b15c66617b88ad8e9bded62d57c35d11c0c43a70d2f4caa95b",
+      "bytes": 1129384,
+      "triangles": 22586,
+      "bounds": {
+        "min": [
+          -0.05384990572929382,
+          -0.055097054690122604,
+          -0.028880443423986435
+        ],
+        "max": [
+          -0.025849906727671623,
+          -0.017000000923871994,
+          0.026200000196695328
+        ]
+      }
+    },
+    {
+      "path": "assets/motor_holder_so101_wrist_v1.stl",
+      "source_path": "Simulation/SO101/assets/motor_holder_so101_wrist_v1.stl",
+      "sha256": "887f92e6013cb64ea3a1ab8675e92da1e0beacfd5e001f972523540545e08011",
+      "bytes": 1052184,
+      "triangles": 21042,
+      "bounds": {
+        "min": [
+          -0.05384990572929382,
+          -0.05389999970793724,
+          -0.0301909651607275
+        ],
+        "max": [
+          -0.025849906727671623,
+          -0.017000000923871994,
+          0.026200000196695328
+        ]
+      }
+    },
+    {
+      "path": "assets/moving_jaw_so101_v1.stl",
+      "source_path": "Simulation/SO101/assets/moving_jaw_so101_v1.stl",
+      "sha256": "785a9dded2f474bc1d869e0d3dae398a3dcd9c0c345640040472210d2861fa9d",
+      "bytes": 1413584,
+      "triangles": 28270,
+      "bounds": {
+        "min": [
+          -0.012299999594688416,
+          -0.0820000022649765,
+          -0.024000000208616257
+        ],
+        "max": [
+          0.009997976943850517,
+          0.00999466422945261,
+          0.024000000208616257
+        ]
+      }
+    },
+    {
+      "path": "assets/rotation_pitch_so101_v1.stl",
+      "source_path": "Simulation/SO101/assets/rotation_pitch_so101_v1.stl",
+      "sha256": "9be900cc2a2bf718102841ef82ef8d2873842427648092c8ed2ca1e2ef4ffa34",
+      "bytes": 883684,
+      "triangles": 17672,
+      "bounds": {
+        "min": [
+          -0.05979999899864197,
+          0.00019999999494757503,
+          -0.023000000044703484
+        ],
+        "max": [
+          8.673617379884035e-19,
+          0.0843999981880188,
+          0.023000000044703484
+        ]
+      }
+    },
+    {
+      "path": "assets/sts3215_03a_no_horn_v1.stl",
+      "source_path": "Simulation/SO101/assets/sts3215_03a_no_horn_v1.stl",
+      "sha256": "75ef3781b752e4065891aea855e34dc161a38a549549cd0970cedd07eae6f887",
+      "bytes": 865884,
+      "triangles": 17316,
+      "bounds": {
+        "min": [
+          -0.022700000554323196,
+          -0.012400000356137753,
+          -0.01940000057220459
+        ],
+        "max": [
+          0.022700000554323196,
+          0.012400000356137753,
+          0.02019999921321869
+        ]
+      }
+    },
+    {
+      "path": "assets/sts3215_03a_v1.stl",
+      "source_path": "Simulation/SO101/assets/sts3215_03a_v1.stl",
+      "sha256": "a37c871fb502483ab96c256baf457d36f2e97afc9205313d9c5ab275ef941cd0",
+      "bytes": 954084,
+      "triangles": 19080,
+      "bounds": {
+        "min": [
+          -0.022700000554323196,
+          -0.012400000356137753,
+          -0.01940000057220459
+        ],
+        "max": [
+          0.022700000554323196,
+          0.012400000356137753,
+          0.02019999921321869
+        ]
+      }
+    },
+    {
+      "path": "assets/under_arm_so101_v1.stl",
+      "source_path": "Simulation/SO101/assets/under_arm_so101_v1.stl",
+      "sha256": "d01d1f2de365651dcad9d6669e94ff87ff7652b5bb2d10752a66a456a86dbc71",
+      "bytes": 1975884,
+      "triangles": 39516,
+      "bounds": {
+        "min": [
+          -0.05384990572929382,
+          -0.04399999976158142,
+          -0.03420000150799751
+        ],
+        "max": [
+          0.07684990763664246,
+          -0.019999999552965164,
+          0.03020000085234642
+        ]
+      }
+    },
+    {
+      "path": "assets/upper_arm_so101_v1.stl",
+      "source_path": "Simulation/SO101/assets/upper_arm_so101_v1.stl",
+      "sha256": "475056e03a17e71919b82fd88ab9a0b898ab50164f2a7943652a6b2941bb2d4f",
+      "bytes": 1303484,
+      "triangles": 26068,
+      "bounds": {
+        "min": [
+          -0.06508498638868332,
+          -1.6566609195578508e-16,
+          -0.035599999129772186
+        ],
+        "max": [
+          0.0770849883556366,
+          0.02449999935925007,
+          0.031700000166893005
+        ]
+      }
+    },
+    {
+      "path": "assets/waveshare_mounting_plate_so101_v2.stl",
+      "source_path": "Simulation/SO101/assets/waveshare_mounting_plate_so101_v2.stl",
+      "sha256": "e197e24005a07d01bbc06a8c42311664eaeda415bf859f68fa247884d0f1a6e9",
+      "bytes": 62784,
+      "triangles": 1254,
+      "bounds": {
+        "min": [
+          -0.025499999523162842,
+          -0.020999999716877937,
+          0.0
+        ],
+        "max": [
+          0.025499999523162842,
+          0.020999999716877937,
+          0.007600000128149986
+        ]
+      }
+    },
+    {
+      "path": "assets/wrist_roll_follower_so101_v1.stl",
+      "source_path": "Simulation/SO101/assets/wrist_roll_follower_so101_v1.stl",
+      "sha256": "4b17b410a12d64ec39554abc3e8054d8a97384b2dc4a8d95a5ecb2a93670f5f4",
+      "bytes": 1439884,
+      "triangles": 28796,
+      "bounds": {
+        "min": [
+          -0.03519999980926514,
+          -0.02421821467578411,
+          -5.029354724683799e-05
+        ],
+        "max": [
+          0.029999999329447746,
+          0.027781786397099495,
+          0.10537499934434891
+        ]
+      }
+    },
+    {
+      "path": "assets/wrist_roll_pitch_so101_v2.stl",
+      "source_path": "Simulation/SO101/assets/wrist_roll_pitch_so101_v2.stl",
+      "sha256": "6c7ec5525b4d8b9e397a30ab4bb0037156a5d5f38a4adf2c7d943d6c56eda5ae",
+      "bytes": 2699784,
+      "triangles": 53994,
+      "bounds": {
+        "min": [
+          -0.02710000053048134,
+          -0.019999999552965164,
+          -0.03782838582992554
+        ],
+        "max": [
+          0.03519999980926514,
+          0.015659751370549202,
+          0.03999767825007439
+        ]
+      }
+    }
+  ],
+  "urdf_structurally_identical_to_upstream": true
+}

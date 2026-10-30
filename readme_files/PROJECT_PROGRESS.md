@@ -28,6 +28,6 @@ Plan playback interpolates recorded joint targets and pauses; it is not collisio
 
 ## Planned direction
 
-Keep working modes intact and add a separate upstream LeRobot URDF-based FK/IK path. LeRobot's installed RobotKinematics class exists, but placo is absent and no repository control path uses it. The URDF has collision references but its meshes are missing, and its geometry/conventions must be checked against the physical arm.
+Keep working modes intact and add a separate upstream LeRobot URDF-based FK/IK path. LeRobot's installed RobotKinematics class exists, but placo is absent and no repository control path uses it. All 13 URDF-referenced meshes were acquired from a pinned upstream revision with license/checksums; see [asset provenance](../assets/README.md). The local URDF is structurally identical to that upstream model. Its geometry/conventions still need checking against the physical arm.
 
 The next milestones are reproducible Windows venv setup with preserved tuning/calibration, separate upstream IK integration, collision checking across motions, then phone control. See [TODO](../TODO.md) for ordered tasks. Phone transport/UI and collision implementation choices have not yet been made.

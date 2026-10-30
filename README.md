@@ -67,7 +67,7 @@ RobotArm is a hardware-independent model: solving IK changes internal state. Rob
 | [controller/input/](controller/input/) | Pygame polling, bindings, input-state profile, example |
 | [controller/scripts/run_teleop.py](controller/scripts/run_teleop.py) | Input-profile example; does not send commands to the arm |
 | [calibration/](calibration/) | Degree-limit export and conversion utility; distinct from LeRobot's calibration cache |
-| [so101_new_calib.urdf](so101_new_calib.urdf) | Description for future integration; referenced assets/*.stl files are missing |
+| [so101_new_calib.urdf](so101_new_calib.urdf) | Description for future integration; all 13 referenced meshes are in [assets/](assets/) |
 | [tests/](tests/) | Offline custom solver, model, and joint-limit tests |
 | [web_sim/](web_sim/) | Early JavaScript FK/IK visualization, disconnected from Python/hardware |
 | [readme_files/](readme_files/) | Setup, implementation references, status, sources, historical design material |
@@ -79,7 +79,7 @@ The inspected Windows lerobot Conda environment contains **Python 3.10.19, LeRob
 
 The installed LeRobot package contains local motor PID changes outside this repository. Reinstalling the same version will not reproduce that tuning. The [setup guide](readme_files/CONNECT_SETUP.md#external-lerobot-customization) records it for deliberate preservation during migration.
 
-LeRobot 0.4.0 includes `lerobot.model.kinematics.RobotKinematics`, backed by optional placo; placo was absent during inspection. Neither the URDF nor that solver automatically supplies collision avoidance. Missing meshes, model/calibration alignment, and dependency/platform compatibility need resolution before claiming the new path works.
+LeRobot 0.4.0 includes `lerobot.model.kinematics.RobotKinematics`, backed by optional placo; placo was absent during inspection. Neither the URDF nor that solver automatically supplies collision avoidance. Mesh acquisition is complete; model/calibration alignment and dependency/platform compatibility still need resolution before claiming the new path works.
 
 ## Tests and diagnostics
 
