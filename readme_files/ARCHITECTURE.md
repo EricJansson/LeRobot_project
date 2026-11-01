@@ -15,6 +15,8 @@ Reviewed 2026-10-30. All three primary modes have been used on hardware by the o
 
 Both main_teleop entry points accept --port and --index; plan also accepts --plan-file. The reusable teleop_ik_control and teleop_plan_control modules are not standalone launchers.
 
+All hardware entry points use `robot_program.so101_follower.SO101Follower`, a subclass of the pinned upstream follower. It preserves custom motor tuning; calibration, connection, action, and disconnect behavior remain upstream. Dashboard children use `sys.executable`, so they share the launching venv. See the [setup guide](CONNECT_SETUP.md).
+
 controller/input/gamepad_mapper.py polls pygame and dispatches bindings. teleop_profile.py supplies an input-state abstraction; controller/scripts/run_teleop.py is an example without robot publishing. Older robot_program/input_control.py and keyboard_control.py are direct-hardware experiments, not the shared IK implementation. read_motors.py is a hardware diagnostic. Running robot_arm_controller as a module executes a smoke test that commands a move; it is not read-only.
 
 ## Controller mappings

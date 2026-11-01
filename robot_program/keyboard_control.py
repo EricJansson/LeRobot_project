@@ -2,7 +2,7 @@
 import time
 import argparse
 import keyboard  # pip install keyboard
-from lerobot.robots.so101_follower.so101_follower import SO101Follower
+from robot_program.so101_follower import SO101Follower
 from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
 from .utils.ports import normalize_port, auto_port
 

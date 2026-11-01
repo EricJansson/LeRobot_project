@@ -2,7 +2,8 @@
 
 Documentation baseline: 2026-10-30. Existing direct-axis, custom-IK, and plan modes are to remain intact. Unchecked tasks describe future implementation; completed asset acquisition is recorded below.
 
-- [ ] Capture the current Windows/Conda runtime before migration: dependency versions, locally modified LeRobot files (including active per-joint PID tuning), robot ID/hardware calibration, and required device setup. Establish and validate a reproducible Windows venv with a maintained runtime manifest; do not assume reinstalling LeRobot 0.4.0 preserves local changes.
+- [x] Set up a Python 3.11 `.venv` with dependencies in `requirements.txt`, preserving custom motor tuning and existing calibration/controls. Validate offline; see [setup](readme_files/CONNECT_SETUP.md).
+- [ ] Perform controlled hardware validation of the migrated venv: confirm adapter/controller access, calibration recognition, tuned motor response, dashboard, and all three existing modes.
 - [ ] Make an alternative entry point/implementation that uses LeRobot's built-in URDF-based FK/IK instead of the custom kinematics implementation. Preserve existing scripts and behavior. Check optional placo installation/platform support, explicit joint ordering, end-effector frame, units, and compatibility. Verify physical accuracy rather than assuming the URDF is more accurate.
 - [x] Obtain the 13 URDF-referenced assets/*.stl meshes and record their pinned upstream revision, checksums, and Apache-2.0 license; see [asset provenance](assets/README.md).
 - [ ] Validate the model against physical hardware: frames, zero conventions, motor direction, joint limits, elbow offset, and gripper representation. Resolve the existing normalized-gripper/degree-limit mismatch at the new integration boundary.

@@ -18,7 +18,7 @@ import argparse
 from pathlib import Path
 from typing import Optional, Tuple
 
-from lerobot.robots.so101_follower.so101_follower import SO101Follower
+from robot_program.so101_follower import SO101Follower
 from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
 
 from robot_program.RobotArm import ArmModel, RobotArm, RobotState, load_all_motor_limits

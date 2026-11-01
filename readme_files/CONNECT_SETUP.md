@@ -2,36 +2,21 @@
 
 [Home](../README.md) | [Architecture and controls](ARCHITECTURE.md) | [Sources](SOURCES.md)
 
-Last reviewed: 2026-10-30. Native Windows with the existing Conda environment is the current hardware-used setup. WSL instructions remain an alternate path, without a recent hardware-verification claim.
+## Windows setup
 
-## Current environment
-
-Observed in C:\Users\rapid\miniconda3\envs\lerobot:
-
-| Component | Observed version / role |
-| --- | --- |
-| Python | 3.10.19 |
-| LeRobot | 0.4.0; locally modified installed package |
-| pygame | 2.6.1; controller polling and dashboard |
-| Feetech SDK / pyserial | Present for motor/serial communication |
-| keyboard | Present for older keyboard experiment |
-| pytest | Present for offline tests |
-| placo | Absent; required for upstream RobotKinematics, not current custom IK |
-
-This is an observed working environment, not a complete dependency lock. requirements-dev.txt supplies testing/quality tools, not the runtime. A fresh Windows venv is planned, not implemented or validated. Preserve tuning and hardware calibration before migration; installing the same LeRobot version alone will not reproduce this setup.
-
-## Native Windows
-
-1. Connect the arm's power and Feetech/CH343 USB adapter, and connect the controller.
-2. Identify the adapter COM port in Device Manager → Ports (COM & LPT).
-3. Open a terminal, activate the existing environment, and change to the repository root:
+Use Python 3.11 and a normal project venv. From the repository root:
 
 ```powershell
-conda activate lerobot
-cd C:\Users\rapid\Documents\GitHub\LeRobot_project
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-4. Choose exactly one control mode. Substitute the actual COM port and gamepad index:
+If the Python launcher is unavailable, use the path to your installed Python 3.11 executable in place of `py -3.11`. Create the environment once; activate it when opening a new terminal. Dependencies are listed in `requirements.txt`. Optional test and development tools are in `requirements-dev.txt`.
+
+## Run the arm
+
+For hardware use, connect arm power, the Feetech/CH343 USB adapter, and the controller. Keep the existing adapter driver; install its vendor driver if Device Manager does not expose a COM port. Identify the adapter under Device Manager → Ports (COM & LPT). Choose exactly one mode and substitute the actual port and gamepad index:
 
 ```powershell
 # Direct joint control, without the IK dashboard
@@ -55,15 +40,19 @@ The IK/plan controller requires the repository's six-motor degree-limit export. 
 
 ## Motor reading and offline diagnostics
 
-These offline commands do not open the robot connection:
+With the venv active, these commands do not connect to the arm:
 
 ```powershell
+python -m pip install pytest==8.4.2
+python -m pip check
 python -m robot_program.debug_env
 python -X utf8 validate_calibration.py
 python -m pytest -q -o addopts= --tb=short
 ```
 
-The calibration validator prints Unicode symbols; -X utf8 avoids encoding errors in Windows terminals using a legacy code page. Its check passed for all six exported motors during this review.
+The calibration validator prints Unicode symbols; `-X utf8` avoids encoding errors in Windows terminals using a legacy code page.
+
+The offline suite covers the custom solver, joint limits, motor configuration, and command-line entry points. Hardware behavior still needs physical validation.
 
 The motor reader **does connect to hardware**. Default torque off disables torque so the arm can be moved by hand:
 
@@ -92,20 +81,18 @@ In WSL:
 
 ```bash
 ls /dev/ttyACM* /dev/ttyUSB*
-conda activate lerobot
 cd /mnt/c/Users/rapid/Documents/GitHub/LeRobot_project
+python3 -m venv ~/.venvs/lerobot
+source ~/.venvs/lerobot/bin/activate
+python -m pip install -r requirements.txt
 python -m robot_program.read_motors --port /dev/ttyACM0 --torque off
 ```
 
-Use the actual device path. A working Windows Conda environment does not establish an equivalent WSL environment. The control launchers also accept Linux ports, but gamepad access, GUI support, permissions, runtime dependencies, and hardware behavior require separate WSL validation.
+Use the actual device path and a separately provisioned WSL environment. Do not reuse the Windows `.venv` in WSL. The control launchers also accept Linux ports, but gamepad access, GUI support, permissions, runtime dependencies, and hardware behavior require separate WSL validation.
 
-## External LeRobot customization
+## LeRobot tuning
 
-The inspected installed file is:
-
-`C:\Users\rapid\miniconda3\envs\lerobot\Lib\site-packages\lerobot\robots\so101_follower\so101_follower.py`
-
-It contains two configure definitions; Python uses the later one, marked CUSTOM MADE. That active implementation applies:
+`robot_program.so101_follower.SO101Follower` preserves the arm's custom motor tuning. All hardware entry points use this subclass; installed LeRobot files are left unchanged.
 
 | Motor | P | I | D |
 | --- | ---: | ---: | ---: |
@@ -116,13 +103,13 @@ It contains two configure definitions; Python uses the later one, marked CUSTOM 
 | wrist_roll | 16 | 0 | 36 |
 | gripper | 18 | 0 | 32 |
 
-It sets position mode, invokes bus.configure_motors(), and sets gripper Max_Torque_Limit=500, Protection_Current=250, Overload_Torque=25. These are observed settings, not newly recommended tuning. The installed bus helper defaults maximum_acceleration and acceleration to 254; a complete package-diff audit remains a migration task.
+Configuration runs with torque disabled, uses position mode, and retains acceleration values of 254. Gripper protection remains Max_Torque_Limit=500, Protection_Current=250, and Overload_Torque=25.
 
-This customization is outside version control here. Preserve/diff the installed package and calibration before replacing the environment, and move required behavior into an explicit maintained integration during the future migration. This documentation does not change the installed package.
+Hardware calibration remains in the existing Hugging Face user cache (`HF_LEROBOT_CALIBRATION / robots / so101_follower / lerobot_arm.json`); switching Python environments on this computer does not move it. An explicit `SO101FollowerConfig.calibration_dir` still overrides the directory. The separate `calibration/lerobot_arm_with_degrees.json` supplies the custom controller's degree limits. These values and the existing controls are unchanged.
 
 ## Troubleshooting and runtime files
 
-- Check the active python executable/version and environment report if imports fail. The default Python environment has pytest but no LeRobot.
+- Check the active python executable/version and environment report if imports fail. Activate `.venv` before running the program.
 - Confirm --port, USB ownership, and that no other control or motor-reader process holds the connection.
 - Check controller --index and assumed button mapping if input is wrong; the dashboard shows the configured mapping, not an automatic device profile.
 - For dashboard crashes inspect scripts/dashboard_log.txt or scripts/dashboard_plan_log.txt.

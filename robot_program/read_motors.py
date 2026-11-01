@@ -3,7 +3,7 @@ import json
 import time
 import argparse
 from pathlib import Path
-from lerobot.robots.so101_follower.so101_follower import SO101Follower
+from robot_program.so101_follower import SO101Follower
 from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
 from .utils.ports import normalize_port, auto_port
 

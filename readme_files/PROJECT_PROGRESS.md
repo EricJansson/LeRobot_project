@@ -21,8 +21,8 @@ Reviewed 2026-10-30. This replaces an outdated phase checklist. Hardware status 
 | Plan recording/playback | scripts.main_teleop_plan and reusable teleop_plan_control; used on hardware |
 | Dashboard | Separate pygame process, manual joint targets, telemetry, plan editing |
 | Hardware adapter | RobotArmController integrates custom model with SO101Follower |
-| Offline checks | 159 tests passed under Python 3.12.9 and robot-environment Python 3.10.19 |
-| Current runtime | Native Windows/Conda, LeRobot 0.4.0, pygame 2.6.1; external installed-package PID changes |
+| Offline checks | Historical baseline: 159 passed on 2026-10-30; venv verification is recorded in the README |
+| Current runtime | Native Windows venv, LeRobot 0.4.0, pygame 2.6.1; repository-owned PID tuning; existing user-cache calibration |
 
 Plan playback interpolates recorded joint targets and pauses; it is not collision-aware planning. The guardrail/workspace helper files are not wired into active teleop. Tests cover custom mathematics/model behavior and do not establish hardware or end-to-end safety.
 
@@ -30,4 +30,4 @@ Plan playback interpolates recorded joint targets and pauses; it is not collisio
 
 Keep working modes intact and add a separate upstream LeRobot URDF-based FK/IK path. LeRobot's installed RobotKinematics class exists, but placo is absent and no repository control path uses it. All 13 URDF-referenced meshes were acquired from a pinned upstream revision with license/checksums; see [asset provenance](../assets/README.md). The local URDF is structurally identical to that upstream model. Its geometry/conventions still need checking against the physical arm.
 
-The next milestones are reproducible Windows venv setup with preserved tuning/calibration, separate upstream IK integration, collision checking across motions, then phone control. See [TODO](../TODO.md) for ordered tasks. Phone transport/UI and collision implementation choices have not yet been made.
+The Windows venv migration preserves tuning/calibration and is validated offline; hardware confirmation remains pending. The next implementation milestones are separate upstream IK integration, collision checking across motions, then phone control. See [TODO](../TODO.md) for ordered tasks. Phone transport/UI and collision implementation choices have not yet been made.

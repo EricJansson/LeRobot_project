@@ -15,8 +15,9 @@ def safe(cmd):
 print("=== Python / Env ===")
 print("python exe :", sys.executable)
 print("python vers:", sys.version.split()[0])
-print("CONDA_PREFIX      :", os.environ.get("CONDA_PREFIX", "(none)"))
-print("CONDA_DEFAULT_ENV :", os.environ.get("CONDA_DEFAULT_ENV", "(none)"))
+print("venv active:", sys.prefix != sys.base_prefix)
+print("base Python:", sys.base_prefix)
+print("VIRTUAL_ENV       :", os.environ.get("VIRTUAL_ENV", "(none; activation is optional)"))
 
 print("\n=== lerobot ===")
 try:

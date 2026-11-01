@@ -8,67 +8,67 @@
             "name": "shoulder_pan",
             "id": 1,
             "drive_mode": 0,
-            "homing_offset": -1448,
-            "range_min": 732,
-            "range_max": 3460,
-            "degree_min": -115.66,
-            "degree_max": 124.1,
-            "degree_range": 239.76
+            "homing_offset": -1429,
+            "range_min": 729,
+            "range_max": 3422,
+            "degree_min": -115.93,
+            "degree_max": 120.76,
+            "degree_range": 236.69
         },
         {
             "name": "shoulder_lift",
             "id": 2,
             "drive_mode": 0,
-            "homing_offset": -1483,
-            "range_min": 818,
-            "range_max": 3210,
-            "degree_min": -108.11,
-            "degree_max": 102.13,
-            "degree_range": 210.24
+            "homing_offset": -1609,
+            "range_min": 946,
+            "range_max": 3334,
+            "degree_min": -96.86,
+            "degree_max": 113.03,
+            "degree_range": 209.89
         },
         {
             "name": "elbow_flex",
             "id": 3,
             "drive_mode": 0,
-            "homing_offset": 1642,
-            "range_min": 968,
-            "range_max": 3191,
-            "degree_min": -94.92,
-            "degree_max": 100.46,
-            "degree_range": 195.38
+            "homing_offset": 1830,
+            "range_min": 785,
+            "range_max": 2718,
+            "degree_min": -111.01,
+            "degree_max": 58.89,
+            "degree_range": 169.9
         },
         {
             "name": "wrist_flex",
             "id": 4,
             "drive_mode": 0,
-            "homing_offset": -196,
-            "range_min": 862,
-            "range_max": 3217,
-            "degree_min": -104.24,
-            "degree_max": 102.74,
-            "degree_range": 206.98
+            "homing_offset": -53,
+            "range_min": 719,
+            "range_max": 3063,
+            "degree_min": -116.81,
+            "degree_max": 89.21,
+            "degree_range": 206.02
         },
         {
             "name": "wrist_roll",
             "id": 5,
             "drive_mode": 0,
-            "homing_offset": -908,
-            "range_min": 165,
-            "range_max": 4021,
-            "degree_min": -165.5,
-            "degree_max": 173.41,
-            "degree_range": 338.91
+            "homing_offset": 100,
+            "range_min": 0,
+            "range_max": 4095,
+            "degree_min": -180.0,
+            "degree_max": 179.91,
+            "degree_range": 359.91
         },
         {
             "name": "gripper",
             "id": 6,
             "drive_mode": 0,
-            "homing_offset": 1603,
-            "range_min": 2019,
-            "range_max": 3533,
-            "degree_min": -2.55,
-            "degree_max": 130.52,
-            "degree_range": 133.07
+            "homing_offset": 1278,
+            "range_min": 1258,
+            "range_max": 2756,
+            "degree_min": -69.43,
+            "degree_max": 62.23,
+            "degree_range": 131.66
         }
     ]
 }

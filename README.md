@@ -6,7 +6,7 @@ The next direction is a **separate control path using LeRobot's URDF-based FK/IK
 
 ## Start here
 
-- [Connection and run guide](readme_files/CONNECT_SETUP.md): Windows/Conda setup, alternate WSL instructions, and commands.
+- [Connection and run guide](readme_files/CONNECT_SETUP.md): Windows venv setup, alternate WSL instructions, and commands.
 - [Architecture and control reference](readme_files/ARCHITECTURE.md): code ownership, controls, units, state, dashboard communication, and extension boundaries.
 - [Joint limits and calibration](readme_files/JOINT_LIMITS_IMPLEMENTATION.md): current limits and enforcement.
 - [Project status](readme_files/PROJECT_PROGRESS.md), [TODO](TODO.md), and [sources](readme_files/SOURCES.md).
@@ -20,28 +20,27 @@ The next direction is a **separate control path using LeRobot's URDF-based FK/IK
 | Cartesian gamepad IK | Used successfully on hardware; custom base-yaw + three-joint planar solver |
 | Plan recording/playback | Used successfully on hardware; interpolated joint MOVE actions and timed PAUSE actions |
 | Desktop dashboard | Gamepad display, manual joint targets, telemetry; plan editing in plan mode |
-| Offline tests | 159 passing tests in both inspected Python environments on 2026-10-30 |
+| Offline tests | 159-test historical baseline; venv validation below |
 | web_sim | Outdated standalone browser experiment; retained for historical reference |
 | LeRobot URDF FK/IK integration | Planned; upstream class exists but is not called by this repository |
 | Collision avoidance / phone control | Planned; neither is implemented in the active control paths |
 
-Hardware use is confirmed by the owner. The documentation review did not connect to or move the arm. Passing mathematical tests does not validate physical accuracy or collision safety.
+Hardware use of the prior setup is confirmed by the owner. The venv migration did not connect to or move the arm; physical validation of the new environment remains pending. Passing offline tests does not validate physical accuracy or collision safety.
 
 ## Run an existing mode
 
 From the repository root in the existing environment, choose **one**:
 
 ```powershell
-conda activate lerobot
-python -m scripts.teleop_axis_control --port COM3 --index 0
+.\.venv\Scripts\python.exe -m scripts.teleop_axis_control --port COM3 --index 0
 ```
 
 ```powershell
-python -m scripts.main_teleop_ik --port COM3 --index 0
+.\.venv\Scripts\python.exe -m scripts.main_teleop_ik --port COM3 --index 0
 ```
 
 ```powershell
-python -m scripts.main_teleop_plan --port COM3 --index 0
+.\.venv\Scripts\python.exe -m scripts.main_teleop_plan --port COM3 --index 0
 ```
 
 Replace COM3 with the actual adapter port. Windows automatic port selection currently returns COM3; it does not discover the arm. IK and plan launch their dashboard automatically. Only one process should own the robot connection, and IK/plan sessions also share runtime files. Read the [run guide](readme_files/CONNECT_SETUP.md) before operating the arm.
@@ -73,11 +72,19 @@ RobotArm is a hardware-independent model: solving IK changes internal state. Rob
 | [readme_files/](readme_files/) | Setup, implementation references, status, sources, historical design material |
 | .runtime/ | Ignored dashboard IPC and default saved-plan location |
 
-## Environment and reproducibility
+## Setup
 
-The inspected Windows lerobot Conda environment contains **Python 3.10.19, LeRobot 0.4.0, pygame 2.6.1**. Moving to a Windows venv is future work. There is no complete runtime manifest or lockfile; [requirements-dev.txt](requirements-dev.txt) supplies development tools, not the robot runtime.
+Use Python 3.11 and a normal `.venv` for dependencies:
 
-The installed LeRobot package contains local motor PID changes outside this repository. Reinstalling the same version will not reproduce that tuning. The [setup guide](readme_files/CONNECT_SETUP.md#external-lerobot-customization) records it for deliberate preservation during migration.
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+After activation, run any mode above using `python`. See the [setup guide](readme_files/CONNECT_SETUP.md) for connection details.
+
+The [project follower](robot_program/so101_follower.py) preserves custom PID tuning and motor protection settings. Hardware calibration stays in the existing Hugging Face user cache; the degree-limit export and control mappings are unchanged.
 
 LeRobot 0.4.0 includes `lerobot.model.kinematics.RobotKinematics`, backed by optional placo; placo was absent during inspection. Neither the URDF nor that solver automatically supplies collision avoidance. Mesh acquisition is complete; model/calibration alignment and dependency/platform compatibility still need resolution before claiming the new path works.
 
@@ -86,12 +93,14 @@ LeRobot 0.4.0 includes `lerobot.model.kinematics.RobotKinematics`, backed by opt
 Run offline tests from the root:
 
 ```powershell
-python -m pytest -q -o addopts= --tb=short
+.\.venv\Scripts\python.exe -m pytest -q -o addopts= --tb=short
 ```
 
 Baseline on 2026-10-30: **159 passed** under default Python 3.12.9 and the robot environment's Python 3.10.19. These tests cover custom mathematics/model behavior, not hardware, full dashboard/plan integration, upstream IK, or collision checking.
 
-`python -m robot_program.debug_env` reports environment information. `python -X utf8 validate_calibration.py` checks exported raw-to-degree arithmetic, not physical calibration. The motor reader is a hardware operation described in the run guide.
+Venv verification on 2026-10-31: **168 passed** with Python 3.11.14; `pip check` passed. The nine additional checks cover preserved motor configuration and CLI help without connecting to hardware. Physical validation remains pending.
+
+Using the venv interpreter, `python -m robot_program.debug_env` reports environment information. `python -X utf8 validate_calibration.py` checks exported raw-to-degree arithmetic, not physical calibration. The motor reader is a hardware operation described in the run guide.
 
 ## Boundaries for future work
 
