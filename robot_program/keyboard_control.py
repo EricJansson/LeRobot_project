@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 import time
 import argparse
-import keyboard  # pip install keyboard
 from robot_program.so101_follower import SO101Follower
-from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
+from robot_program.lerobot_compat import SO101FollowerConfig
 from .utils.ports import normalize_port, auto_port
 
 # ---- Speed/feel knobs ----
@@ -31,6 +30,13 @@ def main():
     ap.add_argument("--port", default=auto_port(), help="Serial port (COM# or /dev/ttyACM#)")
     ap.add_argument("--deadman", default="space", help="Hold this key to allow motion (default: space)")
     args = ap.parse_args()
+
+    try:
+        import keyboard
+    except ModuleNotFoundError as exc:
+        if exc.name != "keyboard":
+            raise
+        ap.error("Live keyboard control requires the optional 'keyboard' package; use a gamepad instead.")
 
     port = normalize_port(args.port)
     cfg = SO101FollowerConfig(port=port, id="lerobot_arm", use_degrees=True)

@@ -8,6 +8,7 @@ Documentation baseline: 2026-10-30. Existing direct-axis, custom-IK, and plan mo
 - [ ] Validate the model against physical hardware: frames, zero conventions, motor direction, joint limits, elbow offset, and gripper representation. Resolve the existing normalized-gripper/degree-limit mismatch at the new integration boundary.
 - [ ] Implement and validate collision checking separately from IK: arm self-collision, base/table/environment, configurable clearance, and motion between targets. Define behavior for invalid/unreachable/colliding targets and verify offline before controlled hardware trials.
 - [ ] Add phone control through the new path with one hardware owner, command arbitration, stale-input/disconnect handling, and explicit stop behavior. Choose phone transport, UI, and protocol during that implementation.
+- [ ] Add a Pi-hosted web dashboard accessible from a PC or phone on the same network. Preserve the desktop dashboard and one hardware owner; provide telemetry and deliberate command submission, with command arbitration and stale/disconnected-client handling. Design camera streaming separately. The current Pi migration uses local gamepad control with `--no-dashboard` and adds no network service.
 - [ ] Revalidate the previously reported second-pitch-joint offset / end-effector height discrepancy using measured reference poses; record whether it persists before changing calibration or geometry.
 
 See [README](README.md), [architecture](readme_files/ARCHITECTURE.md), and [current environment/tuning](readme_files/CONNECT_SETUP.md).

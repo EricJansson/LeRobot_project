@@ -22,7 +22,8 @@ Reviewed 2026-10-30. This replaces an outdated phase checklist. Hardware status 
 | Dashboard | Separate pygame process, manual joint targets, telemetry, plan editing |
 | Hardware adapter | RobotArmController integrates custom model with SO101Follower |
 | Offline checks | Historical baseline: 159 passed on 2026-10-30; venv verification is recorded in the README |
-| Current runtime | Native Windows venv, LeRobot 0.4.0, pygame 2.6.1; repository-owned PID tuning; existing user-cache calibration |
+| Current runtime | Windows: Python 3.11 / LeRobot 0.4.0. Pi: existing Python 3.13 / LeRobot 0.6.1 / CPU PyTorch environment. Shared imports, preserved PID tuning, and project-local hardware calibration |
+| Headless Pi control | IK and plan accept --no-dashboard; local gamepad control without dashboard IPC; browser dashboard deferred |
 
 Plan playback interpolates recorded joint targets and pauses; it is not collision-aware planning. The guardrail/workspace helper files are not wired into active teleop. Tests cover custom mathematics/model behavior and do not establish hardware or end-to-end safety.
 
@@ -30,4 +31,11 @@ Plan playback interpolates recorded joint targets and pauses; it is not collisio
 
 Keep working modes intact and add a separate upstream LeRobot URDF-based FK/IK path. LeRobot's installed RobotKinematics class exists, but placo is absent and no repository control path uses it. All 13 URDF-referenced meshes were acquired from a pinned upstream revision with license/checksums; see [asset provenance](../assets/README.md). The local URDF is structurally identical to that upstream model. Its geometry/conventions still need checking against the physical arm.
 
-The Windows venv migration preserves tuning/calibration and is validated offline; hardware confirmation remains pending. The next implementation milestones are separate upstream IK integration, collision checking across motions, then phone control. See [TODO](../TODO.md) for ordered tasks. Phone transport/UI and collision implementation choices have not yet been made.
+The Pi migration preserves tuning/calibration and is validated offline; hardware
+confirmation remains pending. With the owner's approval, the project calibration
+was synchronized from the completed Pi LeRobot calibration and the degree-limit
+export regenerated. The controller loads calibration directly from the project. No gamepad was exposed to
+the verification session. No motor connections or
+physical commands were issued. The next implementation milestones include
+separate upstream IK integration, collision checking, and PC/phone web access.
+See [TODO](../TODO.md) for tasks; web transport/UI choices remain deferred.

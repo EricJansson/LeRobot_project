@@ -6,7 +6,7 @@ The next direction is a **separate control path using LeRobot's URDF-based FK/IK
 
 ## Start here
 
-- [Connection and run guide](readme_files/CONNECT_SETUP.md): Windows venv setup, alternate WSL instructions, and commands.
+- [Connection and run guide](readme_files/CONNECT_SETUP.md): Raspberry Pi headless setup, Windows venv setup, alternate WSL instructions, and commands.
 - [Architecture and control reference](readme_files/ARCHITECTURE.md): code ownership, controls, units, state, dashboard communication, and extension boundaries.
 - [Joint limits and calibration](readme_files/JOINT_LIMITS_IMPLEMENTATION.md): current limits and enforcement.
 - [Project status](readme_files/PROJECT_PROGRESS.md), [TODO](TODO.md), and [sources](readme_files/SOURCES.md).
@@ -65,7 +65,7 @@ RobotArm is a hardware-independent model: solving IK changes internal state. Rob
 | [robot_program/utils/](robot_program/utils/) | Custom FK/IK, port helpers, standalone guardrail/workspace helpers |
 | [controller/input/](controller/input/) | Pygame polling, bindings, input-state profile, example |
 | [controller/scripts/run_teleop.py](controller/scripts/run_teleop.py) | Input-profile example; does not send commands to the arm |
-| [calibration/](calibration/) | Degree-limit export and conversion utility; distinct from LeRobot's calibration cache |
+| [calibration/](calibration/) | Project-local hardware calibration, degree-limit export, and conversion utility |
 | [so101_new_calib.urdf](so101_new_calib.urdf) | Description for future integration; all 13 referenced meshes are in [assets/](assets/) |
 | [tests/](tests/) | Offline custom solver, model, and joint-limit tests |
 | [web_sim/](web_sim/) | Early JavaScript FK/IK visualization, disconnected from Python/hardware |
@@ -74,7 +74,14 @@ RobotArm is a hardware-independent model: solving IK changes internal state. Rob
 
 ## Setup
 
-Use Python 3.11 and a normal `.venv` for dependencies:
+On the Raspberry Pi (Debian 13 ARM64), reuse `~/lerobot-env`. Install only the
+supplement with `~/lerobot-env/bin/python -m pip install -r requirements-pi.txt`.
+The Pi uses Python 3.13 and LeRobot 0.6.1 with its existing CPU PyTorch stack;
+do not install the Windows requirements into that environment. See the
+[Pi guide](readme_files/CONNECT_SETUP.md#raspberry-pi-debian-13-arm64) for
+headless gamepad checks and the `--no-dashboard` option for IK/plan modes.
+
+On Windows, use Python 3.11 and a normal `.venv` for dependencies:
 
 ```powershell
 py -3.11 -m venv .venv
@@ -84,7 +91,12 @@ python -m pip install -r requirements.txt
 
 After activation, run any mode above using `python`. See the [setup guide](readme_files/CONNECT_SETUP.md) for connection details.
 
-The [project follower](robot_program/so101_follower.py) preserves custom PID tuning and motor protection settings. Hardware calibration stays in the existing Hugging Face user cache; the degree-limit export and control mappings are unchanged.
+The [project follower](robot_program/so101_follower.py) preserves custom PID tuning
+and motor protection settings. Hardware calibration loads directly from
+`calibration/lerobot_arm.json` on both LeRobot versions; no Pi cache copy is
+needed. The raw calibration and derived degree-limit export were synchronized
+from the owner-approved Pi calibration; control mappings are unchanged. Missing or
+mismatched hardware calibration stops connection instead of starting interactive recalibration.
 
 LeRobot 0.4.0 includes `lerobot.model.kinematics.RobotKinematics`, backed by optional placo; placo was absent during inspection. Neither the URDF nor that solver automatically supplies collision avoidance. Mesh acquisition is complete; model/calibration alignment and dependency/platform compatibility still need resolution before claiming the new path works.
 
@@ -100,6 +112,20 @@ Baseline on 2026-10-30: **159 passed** under default Python 3.12.9 and the robot
 
 Venv verification on 2026-10-31: **168 passed** with Python 3.11.14; `pip check` passed. The nine additional checks cover preserved motor configuration and CLI help without connecting to hardware. Physical validation remains pending.
 
+Pi verification on 2026-11-02: **204 passed** with Python 3.13.5 and LeRobot
+0.6.1; `pip check` and calibration arithmetic passed. Tests blocked serial
+connections and covered both import layouts, mocked Windows dashboard launch,
+headless gamepad loops, recording/playback, and calibration rejection. Headless
+SDL initialized, but no physical gamepad was exposed to the session.
+The owner-approved Pi calibration and derived degree export are synchronized
+in the project. Tests verify project-local loading and consistent calibration
+data; approved physical validation remains pending.
+
+The observed Linux Sony controller uses axes LX, LY, LT, RX, RY, RT, rather
+than the Windows fallback order. Linux Sony controllers now use SDL's device
+mapping for axes/buttons in teleoperation and the dashboard. Regression tests
+replay the reported neutral readings with LB held and verify zero logical input.
+
 Using the venv interpreter, `python -m robot_program.debug_env` reports environment information. `python -X utf8 validate_calibration.py` checks exported raw-to-degree arithmetic, not physical calibration. The motor reader is a hardware operation described in the run guide.
 
 ## Boundaries for future work
@@ -110,4 +136,4 @@ Using the venv interpreter, `python -m robot_program.debug_env` reports environm
 - Verify conversions: custom XYZ uses centimeters, URDF geometry uses meters, joint conventions need alignment, and LeRobot's gripper channel is normalized rather than degrees.
 - Follow [TODO](TODO.md). The previously reported second-pitch-joint/height discrepancy needs revalidation; it is not a confirmed current defect.
 
-Last reviewed: 2026-10-30.
+Last reviewed: 2026-11-02.

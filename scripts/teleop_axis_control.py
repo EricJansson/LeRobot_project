@@ -11,7 +11,7 @@ Controller teleop for SO101 using gamepad_mapper
 import time
 import argparse
 from robot_program.so101_follower import SO101Follower
-from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
+from robot_program.lerobot_compat import SO101FollowerConfig
 from robot_program.utils.ports import normalize_port, auto_port
 
 from controller.input.gamepad_mapper import Gamepad, Bindings

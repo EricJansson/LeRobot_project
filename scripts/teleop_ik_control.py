@@ -630,6 +630,7 @@ def run_ik_teleop_loop(
     cmd_file,
     telemetry_file,
     dashboard_alive: Callable[[], bool] | None = None,
+    dashboard_enabled: bool = True,
 ) -> None:
     """Run the live controller game loop until disconnect or KeyboardInterrupt.
 
@@ -646,13 +647,14 @@ def run_ik_teleop_loop(
             if not gp.step():
                 break  # controller disconnected
 
-            if dashboard_alive is not None and not dashboard_alive():
+            if dashboard_enabled and dashboard_alive is not None and not dashboard_alive():
                 print("\nDashboard closed; shutting down arm teleop.")
                 break
 
             # The dashboard always receives live telemetry; its manual-Act
             # commands are locked out during an animation (see handle_dashboard_command).
-            push_telemetry(robot, state, telemetry_file)
+            if dashboard_enabled:
+                push_telemetry(robot, state, telemetry_file)
 
             # --- Quick-pose animation takes precedence over all other input ---
             if state.preset_animation is not None:
@@ -667,7 +669,10 @@ def run_ik_teleop_loop(
                 time.sleep(dt)
                 continue
 
-            dashboard_cmd = handle_dashboard_command(robot, state, cmd_file, telemetry_file)
+            dashboard_cmd = (
+                handle_dashboard_command(robot, state, cmd_file, telemetry_file)
+                if dashboard_enabled else None
+            )
 
             controller_muted = (
                 dashboard_cmd is not None

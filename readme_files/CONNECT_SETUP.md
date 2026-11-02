@@ -2,6 +2,157 @@
 
 [Home](../README.md) | [Architecture and controls](ARCHITECTURE.md) | [Sources](SOURCES.md)
 
+## Raspberry Pi (Debian 13 ARM64)
+
+Use the existing `~/lerobot-env` with Python 3.13.5, LeRobot 0.6.1,
+Torch 2.11.0+cpu, and torchvision 0.26.0+cpu. Windows retains its separate
+Python 3.11 / LeRobot 0.4.0 requirements. From the repository root:
+
+```bash
+~/lerobot-env/bin/python -m pip install -r requirements-pi.txt
+~/lerobot-env/bin/python -m pip check
+~/lerobot-env/bin/python -m robot_program.debug_env
+```
+
+The supplement adds Pygame 2.6.1 only. Do not install `requirements.txt` into
+the Pi environment or replace its tested CPU PyTorch stack. Optional offline
+test dependencies and checks are:
+
+```bash
+~/lerobot-env/bin/python -m pip install pytest==8.4.2
+~/lerobot-env/bin/python validate_calibration.py
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  ~/lerobot-env/bin/python -m pytest -q -o addopts= --tb=short
+```
+
+### Check ports and gamepad without connecting to the arm
+
+Connect the gamepad directly to the Pi by USB or Bluetooth. Inspect device
+paths and access as the normal user:
+
+```bash
+id
+ls -l /dev/serial/by-id/ /dev/ttyACM* /dev/ttyUSB* /dev/input/js* /dev/input/event*
+```
+
+Missing globs may print an error. Prefer the verified adapter's
+`/dev/serial/by-id/...` path over an index that can change after reboot. Confirm
+read/write access to the resolved serial device (commonly group `dialout`).
+Gamepad access depends on the session ACLs and the actual input-device group.
+If access is denied, fix that specific user's group/ACL setup and start a new
+login session; avoid running the robot controller as root or granting broad
+device permissions. Keep only one robot process running.
+
+This standalone monitor imports only Pygame and never opens a robot port.
+Press each button, move each stick/trigger, and check the raw indices and D-pad:
+
+```bash
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  ~/lerobot-env/bin/python - <<'PY'
+import time
+import pygame
+
+pygame.init()
+try:
+    count = pygame.joystick.get_count()
+    print("Gamepads:", count)
+    if not count:
+        raise SystemExit("No accessible gamepad; check connection and permissions.")
+    js = pygame.joystick.Joystick(0)  # Change to the intended --index.
+    js.init()
+    print(js.get_name(), "axes/buttons/hats:", js.get_numaxes(), js.get_numbuttons(), js.get_numhats())
+    while True:
+        pygame.event.pump()
+        print("axes:", [round(js.get_axis(i), 2) for i in range(js.get_numaxes())],
+              "buttons:", [js.get_button(i) for i in range(js.get_numbuttons())],
+              "hats:", [js.get_hat(i) for i in range(js.get_numhats())], flush=True)
+        time.sleep(0.2)
+except KeyboardInterrupt:
+    pass
+finally:
+    pygame.quit()
+PY
+```
+
+Sony/DualShock controllers on Linux now use the device's SDL mapping in all
+gamepad modes and the dashboard. The observed Pi controller has raw axes
+0–5 = LX, LY, LT, RX, RY, RT, with neutral readings near
+[0, 0, -1, 0, 0, -1]. Buttons are also mapped through SDL so digital trigger
+buttons do not masquerade as Back/Start. An incomplete or unsupported Sony
+mapping raises an error rather than guessing.
+
+Windows and other devices retain the existing configured mapping:
+axes 0–5 = LX, LY, RX, RY, LT, RT; buttons 0–9 = Cross, Circle, Square,
+Triangle, LB, RB, Back, Start, L3, R3. Hat 0 remains the D-pad. Triggers are
+converted from [-1, +1] to [0, 1]. Verify especially LB, Back, and idle trigger
+values before any approved arm operation.
+
+### Hardware calibration prerequisite
+
+Hardware calibration now loads directly from the project, on Windows and Linux:
+
+```text
+calibration/lerobot_arm.json
+```
+
+The path is resolved from the Python source location, independent of the
+working directory. No calibration cache copy, shell variable, or per-Pi
+configuration is required. Explicit `SO101FollowerConfig.calibration_dir`
+remains available for callers that deliberately select a different directory.
+The repository follower does not use `HF_LEROBOT_CALIBRATION` by default.
+
+Keep the existing raw hardware calibration and the separate controller-limit
+export `calibration/lerobot_arm_with_degrees.json` together in the project.
+Neither file is regenerated automatically. Preserve robot ID `lerobot_arm` and
+motor IDs 1–6.
+
+On 2026-11-02, with the owner's approval, the Pi's completed LeRobot
+calibration was copied unchanged from its upstream `so_follower` cache into
+`calibration/lerobot_arm.json`. The degree-limit export was regenerated from
+that file. The controller now loads these project files directly; the upstream
+cache is neither required nor modified by this project. No recalibration or
+motor-register writes were performed. If calibration is repeated later,
+explicitly synchronize the raw file and regenerate the derived export together.
+
+Missing/incomplete calibration fails before opening the port. A mismatch found
+after opening the bus closes it without changing torque or entering interactive
+calibration. Recalibration or calibration-register changes require approval.
+
+### Headless operating commands (require hardware approval)
+
+After calibration and input checks, choose one mode and replace the example
+adapter path. These commands connect to hardware and enable torque; they were
+not executed during migration verification:
+
+```bash
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  ~/lerobot-env/bin/python -m scripts.teleop_axis_control \
+  --port /dev/serial/by-id/REPLACE_WITH_VERIFIED_ADAPTER --index 0
+
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  ~/lerobot-env/bin/python -m scripts.main_teleop_ik \
+  --port /dev/serial/by-id/REPLACE_WITH_VERIFIED_ADAPTER --index 0 --no-dashboard
+
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  ~/lerobot-env/bin/python -m scripts.main_teleop_plan \
+  --port /dev/serial/by-id/REPLACE_WITH_VERIFIED_ADAPTER --index 0 --no-dashboard
+```
+
+`--no-dashboard` skips the UI, dashboard IPC, telemetry, and dashboard-liveness
+dependency. Gamepad presets, recording, and playback retain their existing
+behavior. Recorded plans remain in memory; dashboard editing and save/load are
+unavailable. `--plan-file` does not automatically load or save a plan.
+Ctrl+C and controller disconnect exit the loop with normal torque/disconnect
+cleanup. Releasing LB does not cancel an existing preset or plan playback.
+
+Omitting `--no-dashboard` retains the desktop dashboard and requires a working
+graphical session; use that session's normal SDL settings instead of the dummy
+drivers. A PC/phone web dashboard is deferred in [TODO](../TODO.md); no network
+service or remote gamepad forwarding is included. Live `keyboard` control is
+optional and deferred on Linux; gamepad modes do not require that package.
+The already tested USB camera needs no changes because these modes configure
+no cameras.
+
 ## Windows setup
 
 Use Python 3.11 and a normal project venv. From the repository root:
@@ -36,7 +187,11 @@ python -m scripts.main_teleop_plan --port COM3 --index 0 --plan-file .runtime/my
 
 Hold LB for manual movement; R3 selects fine increments. See the [complete control mapping](ARCHITECTURE.md#controller-mappings) before using presets or playback. Releasing LB does not cancel an already-started preset or plan. Plan playback stops on Back, manual takeover, or loop exit; dashboard Act submits a direct joint target. Ctrl+C exits the loop and normal cleanup disables torque/disconnects. Closing the IK/plan dashboard also shuts down its teleop process. Support the arm when torque is disabled.
 
-The IK/plan controller requires the repository's six-motor degree-limit export. LeRobot separately loads hardware calibration for robot ID lerobot_arm. A missing or mismatched hardware calibration can trigger LeRobot's interactive calibration workflow on connect; restoring the exported degree-limit file alone is insufficient. See [calibration details](JOINT_LIMITS_IMPLEMENTATION.md).
+The IK/plan controller requires the repository's six-motor degree-limit export.
+LeRobot separately loads hardware calibration for robot ID lerobot_arm. The
+repository follower rejects missing or mismatched hardware calibration instead
+of entering upstream's interactive workflow; restoring the exported
+degree-limit file alone is insufficient. See [calibration details](JOINT_LIMITS_IMPLEMENTATION.md).
 
 ## Motor reading and offline diagnostics
 
@@ -105,7 +260,7 @@ Use the actual device path and a separately provisioned WSL environment. Do not 
 
 Configuration runs with torque disabled, uses position mode, and retains acceleration values of 254. Gripper protection remains Max_Torque_Limit=500, Protection_Current=250, and Overload_Torque=25.
 
-Hardware calibration remains in the existing Hugging Face user cache (`HF_LEROBOT_CALIBRATION / robots / so101_follower / lerobot_arm.json`); switching Python environments on this computer does not move it. An explicit `SO101FollowerConfig.calibration_dir` still overrides the directory. The separate `calibration/lerobot_arm_with_degrees.json` supplies the custom controller's degree limits. These values and the existing controls are unchanged.
+Hardware calibration defaults to the project's `calibration/lerobot_arm.json`; no user-cache copy is required. An explicit `SO101FollowerConfig.calibration_dir` still overrides the directory. The separate `calibration/lerobot_arm_with_degrees.json` supplies the custom controller's degree limits. The raw file and derived export use the owner-approved Pi calibration; control mappings are unchanged.
 
 ## Troubleshooting and runtime files
 

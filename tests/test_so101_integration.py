@@ -11,7 +11,7 @@ import pytest
 # Pure mathematics tests can still run without the optional hardware runtime.
 pytest.importorskip("lerobot")
 
-from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
+from lerobot.motors.feetech import OperatingMode
 from robot_program import so101_follower as integration
 
 
@@ -34,8 +34,7 @@ class RecordingBus:
             self.events.append("torque context exited")
 
     def configure_motors(self):
-        self.events.append("configure_motors")
-        FeetechMotorsBus.configure_motors(self)
+        raise AssertionError("Upstream configuration must not add new register writes")
 
     def write(self, register, motor, value):
         self.events.append((register, motor, value))
@@ -46,7 +45,7 @@ class RecordingBus:
 def test_configuration_preserves_motor_tuning():
     bus = RecordingBus()
     integration.SO101Follower.configure(SimpleNamespace(bus=bus))
-    expected = ["torque context entered", "configure_motors"]
+    expected = ["torque context entered"]
     tuning = {
         "shoulder_pan": (10, 0, 48), "shoulder_lift": (12, 0, 44),
         "elbow_flex": (14, 0, 40), "wrist_flex": (14, 0, 40),
@@ -82,9 +81,12 @@ def test_cli_help_without_hardware(module):
     code = """
 import runpy, sys
 from lerobot.motors.feetech import FeetechMotorsBus
+import serial
 def forbidden(*args, **kwargs):
     raise AssertionError('CLI help must not open hardware')
 FeetechMotorsBus.connect = forbidden
+serial.Serial.open = forbidden
+sys.modules['keyboard'] = None
 sys.argv = [sys.argv[1], '--help']
 runpy.run_module(sys.argv[0], run_name='__main__')
 """

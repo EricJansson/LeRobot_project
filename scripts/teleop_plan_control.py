@@ -583,6 +583,7 @@ def run_plan_teleop_loop(
     plan_path,
     dashboard_alive: Callable[[], bool] | None = None,
     rate_hz: float = 25.0,
+    dashboard_enabled: bool = True,
 ) -> None:
     """Run the plan controller game loop until disconnect or KeyboardInterrupt.
 
@@ -639,23 +640,28 @@ def run_plan_teleop_loop(
     print("  Record: RB + Cross adds the current pose to the plan.")
     print("  Play:   LB + Start plays the plan once; RB + Start loops it.")
     print("          Back or LB+stick stops it.")
-    print("  Edit pauses/speed and save/load via the dashboard.\n")
+    if dashboard_enabled:
+        print("  Edit pauses/speed and save/load via the dashboard.\n")
+    else:
+        print("  Dashboard editing and save/load are unavailable; recorded plans remain in memory.\n")
 
     try:
         while True:
             if not gp.step():
                 break  # controller disconnected
 
-            if dashboard_alive is not None and not dashboard_alive():
+            if dashboard_enabled and dashboard_alive is not None and not dashboard_alive():
                 print("\nDashboard closed; shutting down arm plan teleop.")
                 break
 
             # Plan edits with dedup/ack (processed every loop regardless of mode).
             # The manual Act / mute / pending commands are handled in the IDLE
             # branch below so they are never applied while playback owns the arm.
-            last_plan_cmd_id, plan_changed = handle_plan_dashboard_cmd(
-                plan_cmd_file, plan, plan_path, last_plan_cmd_id,
-            )
+            plan_changed = False
+            if dashboard_enabled:
+                last_plan_cmd_id, plan_changed = handle_plan_dashboard_cmd(
+                    plan_cmd_file, plan, plan_path, last_plan_cmd_id,
+                )
 
             # A structural plan edit must cancel an in-flight playback before
             # it can take effect.
@@ -665,10 +671,11 @@ def run_plan_teleop_loop(
             # A manual Act command issued during PLAY counts as a manual
             # takeover: cancel playback, resync, enter IDLE, and let the IDLE
             # branch below apply the still-pending command this same tick.
-            if mode is Mode.PLAY and _pending_manual_cmd(cmd_file):
+            if dashboard_enabled and mode is Mode.PLAY and _pending_manual_cmd(cmd_file):
                 mode = _cancel_to_idle(robot, state, plan, pause_started, mode_ref)
 
-            push_plan_telemetry(robot, state, plan, mode, telemetry_file)
+            if dashboard_enabled:
+                push_plan_telemetry(robot, state, plan, mode, telemetry_file)
 
             # Quick-pose animation (IDLE only; never during PLAY).
             if state.preset_animation is not None and mode is not Mode.PLAY:
@@ -696,7 +703,10 @@ def run_plan_teleop_loop(
                 continue
 
             # --- IDLE: drive the arm (recording-capable) ---
-            dashboard_cmd = handle_dashboard_command(robot, state, cmd_file, telemetry_file)
+            dashboard_cmd = (
+                handle_dashboard_command(robot, state, cmd_file, telemetry_file)
+                if dashboard_enabled else None
+            )
             controller_muted = (
                 dashboard_cmd is not None
                 and dashboard_cmd.get("status") == "muted"

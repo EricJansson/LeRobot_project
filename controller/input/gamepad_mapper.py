@@ -22,6 +22,10 @@ Usage:
 from __future__ import annotations
 import time
 import pygame
+if __package__:
+    from .device_mapping import select_labels
+else:  # Standalone input examples beside this module.
+    from device_mapping import select_labels
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional, Tuple, Set, Any
 
@@ -93,6 +97,9 @@ class Gamepad:
         self.js = pygame.joystick.Joystick(self.index)
         self.js.init()
 
+        self.axis_labels, self.button_labels = select_labels(
+            self.js, self.axis_labels, self.button_labels
+        )
         self.name = self.js.get_name()
         self.num_axes = self.js.get_numaxes()
         self.num_buttons = self.js.get_numbuttons()

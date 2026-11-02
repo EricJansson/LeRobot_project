@@ -10,6 +10,14 @@ import time
 import warnings
 import pygame
 
+if not __package__:  # The teleop launchers also invoke this file directly.
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from controller.input.device_mapping import select_labels
+
 try:
     from dashboard_panels import (
         build_manual_panel,
@@ -236,6 +244,7 @@ def main():
     js = pygame.joystick.Joystick(args.index)
     js.init()
 
+    axis_labels, button_labels = select_labels(js, AXIS_LABELS, BUTTON_LABELS)
     name = js.get_name()
     na, nb, nh = js.get_numaxes(), js.get_numbuttons(), js.get_numhats()
 
@@ -357,6 +366,7 @@ def main():
                 if pygame.joystick.get_count() > args.index:
                     js = pygame.joystick.Joystick(args.index)
                     js.init()
+                    axis_labels, button_labels = select_labels(js, AXIS_LABELS, BUTTON_LABELS)
                     name = js.get_name()
                     na, nb, nh = js.get_numaxes(), js.get_numbuttons(), js.get_numhats()
                     recovered = True
@@ -391,7 +401,7 @@ def main():
         # Normalize values and assign labels from AXIS_LABELS
         ax_named = {}
         for i, raw in enumerate(axes):
-            label = AXIS_LABELS.get(i, f"AX{i}")
+            label = axis_labels.get(i, f"AX{i}")
             if is_trigger_label(label):
                 ax_named[label] = norm_trigger(raw)
             else:
@@ -421,12 +431,13 @@ def main():
         pygame.draw.rect(screen, ACCENT, box_rect, width=1, border_radius=10)
 
         # Pressed states (read once)
-        lb_pressed = bool(buttons[4] if len(buttons) > 4 else False)
-        rb_pressed = bool(buttons[5] if len(buttons) > 5 else False)
-        back_pressed = bool(buttons[6] if len(buttons) > 6 else False)
-        start_pressed = bool(buttons[7] if len(buttons) > 7 else False)
-        l3_pressed = bool(buttons[8] if len(buttons) > 8 else False)
-        r3_pressed = bool(buttons[9] if len(buttons) > 9 else False)
+        pressed = {label: bool(buttons[i]) for i, label in button_labels.items() if i < len(buttons)}
+        lb_pressed = pressed.get("LB", False)
+        rb_pressed = pressed.get("RB", False)
+        back_pressed = pressed.get("Back", False)
+        start_pressed = pressed.get("Start", False)
+        l3_pressed = pressed.get("L3", False)
+        r3_pressed = pressed.get("R3", False)
 
         # Top row: triggers at corners, LB/RB on each half
         draw_trigger_bar(screen, BX + 4,   BY + 10, "LT", lt, small, bar_w=12, bar_h=36)
@@ -440,7 +451,8 @@ def main():
 
         # Middle row: D-Pad (left), face diamond (right), horizontally aligned
         draw_dpad(screen, BX + 18, BY + 66, last_hat if nh >= 1 else (0, 0), small, size=18)
-        draw_face_diamond(screen, BX + BW - 50, BY + 93, 20, buttons, radius=11)
+        face_buttons = [pressed.get(label, False) for label in ("Cross", "Circle", "Square", "Triangle")]
+        draw_face_diamond(screen, BX + BW - 50, BY + 93, 20, face_buttons, radius=11)
 
         # Bottom row: sticks, below their respective D-Pad / diamond
         draw_stick_circle(screen, BX + 45, BY + 160, 26, lx, ly, clicked=l3_pressed)

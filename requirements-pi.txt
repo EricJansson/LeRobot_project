@@ -1,0 +1,3 @@
+# Supplement for the existing ~/lerobot-env on Debian 13 ARM64.
+# Do not include requirements.txt: preserve the installed LeRobot/CPU Torch stack.
+pygame==2.6.1

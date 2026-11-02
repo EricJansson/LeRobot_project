@@ -37,8 +37,8 @@ class TestLoadJointLimitsFromCalibration:
         theta1_min, theta1_max = limits[0]
         
         # Expected values from lerobot_arm_with_degrees.json
-        assert abs(theta1_min - (-108.11)) < 0.01, "theta1 min should match motor 2 degree_min"
-        assert abs(theta1_max - 102.13) < 0.01, "theta1 max should match motor 2 degree_max"
+        assert abs(theta1_min - (-107.31)) < 0.01, "theta1 min should match motor 2 degree_min"
+        assert abs(theta1_max - 102.92) < 0.01, "theta1 max should match motor 2 degree_max"
 
     def test_load_limits_motor_3_elbow_flex(self):
         """Test that motor 3 (elbow_flex) limits are correctly extracted."""
@@ -46,8 +46,8 @@ class TestLoadJointLimitsFromCalibration:
         theta2_min, theta2_max = limits[1]
         
         # Expected values from lerobot_arm_with_degrees.json
-        assert abs(theta2_min - (-94.92)) < 0.01, "theta2 min should match motor 3 degree_min"
-        assert abs(theta2_max - 100.46) < 0.01, "theta2 max should match motor 3 degree_max"
+        assert abs(theta2_min - (-104.59)) < 0.01, "theta2 min should match motor 3 degree_min"
+        assert abs(theta2_max - 89.91) < 0.01, "theta2 max should match motor 3 degree_max"
 
     def test_load_limits_motor_4_wrist_flex(self):
         """Test that motor 4 (wrist_flex) limits are correctly extracted."""
@@ -55,8 +55,8 @@ class TestLoadJointLimitsFromCalibration:
         theta3_min, theta3_max = limits[2]
         
         # Expected values from lerobot_arm_with_degrees.json
-        assert abs(theta3_min - (-104.24)) < 0.01, "theta3 min should match motor 4 degree_min"
-        assert abs(theta3_max - 102.74) < 0.01, "theta3 max should match motor 4 degree_max"
+        assert abs(theta3_min - (-117.51)) < 0.01, "theta3 min should match motor 4 degree_min"
+        assert abs(theta3_max - 87.80) < 0.01, "theta3 max should match motor 4 degree_max"
 
     def test_load_limits_with_custom_path(self):
         """Test loading limits from a custom calibration file path."""
@@ -101,9 +101,9 @@ class TestRobotArmAutoLoadLimits:
         
         # Expected limits from calibration file
         expected_limits = [
-            (-108.11, 102.13),   # theta1 (motor 2)
-            (-94.92, 100.46),    # theta2 (motor 3)
-            (-104.24, 102.74),   # theta3 (motor 4)
+            (-107.31, 102.92),   # theta1 (motor 2)
+            (-104.59, 89.91),    # theta2 (motor 3)
+            (-117.51, 87.80),   # theta3 (motor 4)
         ]
         
         for i, (loaded, expected) in enumerate(zip(arm.joint_limits_deg, expected_limits)):
@@ -390,16 +390,16 @@ class TestMotorSpecificLimits:
         assert abs(theta2_min) > abs(theta2_max) * 0.8, \
             "Elbow flex limits should have reasonable asymmetry"
 
-    def test_wrist_flex_limits_are_symmetric(self):
-        """Test that motor 4 (wrist_flex) has roughly symmetric limits."""
+    def test_wrist_flex_limits_match_exported_raw_range(self):
+        """The current wrist calibration is asymmetric; preserve its raw limits."""
         limits = load_joint_limits_from_calibration()
         theta3_min, theta3_max = limits[2]
         
-        # Wrist should be roughly symmetric
+        # Raw endpoints 711 and 3047 use the export's 4096-step, 2048-center conversion.
         assert theta3_min < 0, "Wrist should be able to flex down"
         assert theta3_max > 0, "Wrist should be able to flex up"
-        assert abs(abs(theta3_min) - abs(theta3_max)) < 10.0, \
-            "Wrist flex limits should be roughly symmetric"
+        assert theta3_min == pytest.approx((711 - 2048) / 4096 * 360, abs=0.01)
+        assert theta3_max == pytest.approx((3047 - 2048) / 4096 * 360, abs=0.01)
 
     def test_all_limits_have_reasonable_ranges(self):
         """Test that all joint limits have reasonable degree ranges."""

@@ -13,15 +13,30 @@ Reviewed 2026-10-30. All three primary modes have been used on hardware by the o
 | scripts.main_teleop_plan | Delegates recording/playback to scripts/teleop_plan_control.py, reusing IK teleop primitives |
 | scripts.controller_dashboard | Pygame display/panels; IPC client only, never the serial owner |
 
-Both main_teleop entry points accept --port and --index; plan also accepts --plan-file. The reusable teleop_ik_control and teleop_plan_control modules are not standalone launchers.
+Both main_teleop entry points accept --port, --index, and --no-dashboard; plan
+also accepts --plan-file. With --no-dashboard, no dashboard process, IPC reads,
+telemetry writes, or dashboard-liveness checks run. Gamepad recording/playback
+remain available; dashboard editing and save/load do not. The reusable
+teleop_ik_control and teleop_plan_control modules are not standalone launchers.
 
-All hardware entry points use `robot_program.so101_follower.SO101Follower`, a subclass of the pinned upstream follower. It preserves custom motor tuning; calibration, connection, action, and disconnect behavior remain upstream. Dashboard children use `sys.executable`, so they share the launching venv. See the [setup guide](CONNECT_SETUP.md).
+All hardware entry points use `robot_program.so101_follower.SO101Follower` through
+shared imports supporting LeRobot 0.4 and 0.6. It preserves custom motor tuning,
+the original configuration writes, and robot identity `so101_follower`.
+Hardware calibration defaults to the project's `calibration/lerobot_arm.json`,
+with an explicit config directory override supported. Calibration must already match; automatic recalibration is
+blocked before configuration. Actions and normal disconnect behavior remain
+upstream. Dashboard children use `sys.executable`, so they share the launching
+venv. See the [setup guide](CONNECT_SETUP.md).
 
 controller/input/gamepad_mapper.py polls pygame and dispatches bindings. teleop_profile.py supplies an input-state abstraction; controller/scripts/run_teleop.py is an example without robot publishing. Older robot_program/input_control.py and keyboard_control.py are direct-hardware experiments, not the shared IK implementation. read_motors.py is a hardware diagnostic. Running robot_arm_controller as a module executes a smoke test that commands a move; it is not read-only.
 
 ## Controller mappings
 
-LB/RB correspond to L1/R1 and LT/RT to L2/R2. Scripts assume axes 0–5 are LX, LY, RX, RY, LT, RT and buttons 0–9 are Cross, Circle, Square, Triangle, LB, RB, Back, Start, L3, R3. These are device/driver assumptions, not automatic mapping.
+LB/RB correspond to L1/R1 and LT/RT to L2/R2. Sony/DualShock controllers on
+Linux use SDL's per-device axis/button mapping, shared by gamepad control and
+the dashboard. Windows and other devices retain the configured axes 0–5 =
+LX, LY, RX, RY, LT, RT and buttons 0–9 = Cross, Circle, Square, Triangle, LB,
+RB, Back, Start, L3, R3. These fallback mappings still require device verification.
 
 | Input | Direct axis mode | Cartesian IK / plan manual driving |
 | --- | --- | --- |

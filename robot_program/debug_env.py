@@ -37,7 +37,7 @@ print("which ffmpeg :", shutil.which("ffmpeg") or "(not found)")
 if shutil.which("ffmpeg"):
     print("ffmpeg version:", safe(["ffmpeg", "-hide_banner", "-version"]).splitlines()[0])
 
-print("\n=== Serial devices (WSL) ===")
+print("\n=== Serial devices (Linux / WSL) ===")
 devs = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
 print("found:", ", ".join(devs) if devs else "(none)")
 
