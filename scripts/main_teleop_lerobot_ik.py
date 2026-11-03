@@ -7,6 +7,7 @@ import argparse
 import os
 import subprocess
 import sys
+import warnings
 from time import perf_counter, sleep
 
 import numpy as np
@@ -39,7 +40,15 @@ class InputState:
 def setup_gamepad(index: int, state: InputState):
     os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
-    from controller.input.gamepad_mapper import Bindings, Gamepad
+    os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="pkg_resources is deprecated as an API",
+            category=UserWarning,
+            module=r"^pygame\.pkgdata$",
+        )
+        from controller.input.gamepad_mapper import Bindings, Gamepad
 
     gp = Gamepad(
         index=index, axis_labels=AXIS_LABELS, button_labels=BUTTON_LABELS,
