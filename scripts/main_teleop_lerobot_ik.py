@@ -127,6 +127,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default=None, help="Serial adapter path (auto-selected if omitted)")
     parser.add_argument("--index", type=int, default=0, help="Gamepad device index")
+    # Accept the old diagnostic option for existing launch commands.
+    parser.add_argument("--no-joint-step-limit", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-web-dashboard", action="store_true", help="Disable read-only LAN telemetry")
     parser.add_argument("--web-host", default="0.0.0.0", help="Dashboard bind address (default: all IPv4 interfaces)")
     parser.add_argument("--web-port", type=int, default=8000, help="Dashboard HTTP port (default: 8000)")

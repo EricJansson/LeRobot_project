@@ -69,7 +69,7 @@ def test_limits_use_bus_calibration_and_explicit_joint_order(controller):
     np.testing.assert_equal(controller._read_joints(), [1, 2, 3, 4, 5])
 
 
-@pytest.mark.parametrize('bad', [np.full(5, np.nan), np.zeros(6), np.array([500, 0, 0, 0, 0]), np.array([6, 0, 0, 0, 0])])
+@pytest.mark.parametrize('bad', [np.full(5, np.nan), np.zeros(6), np.array([500, 0, 0, 0, 0])])
 def test_invalid_solutions_never_send(controller, bad):
     controller.kinematics.inverse_kinematics.side_effect = lambda *args, **kw: bad
     result = controller.move_to_pose(np.eye(4), gripper_delta=2)
@@ -87,19 +87,20 @@ def test_unreachable_target_has_bounded_iterations(controller):
     controller.follower.send_action.assert_not_called()
 
 
-def test_joint_step_rejection_keeps_previous_goal_until_joints_catch_up(controller):
+def test_converged_solution_over_five_degrees_is_sent_in_full(controller):
+    solved_joints = np.array([8.0, -4.0, 2.0, 0.0, 0.0])
+    controller.kinematics.inverse_kinematics.side_effect = [solved_joints * 2, solved_joints]
     target = np.eye(4)
-    target[0, 3] = 0.004
-    assert controller.move_to_pose(target).accepted
-    controller.follower.send_action.reset_mock()
-    target[0, 3] = 0.006
-    for _ in range(3):
-        assert not controller.move_to_pose(target).accepted
-        assert controller.target_pose[0, 3] == 0.004
-    controller.follower.send_action.assert_not_called()
-    controller.follower.bus.sync_read.return_value['shoulder_pan'] = 3
-    assert controller.move_to_pose(target).accepted
-    assert controller.target_pose[0, 3] == 0.006
+    target[:3, 3] = solved_joints[:3] / 1000
+    result = controller.move_to_pose(target)
+    assert result.accepted
+    assert controller.kinematics.inverse_kinematics.call_count == 2
+    np.testing.assert_allclose(result.joints_deg, solved_joints)
+    np.testing.assert_allclose(result.pose, target)
+    np.testing.assert_allclose(controller.target_pose, result.pose)
+    controller.follower.send_action.assert_called_once_with({
+        f'{name}.pos': value for name, value in zip(ARM_JOINTS, solved_joints)
+    })
 
 
 def test_gripper_is_normalized_and_bypasses_ik(controller):
@@ -220,35 +221,49 @@ def test_real_fk_ik_roundtrips_steps_and_boundaries(real_controller):
             assert np.linalg.norm(result.pose[:3, 3] - target[:3, 3]) <= 0.0005
 
 
-def test_real_unequal_tracking_does_not_ratchet_pitch(real_controller):
+def test_real_extended_retraction_keeps_sending_full_commands_with_stalled_feedback(real_controller):
     r = real_controller
-    measured = np.array([5.36, -77.63, 46.02, 49.41, -9.63])
-    goal = measured.copy()
-    rate = np.array([2, 0.3, 0.3, 2, 2])
-    def read(*args, **kwargs):
-        return {**dict(zip(ARM_JOINTS, measured)), 'gripper': 20.0}
-    def send(action):
-        for i, name in enumerate(ARM_JOINTS):
-            if name + '.pos' in action:
-                goal[i] = action[name + '.pos']
-        return action
-    r.follower.bus.sync_read.side_effect = read
-    r.follower.send_action.side_effect = send
-    start = r.sync_from_hardware()
-    state = teleop.InputState(active=True, was_active=True)
-    state.axes['RY'] = -1
-    rejected = 0
-    for _ in range(50):
+    measured = np.array([0.0, 25.0, -12.0, 3.0, 0.0])
+    r.follower.bus.sync_read.return_value.update(dict(zip(ARM_JOINTS, measured)))
+    state = teleop.InputState(active=True)
+    state.axes['LY'] = 1.0
+    start = r.kinematics.forward_kinematics(measured)
+    for _ in range(8):
         result = teleop.tick(r, state)
-        rejected += not result.accepted
-        measured += np.clip(goal - measured, -rate, rate)
+        assert result.accepted, result.reason
+    assert r.follower.send_action.call_count == 8
+    assert np.max(np.abs(result.joints_deg - measured)) > 5.0
+    assert result.pose[0, 3] < start[0, 3] - 0.014
+    r.follower.send_action.assert_called_with({
+        f'{name}.pos': value for name, value in zip(ARM_JOINTS, result.joints_deg)
+    })
+
+
+def test_real_outward_rejections_allow_retraction_without_releasing_lb(real_controller):
+    r = real_controller
+    measured = np.array([0.0, 25.0, -12.0, 3.0, 0.0])
+    r.follower.bus.sync_read.return_value.update(dict(zip(ARM_JOINTS, measured)))
+    state = teleop.InputState(active=True)
+    state.axes['LY'] = -1.0
     for _ in range(100):
-        measured += np.clip(goal - measured, -rate, rate)
-    end = r.kinematics.forward_kinematics(measured).copy()
-    angle = np.arccos(np.clip((np.trace(start[:3, :3].T @ end[:3, :3]) - 1) / 2, -1, 1))
-    assert rejected > 0  # Exercise step-cap recovery with assumed, unequal rates.
-    assert np.rad2deg(angle) < 0.1
-    assert end[2, 3] > start[2, 3] + 0.015
+        result = teleop.tick(r, state)
+        if not result.accepted:
+            break
+        r.follower.bus.sync_read.return_value.update(dict(zip(ARM_JOINTS, result.joints_deg)))
+    else:
+        pytest.fail('Outward jog never reached the modeled boundary')
+
+    boundary = r.target_pose.copy()
+    r.follower.send_action.reset_mock()
+    for _ in range(3):
+        assert not teleop.tick(r, state).accepted
+        np.testing.assert_allclose(r.target_pose, boundary)
+    r.follower.send_action.assert_not_called()
+    state.axes['LY'] = 1.0
+    inward = teleop.tick(r, state)
+    assert inward.accepted, inward.reason
+    assert inward.pose[0, 3] < boundary[0, 3]
+    r.follower.send_action.assert_called_once()
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -285,7 +300,7 @@ def test_dashboard_samples_on_teleop_loop_only(controller, monkeypatch, enabled)
         )
 
 
-@pytest.mark.parametrize("mode", ["headless", "normal", "loop_error", "bind_error"])
+@pytest.mark.parametrize("mode", ["headless", "normal", "legacy_flag", "loop_error", "bind_error"])
 def test_web_dashboard_launcher_lifecycle(monkeypatch, mode):
     events = []
     robot = Mock()
@@ -315,12 +330,18 @@ def test_web_dashboard_launcher_lifecycle(monkeypatch, mode):
 
     monkeypatch.setattr(teleop, "WebDashboard", dashboard)
     monkeypatch.setattr(teleop, "run_loop", loop)
-    monkeypatch.setattr(sys, "argv", ["teleop"] + (["--no-web-dashboard"] if mode == "headless" else []))
+    args = ["teleop"]
+    if mode == "headless":
+        args.append("--no-web-dashboard")
+    if mode == "legacy_flag":
+        args.append("--no-joint-step-limit")
+    monkeypatch.setattr(sys, "argv", args)
     if mode.endswith("_error"):
         with pytest.raises(SystemExit, match="1"):
             teleop.main()
     else:
         teleop.main()
+    robot.from_port.assert_called_once_with(None)
     if mode == "headless":
         assert events == ["connect", "loop", "disconnect"]
     elif mode == "bind_error":

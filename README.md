@@ -133,11 +133,11 @@ rotation, and 0.7 normalized gripper units per tick at 50 Hz. No `--fine` flag
 or stick click is needed. Ctrl+C or controller loss disables torque and disconnects.
 The existing control modes and calibration/URDF files are unchanged.
 
-The owner confirms working movement; measured model alignment and collision
-checking remain pending. IK candidates must be finite, within joint limits,
-within 0.5 mm of the target, and within 5 degrees of measured joints. If motors
-lag behind the previous command, a rejected joint step retains that target
-until they catch up. Neither these checks nor Placo provide collision avoidance.
+The owner confirms working movement. The IK solution must be finite, within the
+URDF and calibration joint limits, and within 0.5 mm of the requested XYZ. This
+limits reach according to the arm model. Teleop sends the validated IK solution
+directly to the follower. Measured model alignment and collision checking remain
+pending.
 
 ## Tests and diagnostics
 

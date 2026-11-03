@@ -19,8 +19,6 @@ TARGET_FRAME = "gripper_frame_link"
 DEFAULT_URDF = Path(__file__).resolve().parents[1] / "so101_new_calib.urdf"
 POSITION_TOLERANCE_M = 0.0005
 MAX_ITERATIONS = 20
-MAX_JOINT_STEP_DEG = 5.0
-JOINT_STEP_REJECTION = "joint step exceeds 5 degrees"
 JOINT_ROUNDOFF_DEG = 1e-8
 GRIPPER_RANGE = (0.0, 50.0)
 
@@ -100,7 +98,6 @@ class LeRobotIKController:
         self.kinematics.solver.enable_joint_limits(True)
         self.target_pose: np.ndarray | None = None
         self._gripper = 0.0
-        self._has_arm_command = False
         self._connected = False
 
     @classmethod
@@ -194,9 +191,6 @@ class LeRobotIKController:
                 # Placo can exceed an active bound by ~1e-14 degrees. Snap only
                 # numerical roundoff, then verify FK of the exact bounded command.
                 q = np.clip(q, self.limits_deg[:, 0], self.limits_deg[:, 1])
-                if np.any(np.abs(q - measured) > MAX_JOINT_STEP_DEG):
-                    reason = JOINT_STEP_REJECTION
-                    break
                 achieved = _pose(self.kinematics.forward_kinematics(q))
                 error = float(np.linalg.norm(achieved[:3, 3] - target[:3, 3]))
                 if error <= POSITION_TOLERANCE_M:
@@ -211,23 +205,13 @@ class LeRobotIKController:
         return IKResult(accepted, reason, q.copy(), achieved.copy())
 
     def move_to_pose(self, target: np.ndarray, *, gripper_delta: float = 0.0) -> IKResult:
-        previous_target = self.target_pose.copy() if self.target_pose is not None else None
-        measured = self._read_joints()
-        result = self.solve_pose(target, measured)
+        result = self.solve_pose(target, self._read_joints())
         if result.accepted:
             action = {f"{name}.pos": float(value) for name, value in zip(ARM_JOINTS, result.joints_deg)}
             if gripper_delta:
                 action["gripper.pos"] = self._gripper_target(gripper_delta)
             self.follower.send_action(action)
-            self._has_arm_command = True
-        if (not result.accepted and result.reason == JOINT_STEP_REJECTION
-                and previous_target is not None and self._has_arm_command):
-            # Keep the last commanded pose while motors catch up. Replacing it
-            # with a partially tracked pose can ratchet pitch/XYZ errors into
-            # subsequent targets when some joints move faster than others.
-            self.target_pose = previous_target
-        else:
-            self.target_pose = result.pose.copy()
+        self.target_pose = result.pose.copy()
         return result
 
     def _gripper_target(self, delta: float) -> float:
