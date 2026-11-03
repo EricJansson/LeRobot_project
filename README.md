@@ -119,9 +119,10 @@ Translation stays fixed relative to the base/table: model +X is forward, -Y
 is right, and +Z is up. Pitch/roll use tool-local axes with soft orientation
 tracking. Face-button presets and recording are deferred in [TODO](TODO.md).
 
-The LeRobot IK command starts the read-only browser dashboard by default. On a
-trusted local network, run `hostname -I` in another Pi terminal to find its LAN IP,
-then open `http://<pi-lan-ip>:8000/` on a phone or PC connected to the same network.
+The LeRobot IK command starts the read-only browser dashboard by default and
+prints its URLs using the Pi's IPv4 addresses. Open a printed LAN URL on a phone
+or PC connected to the same trusted network. If address detection fails, the
+launcher prints `http://127.0.0.1:8000/` for use on the Pi with the default port.
 The page updates at up to 10 Hz and shows measured joint angles, normalized
 gripper position, LB status, and end-effector XYZ in millimeters relative to the
 robot base (+X forward, +Y left, +Z up). Use `--web-host` to bind to a specific IPv4 address or `--web-port`

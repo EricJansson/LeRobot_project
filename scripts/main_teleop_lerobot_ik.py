@@ -2,8 +2,10 @@
 
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from ipaddress import IPv4Address
 import argparse
 import os
+import subprocess
 import sys
 from time import perf_counter, sleep
 
@@ -124,6 +126,28 @@ def run_loop(robot, gp, state, dashboard=None):
         sleep(max(0, 1 / RATE_HZ - (perf_counter() - start)))
 
 
+def _dashboard_hosts(bind_host: str) -> list[str]:
+    if bind_host != "0.0.0.0":
+        return [bind_host]
+
+    try:
+        candidates = subprocess.check_output(
+            ["hostname", "-I"], text=True, stderr=subprocess.DEVNULL, timeout=1,
+        ).split()
+    except (OSError, subprocess.SubprocessError):
+        candidates = []
+
+    hosts = []
+    for candidate in candidates:
+        try:
+            address = IPv4Address(candidate)
+        except ValueError:
+            continue
+        if not (address.is_loopback or address.is_unspecified):
+            hosts.append(str(address))
+    return hosts or ["127.0.0.1"]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default=None, help="Serial adapter path (auto-selected if omitted)")
@@ -144,8 +168,8 @@ def main():
         web = nullcontext() if args.no_web_dashboard else WebDashboard(args.web_host, args.web_port)
         with web as dashboard, robot:
             if dashboard is not None:
-                host = "<pi-lan-ip>" if args.web_host == "0.0.0.0" else args.web_host
-                print(f"Dashboard available at http://{host}:{dashboard.port}/")
+                for host in _dashboard_hosts(args.web_host):
+                    print(f"Dashboard available at http://{host}:{dashboard.port}/")
             print("LeRobot IK ready. Hold the left shoulder button to move. Ctrl+C exits.")
             run_loop(robot, gp, state, dashboard)
     except KeyboardInterrupt:

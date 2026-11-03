@@ -304,9 +304,18 @@ def test_dashboard_samples_on_teleop_loop_only(controller, monkeypatch, enabled)
         )
 
 
-@pytest.mark.parametrize("mode", ["headless", "normal", "legacy_flag", "loop_error", "bind_error"])
-def test_web_dashboard_launcher_lifecycle(monkeypatch, mode):
+def test_dashboard_address_detection_failure_falls_back_to_loopback(monkeypatch):
+    discover = Mock(side_effect=teleop.subprocess.CalledProcessError(1, ['hostname', '-I']))
+    monkeypatch.setattr(teleop.subprocess, 'check_output', discover)
+    assert teleop._dashboard_hosts('0.0.0.0') == ['127.0.0.1']
+
+
+@pytest.mark.parametrize("mode", ["headless", "normal", "explicit_host", "legacy_flag", "loop_error", "bind_error"])
+def test_web_dashboard_launcher_lifecycle(monkeypatch, capsys, mode):
     events = []
+    bind_host = "192.0.2.3" if mode == "explicit_host" else "0.0.0.0"
+    discover = Mock(return_value="192.0.2.1 fd00::1 127.0.0.1 192.0.2.2\n")
+    monkeypatch.setattr(teleop.subprocess, "check_output", discover)
     robot = Mock()
     robot_context = MagicMock()
     robot_context.__enter__.side_effect = lambda: events.append("connect")
@@ -317,12 +326,12 @@ def test_web_dashboard_launcher_lifecycle(monkeypatch, mode):
 
     @contextmanager
     def dashboard(host, port):
-        assert (host, port) == ("0.0.0.0", 8000)
+        assert (host, port) == (bind_host, 0)
         events.append("bind")
         if mode == "bind_error":
             raise OSError("address in use")
         try:
-            yield SimpleNamespace(port=port)
+            yield SimpleNamespace(port=43210)
         finally:
             events.append("close")
 
@@ -334,9 +343,11 @@ def test_web_dashboard_launcher_lifecycle(monkeypatch, mode):
 
     monkeypatch.setattr(teleop, "WebDashboard", dashboard)
     monkeypatch.setattr(teleop, "run_loop", loop)
-    args = ["teleop"]
+    args = ["teleop", "--web-port", "0"]
     if mode == "headless":
         args.append("--no-web-dashboard")
+    if mode == "explicit_host":
+        args.extend(["--web-host", bind_host])
     if mode == "legacy_flag":
         args.append("--no-joint-step-limit")
     monkeypatch.setattr(sys, "argv", args)
@@ -346,6 +357,18 @@ def test_web_dashboard_launcher_lifecycle(monkeypatch, mode):
     else:
         teleop.main()
     robot.from_port.assert_called_once_with(None)
+    output = capsys.readouterr().out
+    if mode in ("headless", "bind_error", "explicit_host"):
+        discover.assert_not_called()
+    else:
+        discover.assert_called_once()
+    if mode == "explicit_host":
+        assert f"Dashboard available at http://{bind_host}:43210/" in output
+    elif mode not in ("headless", "bind_error"):
+        assert [line for line in output.splitlines() if line.startswith("Dashboard available")] == [
+            "Dashboard available at http://192.0.2.1:43210/",
+            "Dashboard available at http://192.0.2.2:43210/",
+        ]
     if mode == "headless":
         assert events == ["connect", "loop", "disconnect"]
     elif mode == "bind_error":
