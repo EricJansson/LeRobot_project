@@ -106,6 +106,28 @@ def test_trigger_is_not_wrist_roll_or_back(sony_gamepad):
     assert all(value == 0.0 for value in state.values())
 
 
+def test_lerobot_fine_mode_uses_sony_axes_and_shoulder_gating(sony_gamepad):
+    import numpy as np
+    from scripts import main_teleop_lerobot_ik as teleop
+
+    _, js, _, _ = sony_gamepad
+    state = teleop.InputState()
+    gp = teleop.setup_gamepad(0, state)
+    robot = Mock(target_pose=np.eye(4))
+    js.pressed = {4}
+    gp.step()
+    teleop.tick(robot, state)
+    robot.move_to_pose.assert_not_called()
+    js.axes[4] = -1  # Right stick up in the observed Linux layout.
+    gp.step()
+    teleop.tick(robot, state)
+    np.testing.assert_allclose(robot.move_to_pose.call_args.args[0][:3, 3], [0, 0, 0.0008])
+    js.pressed.clear()
+    gp.step()
+    teleop.tick(robot, state)
+    assert robot.move_to_pose.call_count == 1
+
+
 @pytest.mark.parametrize("platform,name", [
     ("win32", "Sony Computer Entertainment Wireless Controller"),
     ("linux", "Other gamepad"),

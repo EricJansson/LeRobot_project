@@ -1,0 +1,8 @@
+# Optional IK supplement for the existing Debian ARM64 ~/lerobot-env.
+# These pins preserve the verified CPU stack; conflicts must fail resolution.
+-r requirements-pi.txt
+lerobot[placo-dep]==0.6.1
+placo==0.9.15
+numpy==2.2.6
+torch==2.11.0+cpu
+torchvision==0.26.0+cpu

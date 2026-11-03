@@ -25,6 +25,9 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
   ~/lerobot-env/bin/python -m pytest -q -o addopts= --tb=short
 ```
 
+For the separate LeRobot IK mode, install `requirements-pi-ik.txt` instead.
+See [LeRobot IK setup and controls](../README.md#lerobot-ik-raspberry-pi).
+
 ### Check ports and gamepad without connecting to the arm
 
 Connect the gamepad directly to the Pi by USB or Bluetooth. Inspect device

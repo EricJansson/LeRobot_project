@@ -2,7 +2,7 @@
 
 This personal project controls a physical **SO-101 follower arm** using Python, a PlayStation-style gamepad, and LeRobot's Feetech hardware interface. It includes direct joint control, custom Cartesian inverse kinematics (IK), recorded motion playback, a desktop dashboard, calibration data, and offline tests.
 
-The next direction is a **separate control path using LeRobot's URDF-based FK/IK**, followed by collision checking and phone control. Preserve the existing implementations while developing that path. Current IK teleoperation uses this repository's custom solver, not LeRobot's `RobotKinematics`.
+A separate headless Pi mode uses **LeRobot's URDF-based FK/IK with fine movement**. Existing IK and plan modes retain their custom solver. See [LeRobot IK setup and controls](#lerobot-ik-raspberry-pi). Collision checking and phone control remain planned.
 
 ## Start here
 
@@ -22,7 +22,7 @@ The next direction is a **separate control path using LeRobot's URDF-based FK/IK
 | Desktop dashboard | Gamepad display, manual joint targets, telemetry; plan editing in plan mode |
 | Offline tests | 159-test historical baseline; venv validation below |
 | web_sim | Outdated standalone browser experiment; retained for historical reference |
-| LeRobot URDF FK/IK integration | Planned; upstream class exists but is not called by this repository |
+| LeRobot URDF FK/IK integration | Separate headless Pi mode; owner confirms working fine movement |
 | Collision avoidance / phone control | Planned; neither is implemented in the active control paths |
 
 Hardware use of the prior setup is confirmed by the owner. The venv migration did not connect to or move the arm; physical validation of the new environment remains pending. Passing offline tests does not validate physical accuracy or collision safety.
@@ -51,6 +51,7 @@ Replace COM3 with the actual adapter port. Windows automatic port selection curr
 Gamepad -> gamepad_mapper -> teleop loop
   axis mode --------------------------------> SO101Follower -> Feetech motors
   IK mode -> custom RobotArm -> RobotArmController -> SO101Follower
+  LeRobot IK mode -> RobotKinematics (URDF/Placo) -> SO101Follower
   plan mode -> recorded joints / interpolation -> RobotArmController
 
 Dashboard <-> .runtime JSON files <-> IK or plan teleop process
@@ -66,7 +67,7 @@ RobotArm is a hardware-independent model: solving IK changes internal state. Rob
 | [controller/input/](controller/input/) | Pygame polling, bindings, input-state profile, example |
 | [controller/scripts/run_teleop.py](controller/scripts/run_teleop.py) | Input-profile example; does not send commands to the arm |
 | [calibration/](calibration/) | Project-local hardware calibration, degree-limit export, and conversion utility |
-| [so101_new_calib.urdf](so101_new_calib.urdf) | Description for future integration; all 13 referenced meshes are in [assets/](assets/) |
+| [so101_new_calib.urdf](so101_new_calib.urdf) | Model for the LeRobot IK mode; all 13 referenced meshes are in [assets/](assets/) |
 | [tests/](tests/) | Offline custom solver, model, and joint-limit tests |
 | [web_sim/](web_sim/) | Early JavaScript FK/IK visualization, disconnected from Python/hardware |
 | [readme_files/](readme_files/) | Setup, implementation references, status, sources, historical design material |
@@ -98,7 +99,36 @@ needed. The raw calibration and derived degree-limit export were synchronized
 from the owner-approved Pi calibration; control mappings are unchanged. Missing or
 mismatched hardware calibration stops connection instead of starting interactive recalibration.
 
-LeRobot 0.4.0 includes `lerobot.model.kinematics.RobotKinematics`, backed by optional placo; placo was absent during inspection. Neither the URDF nor that solver automatically supplies collision avoidance. Mesh acquisition is complete; model/calibration alignment and dependency/platform compatibility still need resolution before claiming the new path works.
+## LeRobot IK (Raspberry Pi)
+
+In the existing Python 3.13 / LeRobot 0.6.1 Pi environment:
+
+```bash
+python -m pip install -r requirements-pi-ik.txt
+python -m scripts.main_teleop_lerobot_ik
+```
+
+Use `--port /dev/serial/by-id/YOUR_ADAPTER` and `--index 0` when needed.
+The optional supplement adds Placo 0.9.15 and pins the existing CPU Torch/NumPy
+stack. This mode retains the tuned follower and project-local calibration.
+
+Hold the **left upper shoulder button** to move. Left stick controls
+forward/backward and right/left; right stick controls height and wrist roll.
+Triggers control pitch, and D-pad up/down increases/decreases the gripper.
+Translation stays fixed relative to the base/table: model +X is forward, -Y
+is right, and +Z is up. Pitch/roll use tool-local axes with soft orientation
+tracking. Face-button presets, dashboard, and recording are deferred in [TODO](TODO.md).
+
+The working fine increments are always active: 0.8 mm translation, 0.4 degrees
+rotation, and 0.7 normalized gripper units per tick at 25 Hz. No `--fine` flag
+or stick click is needed. Ctrl+C or controller loss disables torque and disconnects.
+The existing control modes and calibration/URDF files are unchanged.
+
+The owner confirms working movement; measured model alignment and collision
+checking remain pending. IK candidates must be finite, within joint limits,
+within 0.5 mm of the target, and within 5 degrees of measured joints. If motors
+lag behind the previous command, a rejected joint step retains that target
+until they catch up. Neither these checks nor Placo provide collision avoidance.
 
 ## Tests and diagnostics
 
@@ -136,4 +166,4 @@ Using the venv interpreter, `python -m robot_program.debug_env` reports environm
 - Verify conversions: custom XYZ uses centimeters, URDF geometry uses meters, joint conventions need alignment, and LeRobot's gripper channel is normalized rather than degrees.
 - Follow [TODO](TODO.md). The previously reported second-pitch-joint/height discrepancy needs revalidation; it is not a confirmed current defect.
 
-Last reviewed: 2026-11-02.
+Last reviewed: 2026-11-03.

@@ -11,9 +11,10 @@ Reviewed 2026-10-30. All three primary modes have been used on hardware by the o
 | scripts.teleop_axis_control | Self-contained direct-joint loop; owns SO101Follower, bypassing RobotArmController and custom IK |
 | scripts.main_teleop_ik | Wires robot/dashboard/gamepad/state; delegates to scripts/teleop_ik_control.py |
 | scripts.main_teleop_plan | Delegates recording/playback to scripts/teleop_plan_control.py, reusing IK teleop primitives |
+| scripts.main_teleop_lerobot_ik | Headless LeRobot 0.6.1 / Placo IK with fixed fine increments and the tuned follower |
 | scripts.controller_dashboard | Pygame display/panels; IPC client only, never the serial owner |
 
-Both main_teleop entry points accept --port, --index, and --no-dashboard; plan
+The existing IK and plan entry points accept --port, --index, and --no-dashboard; plan
 also accepts --plan-file. With --no-dashboard, no dashboard process, IPC reads,
 telemetry writes, or dashboard-liveness checks run. Gamepad recording/playback
 remain available; dashboard editing and save/load do not. The reusable
@@ -141,9 +142,9 @@ IK_guardrails.py and the preserved filename movement_contrainst.py contain stand
 
 ## Extension boundary
 
-Add a separate entry point/implementation for upstream IK, preserving existing behavior. Reuse helpers only when assumptions match. The current RobotArmController expects the custom model/state API; it is not already a generic solver adapter.
+The separate `scripts.main_teleop_lerobot_ik` entry point uses `LeRobotIKController` and LeRobot 0.6.1 FK/IK, preserving existing modes. It reuses gamepad mapping and the tuned follower without importing custom kinematics. See [setup and controls](../README.md#lerobot-ik-raspberry-pi). The existing RobotArmController remains specific to the custom model.
 
-Installed LeRobot 0.4.0 provides lerobot.model.kinematics.RobotKinematics with URDF path, target frame (default gripper_frame_link), and joint names. FK returns a 4×4 pose transform; IK accepts current joint degrees and a desired transform, returning joint degrees. Internally optional placo uses radians. This differs from custom (x, y, z, phi) control; placo was absent during inspection.
+LeRobot `RobotKinematics` loads the URDF with an explicit five-joint order and `gripper_frame_link` target. FK returns a 4×4 transform in meters; IK takes and returns joint degrees. The adapter intersects URDF limits with calibration endpoints converted by the installed bus. The normalized gripper is excluded from IK. The new path uses fixed base/table directions and fine increments only.
 
 The repository URDF uses meter/radian geometry and includes six revolute joints plus a fixed gripper frame. All 13 referenced assets/*.stl meshes are now included with their [license and provenance](../assets/README.md). The local URDF was structurally identical to the pinned upstream model during acquisition. Its limits differ from the exported hardware limits; an elbow comment mentions a five-degree calibration offset. Verify joint ordering, frames, zero conventions, gripper treatment, and measured FK before treating it as authoritative. More detailed geometry alone does not prove greater accuracy.
 

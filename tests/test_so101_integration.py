@@ -74,6 +74,7 @@ def test_configuration_failure_exits_torque_context():
 
 @pytest.mark.parametrize("module", [
     "scripts.teleop_axis_control", "scripts.main_teleop_ik", "scripts.main_teleop_plan",
+    "scripts.main_teleop_lerobot_ik",
     "scripts.controller_dashboard", "robot_program.read_motors",
     "robot_program.keyboard_control", "robot_program.input_control",
 ])
