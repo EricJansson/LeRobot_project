@@ -1,5 +1,6 @@
-"""Headless gamepad control using LeRobot IK and the validated fine increments."""
+"""Gamepad control using LeRobot IK with an optional LAN dashboard."""
 
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 import argparse
 import os
@@ -9,8 +10,10 @@ from time import perf_counter, sleep
 import numpy as np
 
 from robot_program.lerobot_ik_controller import LeRobotIKController
+from scripts.lerobot_web_dashboard import WebDashboard
 
 RATE_HZ = 50
+TELEMETRY_INTERVAL_S = 0.1
 XYZ_STEP_M = 0.002
 ANGLE_STEP_DEG = 0.4
 GRIPPER_STEP = 0.7
@@ -88,8 +91,9 @@ def tick(robot: LeRobotIKController, state: InputState):
     return robot.move_to_pose(target, gripper_delta=grip)
 
 
-def run_loop(robot, gp, state):
+def run_loop(robot, gp, state, dashboard=None):
     last_warning = float("-inf")
+    next_sample = float("-inf")
     while True:
         start = perf_counter()
         if not gp.step():
@@ -98,6 +102,11 @@ def run_loop(robot, gp, state):
         if result is not None and not result.accepted and start - last_warning >= 1:
             print(f"IK rejected: {result.reason}")
             last_warning = start
+        if dashboard is not None and start >= next_sample:
+            joints, gripper, xyz_m = robot.read_telemetry()
+            dashboard.publish(joints, gripper, xyz_m, state.active)
+            # Absorb up to one tick of loop jitter without replaying missed samples.
+            next_sample = max(next_sample, start - 1 / RATE_HZ) + TELEMETRY_INTERVAL_S
         sleep(max(0, 1 / RATE_HZ - (perf_counter() - start)))
 
 
@@ -105,15 +114,24 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default=None, help="Serial adapter path (auto-selected if omitted)")
     parser.add_argument("--index", type=int, default=0, help="Gamepad device index")
+    parser.add_argument("--no-web-dashboard", action="store_true", help="Disable read-only LAN telemetry")
+    parser.add_argument("--web-host", default="0.0.0.0", help="Dashboard bind address (default: all IPv4 interfaces)")
+    parser.add_argument("--web-port", type=int, default=8000, help="Dashboard HTTP port (default: 8000)")
     args = parser.parse_args()
+    if not 0 <= args.web_port <= 65535:
+        parser.error("--web-port must be between 0 and 65535")
     try:
         # Validate the model/dependencies and gamepad before opening serial.
         robot = LeRobotIKController.from_port(args.port)
         state = InputState()
         gp = setup_gamepad(args.index, state)
-        with robot:
+        web = nullcontext() if args.no_web_dashboard else WebDashboard(args.web_host, args.web_port)
+        with web as dashboard, robot:
+            if dashboard is not None:
+                host = "<pi-lan-ip>" if args.web_host == "0.0.0.0" else args.web_host
+                print(f"Dashboard available at http://{host}:{dashboard.port}/")
             print("LeRobot IK ready with fine increments. Hold the left shoulder button to move; Ctrl+C exits.")
-            run_loop(robot, gp, state)
+            run_loop(robot, gp, state, dashboard)
     except KeyboardInterrupt:
         pass
     except (ImportError, RuntimeError, ValueError, KeyError, OSError) as exc:

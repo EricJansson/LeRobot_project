@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SO-101 | LeRobot IK</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101719; color: #edf4f3; }
+    body { margin: 0; }
+    main { max-width: 58rem; margin: auto; padding: clamp(1rem, 5vw, 4rem); }
+    h1 { margin: .3rem 0; font-size: clamp(1.9rem, 5vw, 3rem); }
+    .eyebrow { color: #a1d8c9; letter-spacing: .1em; text-transform: uppercase; font-size: .8rem; }
+    .meta { color: #bfcecd; }
+    .status { color: #a1d8c9; }
+    .status[data-stale="true"] { color: #ffce91; }
+    dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: .75rem; }
+    dl div { background: #192426; border: 1px solid #36484b; border-radius: .65rem; padding: 1rem; }
+    dt { color: #bfcecd; }
+    dd { margin: .45rem 0 0; font-size: 1.55rem; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">SO-101 follower · LeRobot IK</div>
+    <h1>Robot telemetry</h1>
+    <p class="meta">Read-only · End-effector XYZ in the robot base frame</p>
+  </header>
+  <p id="status" class="status" role="status">Waiting for telemetry</p>
+  <p id="age" class="meta" hidden></p>
+  <dl id="readings"></dl>
+</main>
+<script>
+  const statusLabel = document.querySelector('#status');
+  const ageLabel = document.querySelector('#age');
+  const readings = document.querySelector('#readings');
+  const fields = [
+    ['X · Forward', 'x'],
+    ['Y · Left', 'y'],
+    ['Z · Up', 'z'],
+    ['Shoulder pan', 'shoulder_pan'],
+    ['Shoulder lift', 'shoulder_lift'],
+    ['Elbow flex', 'elbow_flex'],
+    ['Wrist flex', 'wrist_flex'],
+    ['Wrist roll', 'wrist_roll'],
+    ['Gripper (0–100)', 'gripper'],
+    ['Gamepad enable (LB)', 'gamepad'],
+  ];
+  const values = new Map(fields.map(([label, key]) => {
+    const card = document.createElement('div');
+    const title = document.createElement('dt');
+    const value = document.createElement('dd');
+    title.textContent = label;
+    value.textContent = '—';
+    card.append(title, value);
+    readings.append(card);
+    return [key, value];
+  }));
+
+  let sampleTime = null;
+  let requestFailed = false;
+
+  function updateStatus() {
+    const age = sampleTime === null ? null : (performance.now() - sampleTime) / 1000;
+    const stale = requestFailed || age > 3;
+    const message = stale ? 'Telemetry unavailable · readings may be stale'
+      : age === null ? 'Waiting for telemetry' : 'Live telemetry';
+    if (statusLabel.textContent !== message) statusLabel.textContent = message;
+    statusLabel.dataset.stale = stale;
+    ageLabel.hidden = age === null;
+    if (age !== null) ageLabel.textContent = `Last sample ${age.toFixed(1)} s ago`;
+  }
+
+  async function poll() {
+    const started = performance.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    try {
+      const response = await fetch('/api/telemetry', { cache: 'no-store', signal: controller.signal });
+      if (!response.ok) throw new Error('Telemetry request failed');
+      const sample = await response.json();
+      if (sample) {
+        for (const [key, angle] of Object.entries(sample.joints_deg)) {
+          values.get(key).textContent = `${angle.toFixed(1)}°`;
+        }
+        for (const [axis, meters] of Object.entries(sample.xyz_m)) {
+          values.get(axis).textContent = `${(meters * 1000).toFixed(1)} mm`;
+        }
+        values.get('gripper').textContent = sample.gripper_normalized.toFixed(1);
+        values.get('gamepad').textContent = sample.gamepad_enabled ? 'Held' : 'Released';
+        sampleTime = performance.now() - sample.age_s * 1000;
+      }
+      requestFailed = false;
+    } catch {
+      requestFailed = true;
+    } finally {
+      clearTimeout(timeout);
+      updateStatus();
+      setTimeout(poll, Math.max(0, 100 - (performance.now() - started)));
+    }
+  }
+
+  setInterval(updateStatus, 250);
+  poll();
+</script>
+</body>
+</html>

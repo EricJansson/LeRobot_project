@@ -150,8 +150,9 @@ cleanup. Releasing LB does not cancel an existing preset or plan playback.
 
 Omitting `--no-dashboard` retains the desktop dashboard and requires a working
 graphical session; use that session's normal SDL settings instead of the dummy
-drivers. A PC/phone web dashboard is deferred in [TODO](../TODO.md); no network
-service or remote gamepad forwarding is included. Live `keyboard` control is
+drivers. The separate LeRobot IK mode starts a
+[read-only LAN dashboard](../README.md#lerobot-ik-raspberry-pi) by default.
+Use `--no-web-dashboard` to disable it. Live `keyboard` control is
 optional and deferred on Linux; gamepad modes do not require that package.
 The already tested USB camera needs no changes because these modes configure
 no cameras.

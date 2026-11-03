@@ -161,6 +161,13 @@ class LeRobotIKController:
         self.target_pose = _pose(self.kinematics.forward_kinematics(self._read_joints()))
         return self.target_pose.copy()
 
+    def read_telemetry(self) -> tuple[dict[str, float], float, dict[str, float]]:
+        """Read joint degrees, normalized gripper position, and base-frame XYZ in meters."""
+        joints = self._read_joints()
+        pose = _pose(self.kinematics.forward_kinematics(joints))
+        xyz_m = dict(zip(("x", "y", "z"), pose[:3, 3].tolist()))
+        return dict(zip(ARM_JOINTS, joints.tolist())), self._gripper, xyz_m
+
     def solve_pose(self, target: np.ndarray, measured_deg: np.ndarray) -> IKResult:
         """Solve and validate without reading or writing hardware."""
         target = _pose(target)

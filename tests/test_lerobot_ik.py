@@ -1,10 +1,12 @@
 """Offline regression tests for the LeRobot control path; serial is forbidden."""
 
 import builtins
+from contextlib import contextmanager
 from dataclasses import replace
 from importlib.metadata import version
+import sys
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import numpy as np
 import pytest
@@ -174,7 +176,6 @@ def test_connection_cleanup(controller, monkeypatch, stop):
 
 
 def test_missing_placo_fails_before_gamepad_or_serial(monkeypatch):
-    import sys
     original = builtins.__import__
     def importing(name, *args, **kwargs):
         if name == 'lerobot.model.kinematics':
@@ -248,3 +249,67 @@ def test_real_unequal_tracking_does_not_ratchet_pitch(real_controller):
     assert rejected > 0  # Exercise step-cap recovery with assumed, unequal rates.
     assert np.rad2deg(angle) < 0.1
     assert end[2, 3] > start[2, 3] + 0.015
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_dashboard_samples_on_teleop_loop_only(controller, monkeypatch, enabled):
+    gp = SimpleNamespace(step=Mock(side_effect=[True, True, True, False]))
+    dashboard = Mock() if enabled else None
+    clock = iter([0, 0, 0.05, 0.05, 0.11, 0.11, 0.15])
+    monkeypatch.setattr(teleop, "perf_counter", lambda: next(clock))
+    monkeypatch.setattr(teleop, "sleep", Mock())
+    controller.follower.bus.sync_read.reset_mock()
+    joints = dict(zip(ARM_JOINTS, [10.0, -20.0, 30.0, 0.0, 0.0]))
+    controller.follower.bus.sync_read.return_value = {**joints, "gripper": 20.0}
+    target = controller.target_pose.copy()
+    teleop.run_loop(controller, gp, teleop.InputState(), dashboard)
+    np.testing.assert_array_equal(controller.target_pose, target)
+    controller.follower.send_action.assert_not_called()
+    assert controller.follower.bus.sync_read.call_count == (2 if enabled else 0)
+    if enabled:
+        assert dashboard.publish.call_count == 2
+        dashboard.publish.assert_called_with(joints, 20.0, {"x": 0.01, "y": -0.02, "z": 0.03}, False)
+
+
+@pytest.mark.parametrize("mode", ["headless", "normal", "loop_error", "bind_error"])
+def test_web_dashboard_launcher_lifecycle(monkeypatch, mode):
+    events = []
+    robot = Mock()
+    robot_context = MagicMock()
+    robot_context.__enter__.side_effect = lambda: events.append("connect")
+    robot_context.__exit__.side_effect = lambda *_: events.append("disconnect")
+    robot.from_port.return_value = robot_context
+    monkeypatch.setattr(teleop, "LeRobotIKController", robot)
+    monkeypatch.setattr(teleop, "setup_gamepad", Mock())
+
+    @contextmanager
+    def dashboard(host, port):
+        assert (host, port) == ("0.0.0.0", 8000)
+        events.append("bind")
+        if mode == "bind_error":
+            raise OSError("address in use")
+        try:
+            yield SimpleNamespace(port=port)
+        finally:
+            events.append("close")
+
+    def loop(_robot, _gp, _state, web):
+        assert (web is not None) == (mode != "headless")
+        events.append("loop")
+        if mode == "loop_error":
+            raise OSError("loop failed")
+
+    monkeypatch.setattr(teleop, "WebDashboard", dashboard)
+    monkeypatch.setattr(teleop, "run_loop", loop)
+    monkeypatch.setattr(sys, "argv", ["teleop"] + (["--no-web-dashboard"] if mode == "headless" else []))
+    if mode.endswith("_error"):
+        with pytest.raises(SystemExit, match="1"):
+            teleop.main()
+    else:
+        teleop.main()
+    if mode == "headless":
+        assert events == ["connect", "loop", "disconnect"]
+    elif mode == "bind_error":
+        assert events == ["bind"]
+    else:
+        assert events == ["bind", "connect", "loop", "disconnect", "close"]

@@ -2,7 +2,7 @@
 
 This personal project controls a physical **SO-101 follower arm** using Python, a PlayStation-style gamepad, and LeRobot's Feetech hardware interface. It includes direct joint control, custom Cartesian inverse kinematics (IK), recorded motion playback, a desktop dashboard, calibration data, and offline tests.
 
-A separate headless Pi mode uses **LeRobot's URDF-based FK/IK with fine movement**. Existing IK and plan modes retain their custom solver. See [LeRobot IK setup and controls](#lerobot-ik-raspberry-pi). Collision checking and phone control remain planned.
+A separate Pi mode uses **LeRobot's URDF-based FK/IK with fine movement** and starts a LAN dashboard by default. Existing IK and plan modes retain their custom solver. See [LeRobot IK setup and controls](#lerobot-ik-raspberry-pi). Collision checking and phone control remain planned.
 
 ## Start here
 
@@ -117,7 +117,16 @@ forward/backward and right/left; right stick controls height and wrist roll.
 Triggers control pitch, and D-pad up/down increases/decreases the gripper.
 Translation stays fixed relative to the base/table: model +X is forward, -Y
 is right, and +Z is up. Pitch/roll use tool-local axes with soft orientation
-tracking. Face-button presets, dashboard, and recording are deferred in [TODO](TODO.md).
+tracking. Face-button presets and recording are deferred in [TODO](TODO.md).
+
+The LeRobot IK command starts the read-only browser dashboard by default. On a
+trusted local network, run `hostname -I` in another Pi terminal to find its LAN IP,
+then open `http://<pi-lan-ip>:8000/` on a phone or PC connected to the same network.
+The page updates at up to 10 Hz and shows measured joint angles, normalized
+gripper position, LB status, and end-effector XYZ in millimeters relative to the
+robot base (+X forward, +Y left, +Z up). Use `--web-host` to bind to a specific IPv4 address or `--web-port`
+to select another port. Use `--no-web-dashboard` to run without the server.
+The server stops when teleop exits.
 
 The working fine increments are always active: 2.0 mm translation, 0.4 degrees
 rotation, and 0.7 normalized gripper units per tick at 50 Hz. No `--fine` flag
