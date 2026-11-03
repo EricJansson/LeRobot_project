@@ -119,8 +119,8 @@ Translation stays fixed relative to the base/table: model +X is forward, -Y
 is right, and +Z is up. Pitch/roll use tool-local axes with soft orientation
 tracking. Face-button presets, dashboard, and recording are deferred in [TODO](TODO.md).
 
-The working fine increments are always active: 0.8 mm translation, 0.4 degrees
-rotation, and 0.7 normalized gripper units per tick at 25 Hz. No `--fine` flag
+The working fine increments are always active: 2.0 mm translation, 0.4 degrees
+rotation, and 0.7 normalized gripper units per tick at 50 Hz. No `--fine` flag
 or stick click is needed. Ctrl+C or controller loss disables torque and disconnects.
 The existing control modes and calibration/URDF files are unchanged.
 

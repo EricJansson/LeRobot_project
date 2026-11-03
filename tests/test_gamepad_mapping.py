@@ -121,7 +121,7 @@ def test_lerobot_fine_mode_uses_sony_axes_and_shoulder_gating(sony_gamepad):
     js.axes[4] = -1  # Right stick up in the observed Linux layout.
     gp.step()
     teleop.tick(robot, state)
-    np.testing.assert_allclose(robot.move_to_pose.call_args.args[0][:3, 3], [0, 0, 0.0008])
+    np.testing.assert_allclose(robot.move_to_pose.call_args.args[0][:3, 3], [0, 0, 0.002])
     js.pressed.clear()
     gp.step()
     teleop.tick(robot, state)

@@ -134,7 +134,7 @@ def test_fine_translation_stays_fixed_to_base(controller, yaw_deg):
     controller.move_to_pose = Mock()
     teleop.tick(controller, state)
     target = controller.move_to_pose.call_args.args[0]
-    np.testing.assert_allclose(target[:3, 3], [0.0008, -0.0008, 0.0008])
+    np.testing.assert_allclose(target[:3, 3], [0.002, -0.002, 0.002])
     np.testing.assert_allclose(target[:3, :3], controller.target_pose[:3, :3])
 
 

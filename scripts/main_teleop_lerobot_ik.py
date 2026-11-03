@@ -10,8 +10,8 @@ import numpy as np
 
 from robot_program.lerobot_ik_controller import LeRobotIKController
 
-RATE_HZ = 25
-XYZ_STEP_M = 0.0008
+RATE_HZ = 50
+XYZ_STEP_M = 0.002
 ANGLE_STEP_DEG = 0.4
 GRIPPER_STEP = 0.7
 AXIS_LABELS = {0: "LX", 1: "LY", 2: "RX", 3: "RY", 4: "LT", 5: "RT"}
