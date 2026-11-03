@@ -30,6 +30,7 @@ class FakeJoystick:
         self.name = name
         self.axes = [0.004, 0.004, -1.0, 0.004, 0.004, -1.0]
         self.pressed = set()
+        self.hat = (0, 0)
 
     def init(self):
         pass
@@ -53,7 +54,7 @@ class FakeJoystick:
         return index in self.pressed
 
     def get_hat(self, index):
-        return (0, 0)
+        return self.hat
 
 
 @pytest.fixture
@@ -126,6 +127,24 @@ def test_lerobot_fine_mode_uses_sony_axes_and_shoulder_gating(sony_gamepad):
     gp.step()
     teleop.tick(robot, state)
     assert robot.move_to_pose.call_count == 1
+
+    # Dashboard inputs continue to track the controller with LB released.
+    assert not state.active and not state.buttons["LB"]
+    js.pressed = {3, 5, 8, 9, 11, 12}
+    js.axes[2] = 0.0
+    js.hat = (-1, 1)
+    gp.step()
+    assert {name for name, held in state.buttons.items() if held} == {
+        "Square", "RB", "Back", "Start", "L3", "R3",
+    }
+    assert state.axes["LT"] == 0.5 and state.axes["RY"] == -1
+    assert state.hat == (-1, 1)
+    teleop.tick(robot, state)
+    assert robot.move_to_pose.call_count == 1
+    js.pressed.clear()
+    js.hat = (0, 0)
+    gp.step()
+    assert not any(state.buttons.values()) and state.hat == (0, 0)
 
 
 @pytest.mark.parametrize("platform,name", [

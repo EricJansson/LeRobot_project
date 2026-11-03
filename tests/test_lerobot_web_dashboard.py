@@ -42,6 +42,30 @@ def test_dashboard_http_and_shutdown():
             "xyz_m": xyz_m,
             "gamepad_enabled": True,
         }
+        gamepad = {
+            "name": "Fixture controller",
+            "axis_count": 6,
+            "button_count": 14,
+            "hat_count": 1,
+            "deadzone": 0.1,
+            "axes": {"LX": -0.5, "LT": 0.75},
+            "buttons": {"LB": False, "Cross": True},
+            "dpad": [-1, 1],
+        }
+        dashboard.publish({"shoulder_pan": 12.5}, 30.0, xyz_m, False, gamepad=gamepad)
+        gamepad["axes"]["LX"] = 0
+        gamepad["buttons"]["Cross"] = False
+        gamepad["dpad"][0] = 0
+        status, body = request("GET", "/api/telemetry")
+        assert status == 200
+        sample = json.loads(body)
+        assert sample["gamepad_enabled"] is False
+        assert sample["gamepad"] == {
+            **gamepad,
+            "axes": {"LX": -0.5, "LT": 0.75},
+            "buttons": {"LB": False, "Cross": True},
+            "dpad": [-1, 1],
+        }
         assert request("POST", "/api/telemetry")[0] == 405
         assert request("GET", "/README.md")[0] == 404
 

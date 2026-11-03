@@ -30,6 +30,7 @@ class InputState:
     hat: tuple[int, int] = (0, 0)
     active: bool = False
     was_active: bool = False
+    buttons: dict[str, bool] = field(default_factory=lambda: dict.fromkeys(BUTTON_LABELS.values(), False))
 
 
 def setup_gamepad(index: int, state: InputState):
@@ -43,8 +44,10 @@ def setup_gamepad(index: int, state: InputState):
         poll_hz=120, triggers_are_unit=True, deadman_button=None,
     )
 
-    def button(_name, pressed):
-        state.active = pressed
+    def button(name, pressed):
+        state.buttons[name] = pressed
+        if name == "LB":
+            state.active = pressed
 
     def axis(name, value):
         state.axes[name] = value
@@ -54,7 +57,8 @@ def setup_gamepad(index: int, state: InputState):
 
     gp.set_bindings(Bindings(
         axes={name: axis for name in state.axes},
-        buttons_down={"LB": button}, buttons_up={"LB": button},
+        buttons_down=dict.fromkeys(state.buttons, button),
+        buttons_up=dict.fromkeys(state.buttons, button),
         hats={"DPad": hat},
     ))
     return gp
@@ -104,7 +108,16 @@ def run_loop(robot, gp, state, dashboard=None):
             last_warning = start
         if dashboard is not None and start >= next_sample:
             joints, gripper, xyz_m = robot.read_telemetry()
-            dashboard.publish(joints, gripper, xyz_m, state.active)
+            dashboard.publish(joints, gripper, xyz_m, state.active, gamepad={
+                "name": gp.name,
+                "axis_count": gp.num_axes,
+                "button_count": gp.num_buttons,
+                "hat_count": gp.num_hats,
+                "deadzone": gp.deadzone,
+                "axes": state.axes,
+                "buttons": state.buttons,
+                "dpad": state.hat,
+            })
             # Absorb up to one tick of loop jitter without replaying missed samples.
             next_sample = max(next_sample, start - 1 / RATE_HZ) + TELEMETRY_INTERVAL_S
         sleep(max(0, 1 / RATE_HZ - (perf_counter() - start)))

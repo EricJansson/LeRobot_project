@@ -253,7 +253,10 @@ def test_real_unequal_tracking_does_not_ratchet_pitch(real_controller):
 
 @pytest.mark.parametrize("enabled", [False, True])
 def test_dashboard_samples_on_teleop_loop_only(controller, monkeypatch, enabled):
-    gp = SimpleNamespace(step=Mock(side_effect=[True, True, True, False]))
+    gp = SimpleNamespace(
+        step=Mock(side_effect=[True, True, True, False]), name="Fixture controller",
+        num_axes=6, num_buttons=14, num_hats=1, deadzone=0.1,
+    )
     dashboard = Mock() if enabled else None
     clock = iter([0, 0, 0.05, 0.05, 0.11, 0.11, 0.15])
     monkeypatch.setattr(teleop, "perf_counter", lambda: next(clock))
@@ -262,13 +265,24 @@ def test_dashboard_samples_on_teleop_loop_only(controller, monkeypatch, enabled)
     joints = dict(zip(ARM_JOINTS, [10.0, -20.0, 30.0, 0.0, 0.0]))
     controller.follower.bus.sync_read.return_value = {**joints, "gripper": 20.0}
     target = controller.target_pose.copy()
-    teleop.run_loop(controller, gp, teleop.InputState(), dashboard)
+    state = teleop.InputState()
+    state.axes["LX"] = -0.5
+    state.buttons["Cross"] = True
+    state.hat = (-1, 1)
+    teleop.run_loop(controller, gp, state, dashboard)
     np.testing.assert_array_equal(controller.target_pose, target)
     controller.follower.send_action.assert_not_called()
     assert controller.follower.bus.sync_read.call_count == (2 if enabled else 0)
     if enabled:
         assert dashboard.publish.call_count == 2
-        dashboard.publish.assert_called_with(joints, 20.0, {"x": 0.01, "y": -0.02, "z": 0.03}, False)
+        dashboard.publish.assert_called_with(
+            joints, 20.0, {"x": 0.01, "y": -0.02, "z": 0.03}, False,
+            gamepad={
+                "name": "Fixture controller", "axis_count": 6, "button_count": 14,
+                "hat_count": 1, "deadzone": 0.1, "axes": state.axes,
+                "buttons": state.buttons, "dpad": (-1, 1),
+            },
+        )
 
 
 @pytest.mark.parametrize("mode", ["headless", "normal", "loop_error", "bind_error"])

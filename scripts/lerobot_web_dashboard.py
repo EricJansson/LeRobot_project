@@ -47,14 +47,22 @@ class WebDashboard(ThreadingHTTPServer):
     def port(self):
         return self.server_port
 
-    def publish(self, joints, gripper, xyz_m, gamepad_enabled):
+    def publish(self, joints, gripper, xyz_m, gamepad_enabled, *, gamepad=None):
         # Replace the entire snapshot. HTTP handlers never mutate it.
-        self._sample = (monotonic(), {
+        readings = {
             "joints_deg": dict(joints),
             "gripper_normalized": gripper,
             "xyz_m": dict(xyz_m),
             "gamepad_enabled": gamepad_enabled,
-        })
+        }
+        if gamepad is not None:
+            readings["gamepad"] = {
+                **gamepad,
+                "axes": dict(gamepad["axes"]),
+                "buttons": dict(gamepad["buttons"]),
+                "dpad": list(gamepad["dpad"]),
+            }
+        self._sample = (monotonic(), readings)
 
     def telemetry(self):
         sample = self._sample

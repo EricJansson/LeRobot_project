@@ -3,72 +3,292 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SO-101 | LeRobot IK</title>
+  <title>Controller Dashboard | LeRobot IK</title>
   <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101719; color: #edf4f3; }
+    :root {
+      color-scheme: dark;
+      font: 15px Consolas, Menlo, monospace;
+      background: #121214;
+      color: #e6e6eb;
+      --muted: #8c8c96;
+      --accent: #5aaaff;
+      --ok: #5ac88c;
+      --warn: #ffb400;
+    }
+    * { box-sizing: border-box; }
     body { margin: 0; }
-    main { max-width: 58rem; margin: auto; padding: clamp(1rem, 5vw, 4rem); }
-    h1 { margin: .3rem 0; font-size: clamp(1.9rem, 5vw, 3rem); }
-    .eyebrow { color: #a1d8c9; letter-spacing: .1em; text-transform: uppercase; font-size: .8rem; }
-    .meta { color: #bfcecd; }
-    .status { color: #a1d8c9; }
-    .status[data-stale="true"] { color: #ffce91; }
-    dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: .75rem; }
-    dl div { background: #192426; border: 1px solid #36484b; border-radius: .65rem; padding: 1rem; }
-    dt { color: #bfcecd; }
-    dd { margin: .45rem 0 0; font-size: 1.55rem; font-variant-numeric: tabular-nums; }
+    main { max-width: 720px; margin: auto; padding: 12px 16px 16px; }
+    header { min-height: 74px; }
+    h1 { margin: 0 0 4px; font-size: 22px; line-height: 26px; }
+    p { margin: 0; }
+    header p { color: var(--muted); line-height: 22px; overflow-wrap: anywhere; }
+    .dashboard {
+      display: grid;
+      grid-template-columns: minmax(170px, 1fr) 400px;
+      grid-template-rows: 1fr auto;
+      gap: 16px;
+      min-height: 378px;
+    }
+    .controller { grid-area: 1 / 1; }
+    .controller svg { display: block; width: 170px; height: 200px; }
+    .controller svg[data-live="false"] { opacity: .55; }
+    #controller-status { color: var(--muted); margin-top: 6px; font-size: 13px; }
+    .controller-frame { fill: #1a1a1e; stroke: var(--accent); }
+    .stick, .trigger-track { fill: #232328; }
+    .stick, .crosshair { stroke: var(--muted); }
+    .deadzone { fill: none; stroke: #37373c; }
+    .trigger-fill, .stick-dot { fill: var(--accent); }
+    .pill, .face { fill: #323237; stroke: var(--muted); }
+    .dpad { fill: #2d2d32; stroke: var(--muted); }
+    .glyph { fill: none; stroke: currentColor; stroke-width: 2; }
+    .pressed .pill, .pressed .face { fill: var(--ok); stroke: var(--ok); }
+    .pressed .glyph { stroke: #121214; }
+    .pressed.dpad { fill: var(--accent); stroke: var(--accent); }
+    .click-ring { fill: #5ac88c3c; stroke: var(--ok); stroke-width: 4; visibility: hidden; }
+    .pressed .click-ring { visibility: visible; }
+    svg text { text-anchor: middle; fill: currentColor; }
+    .trigger-label { fill: var(--muted); }
+    .robot {
+      grid-area: 1 / 2 / span 2;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 16px;
+      min-width: 0;
+    }
+    .panel {
+      background: #1e1e24;
+      border: 1px solid var(--accent);
+      border-radius: 10px;
+      padding: 7px;
+    }
+    h2 { margin: 0; color: var(--accent); font-size: 18px; font-weight: normal; }
+    .panel p { color: var(--muted); font-size: 13px; }
+    .rows { display: grid; gap: 2px; margin: 4px 0 0; }
+    .rows div { display: grid; grid-template-columns: 122px max-content; align-items: center; }
+    dt { color: #aaaab0; }
+    dd {
+      min-width: 8ch;
+      margin: 0;
+      padding: 0 5px;
+      line-height: 18px;
+      background: #2d2d34;
+      border: 1px solid #505058;
+      border-radius: 5px;
+      text-align: right;
+      white-space: nowrap;
+    }
+    dd[data-measured="true"] { border-color: var(--ok); }
+    .motors { min-height: 215px; }
+    .badge {
+      display: table;
+      margin: 8px 0 0 auto;
+      padding: 4px 10px;
+      border-radius: 8px;
+      background: #3c3c44;
+      color: #fff;
+    }
+    .badge[data-held="true"] { background: #276745; }
+    .connection { grid-area: 2 / 1; font-size: 13px; }
+    .connection .mode { margin-top: 4px; color: var(--muted); }
+    #status { color: var(--ok); }
+    #status[data-state="waiting"] { color: var(--muted); }
+    #status[data-state="stale"] { color: var(--warn); }
+    #age { margin-top: 4px; color: var(--muted); font-size: 13px; }
+    @media (max-width: 639px) {
+      .dashboard { display: flex; flex-direction: column; min-height: 0; }
+    }
   </style>
 </head>
 <body>
 <main>
   <header>
-    <div class="eyebrow">SO-101 follower · LeRobot IK</div>
-    <h1>Robot telemetry</h1>
-    <p class="meta">Read-only · End-effector XYZ in the robot base frame</p>
+    <h1>Controller Dashboard</h1>
+    <p id="device">Device: —</p>
+    <p id="device-details">SO-101 · LeRobot IK</p>
   </header>
-  <p id="status" class="status" role="status">Waiting for telemetry</p>
-  <p id="age" class="meta" hidden></p>
-  <dl id="readings"></dl>
+  <div class="dashboard">
+    <section class="controller" aria-label="Gamepad">
+      <svg id="gamepad" viewBox="0 0 170 200" role="img" aria-labelledby="gamepad-title" data-live="false">
+        <title id="gamepad-title">Gamepad input display</title>
+        <rect class="controller-frame" x=".5" y=".5" width="169" height="199" rx="10"/>
+
+        <rect class="trigger-track" x="4" y="10" width="12" height="36" rx="4"/>
+        <rect class="trigger-fill" id="lt-fill" x="4" y="46" width="12" height="0" rx="4"/>
+        <text class="trigger-label" x="10" y="63">LT</text>
+        <rect class="trigger-track" x="154" y="10" width="12" height="36" rx="4"/>
+        <rect class="trigger-fill" id="rt-fill" x="154" y="46" width="12" height="0" rx="4"/>
+        <text class="trigger-label" x="160" y="63">RT</text>
+
+        <g data-button="LB">
+          <rect class="pill" x="18.5" y="8.5" width="47" height="13" rx="7"/>
+          <text x="42" y="20">LB</text>
+        </g>
+        <g data-button="RB">
+          <rect class="pill" x="104.5" y="8.5" width="47" height="13" rx="7"/>
+          <text x="128" y="20">RB</text>
+        </g>
+        <g data-button="Back">
+          <rect class="pill" x="28.5" y="30.5" width="47" height="13" rx="7"/>
+          <text x="52" y="42">Back</text>
+        </g>
+        <g data-button="Start">
+          <rect class="pill" x="94.5" y="30.5" width="47" height="13" rx="7"/>
+          <text x="118" y="42">Start</text>
+        </g>
+
+        <rect class="dpad" id="dpad-up" x="36.5" y="66.5" width="17" height="17" rx="5"/>
+        <rect class="dpad" id="dpad-down" x="36.5" y="102.5" width="17" height="17" rx="5"/>
+        <rect class="dpad" id="dpad-left" x="18.5" y="84.5" width="17" height="17" rx="5"/>
+        <rect class="dpad" id="dpad-right" x="54.5" y="84.5" width="17" height="17" rx="5"/>
+        <rect class="dpad" x="36.5" y="84.5" width="17" height="17" rx="5"/>
+
+        <g data-button="Triangle">
+          <circle class="face" cx="120" cy="73" r="10.5"/>
+          <path class="glyph" d="M120 67 L115 77 H125 Z"/>
+        </g>
+        <g data-button="Square">
+          <circle class="face" cx="100" cy="93" r="10.5"/>
+          <rect class="glyph" x="94.5" y="87.5" width="11" height="11" rx="1.5"/>
+        </g>
+        <g data-button="Circle">
+          <circle class="face" cx="140" cy="93" r="10.5"/>
+          <circle class="glyph" cx="140" cy="93" r="5.5"/>
+        </g>
+        <g data-button="Cross">
+          <circle class="face" cx="120" cy="113" r="10.5"/>
+          <path class="glyph" d="M116 109 L124 117 M124 109 L116 117"/>
+        </g>
+
+        <g data-button="L3" transform="translate(45 160)">
+          <circle class="stick" r="25.5"/>
+          <path class="crosshair" d="M-26 0 H26 M0 -26 V26"/>
+          <circle class="deadzone" r="2"/>
+          <circle class="stick-dot" id="left-stick" r="5"/>
+          <circle class="click-ring" r="22"/>
+        </g>
+        <g data-button="R3" transform="translate(120 160)">
+          <circle class="stick" r="25.5"/>
+          <path class="crosshair" d="M-26 0 H26 M0 -26 V26"/>
+          <circle class="deadzone" r="2"/>
+          <circle class="stick-dot" id="right-stick" r="5"/>
+          <circle class="click-ring" r="22"/>
+        </g>
+      </svg>
+      <p id="controller-status">Gamepad input unavailable</p>
+    </section>
+
+    <div class="robot">
+      <section class="panel" aria-labelledby="xyz-heading">
+        <h2 id="xyz-heading">End-effector XYZ</h2>
+        <p>Robot base frame</p>
+        <dl class="rows">
+          <div><dt>X · Forward</dt><dd data-value="x">—</dd></div>
+          <div><dt>Y · Left</dt><dd data-value="y">—</dd></div>
+          <div><dt>Z · Up</dt><dd data-value="z">—</dd></div>
+        </dl>
+      </section>
+      <section class="panel motors" aria-labelledby="motors-heading">
+        <h2 id="motors-heading">Measured Motor Positions</h2>
+        <dl class="rows">
+          <div><dt>shoulder_pan</dt><dd data-value="shoulder_pan">—</dd></div>
+          <div><dt>shoulder_lift</dt><dd data-value="shoulder_lift">—</dd></div>
+          <div><dt>elbow_flex</dt><dd data-value="elbow_flex">—</dd></div>
+          <div><dt>wrist_flex</dt><dd data-value="wrist_flex">—</dd></div>
+          <div><dt>wrist_roll</dt><dd data-value="wrist_roll">—</dd></div>
+          <div><dt>gripper</dt><dd data-value="gripper">—</dd></div>
+        </dl>
+        <p>Gripper position is normalized</p>
+        <div id="lb-status" class="badge">LB unavailable</div>
+      </section>
+    </div>
+
+    <footer class="connection">
+      <p id="status" role="status" data-state="waiting">Waiting for telemetry</p>
+      <p id="age" hidden></p>
+      <p class="mode">SO-101 · LeRobot IK · Read-only</p>
+    </footer>
+  </div>
 </main>
 <script>
-  const statusLabel = document.querySelector('#status');
-  const ageLabel = document.querySelector('#age');
-  const readings = document.querySelector('#readings');
-  const fields = [
-    ['X · Forward', 'x'],
-    ['Y · Left', 'y'],
-    ['Z · Up', 'z'],
-    ['Shoulder pan', 'shoulder_pan'],
-    ['Shoulder lift', 'shoulder_lift'],
-    ['Elbow flex', 'elbow_flex'],
-    ['Wrist flex', 'wrist_flex'],
-    ['Wrist roll', 'wrist_roll'],
-    ['Gripper (0–100)', 'gripper'],
-    ['Gamepad enable (LB)', 'gamepad'],
-  ];
-  const values = new Map(fields.map(([label, key]) => {
-    const card = document.createElement('div');
-    const title = document.createElement('dt');
-    const value = document.createElement('dd');
-    title.textContent = label;
-    value.textContent = '—';
-    card.append(title, value);
-    readings.append(card);
-    return [key, value];
-  }));
+  const byId = id => document.getElementById(id);
+  const statusLabel = byId('status');
+  const ageLabel = byId('age');
+  const lbLabel = byId('lb-status');
+  const graphic = byId('gamepad');
+  const buttons = graphic.querySelectorAll('[data-button]');
+  const values = new Map(Array.from(document.querySelectorAll('[data-value]'),
+    element => [element.dataset.value, element]));
+  const axes = ['x', 'y', 'z'];
 
+  let sample = null;
   let sampleTime = null;
   let requestFailed = false;
+  let displayedGamepad;
+
+  function setText(element, value) {
+    if (element.textContent !== value) element.textContent = value;
+  }
+
+  function renderReadings(readings) {
+    for (const [key, element] of values) {
+      let value;
+      if (axes.includes(key)) {
+        const meters = readings.xyz_m?.[key];
+        if (Number.isFinite(meters)) {
+          const mm = meters * 1000;
+          value = `${mm > 0 ? '+' : ''}${mm.toFixed(1)} mm`;
+        }
+      } else {
+        const position = key === 'gripper' ? readings.gripper_normalized : readings.joints_deg?.[key];
+        if (Number.isFinite(position)) value = position.toFixed(1) + (key === 'gripper' ? '' : '°');
+      }
+      setText(element, value ?? '—');
+      element.dataset.measured = value !== undefined;
+    }
+  }
+
+  function renderGamepad(gamepad) {
+    const axis = (name, min) => Math.max(min, Math.min(1, gamepad?.axes?.[name] ?? 0));
+    for (const [id, name] of [['lt-fill', 'LT'], ['rt-fill', 'RT']]) {
+      const height = axis(name, 0) * 36;
+      byId(id).setAttribute('height', height);
+      byId(id).setAttribute('y', 46 - height);
+    }
+    for (const [id, x, y] of [['left-stick', 'LX', 'LY'], ['right-stick', 'RX', 'RY']]) {
+      byId(id).setAttribute('cx', axis(x, -1) * 23);
+      byId(id).setAttribute('cy', axis(y, -1) * 23);
+    }
+    for (const button of buttons) {
+      button.classList.toggle('pressed', gamepad?.buttons?.[button.dataset.button] === true);
+    }
+    const [x, y] = gamepad?.dpad ?? [0, 0];
+    byId('dpad-up').classList.toggle('pressed', y > 0);
+    byId('dpad-down').classList.toggle('pressed', y < 0);
+    byId('dpad-left').classList.toggle('pressed', x < 0);
+    byId('dpad-right').classList.toggle('pressed', x > 0);
+    graphic.dataset.live = gamepad !== null;
+    byId('controller-status').hidden = gamepad !== null;
+  }
 
   function updateStatus() {
     const age = sampleTime === null ? null : (performance.now() - sampleTime) / 1000;
-    const stale = requestFailed || age > 3;
-    const message = stale ? 'Telemetry unavailable · readings may be stale'
-      : age === null ? 'Waiting for telemetry' : 'Live telemetry';
-    if (statusLabel.textContent !== message) statusLabel.textContent = message;
-    statusLabel.dataset.stale = stale;
+    const stale = requestFailed || age > 3 || (age !== null && sample === null);
+    const fresh = stale ? null : sample;
+    statusLabel.dataset.state = stale ? 'stale' : fresh ? 'live' : 'waiting';
+    setText(statusLabel, stale ? 'Telemetry unavailable · readings may be stale'
+      : fresh ? 'Live telemetry' : 'Waiting for telemetry');
     ageLabel.hidden = age === null;
-    if (age !== null) ageLabel.textContent = `Last sample ${age.toFixed(1)} s ago`;
+    if (age !== null) setText(ageLabel, `Last sample ${age.toFixed(1)} s ago`);
+
+    const gamepad = fresh?.gamepad ?? null;
+    if (gamepad !== displayedGamepad) {
+      renderGamepad(gamepad);
+      displayedGamepad = gamepad;
+    }
+    const lbHeld = fresh?.gamepad_enabled;
+    setText(lbLabel, lbHeld === true ? 'LB held' : lbHeld === false ? 'LB released' : 'LB unavailable');
+    lbLabel.dataset.held = lbHeld === true;
   }
 
   async function poll() {
@@ -78,16 +298,14 @@
     try {
       const response = await fetch('/api/telemetry', { cache: 'no-store', signal: controller.signal });
       if (!response.ok) throw new Error('Telemetry request failed');
-      const sample = await response.json();
+      sample = await response.json();
       if (sample) {
-        for (const [key, angle] of Object.entries(sample.joints_deg)) {
-          values.get(key).textContent = `${angle.toFixed(1)}°`;
-        }
-        for (const [axis, meters] of Object.entries(sample.xyz_m)) {
-          values.get(axis).textContent = `${(meters * 1000).toFixed(1)} mm`;
-        }
-        values.get('gripper').textContent = sample.gripper_normalized.toFixed(1);
-        values.get('gamepad').textContent = sample.gamepad_enabled ? 'Held' : 'Released';
+        renderReadings(sample);
+        const gamepad = sample.gamepad;
+        setText(byId('device'), `Device: ${gamepad?.name ?? '—'}`);
+        setText(byId('device-details'), gamepad
+          ? `Axes:${gamepad.axis_count} Buttons:${gamepad.button_count} Hats:${gamepad.hat_count}  |  Deadzone:${gamepad.deadzone.toFixed(2)}`
+          : 'SO-101 · LeRobot IK');
         sampleTime = performance.now() - sample.age_s * 1000;
       }
       requestFailed = false;
