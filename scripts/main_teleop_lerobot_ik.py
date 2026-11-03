@@ -15,8 +15,9 @@ from scripts.lerobot_web_dashboard import WebDashboard
 RATE_HZ = 50
 TELEMETRY_INTERVAL_S = 0.1
 XYZ_STEP_M = 0.002
-ANGLE_STEP_DEG = 0.4
-GRIPPER_STEP = 0.7
+PITCH_STEP_DEG = 0.4
+ROLL_STEP_DEG = 0.75  # Match the legacy 37.5 degrees per second at 50 Hz.
+GRIPPER_STEP = 1.0
 AXIS_LABELS = {0: "LX", 1: "LY", 2: "RX", 3: "RY", 4: "LT", 5: "RT"}
 BUTTON_LABELS = {
     0: "Cross", 1: "Circle", 2: "Square", 3: "Triangle", 4: "LB", 5: "RB",
@@ -75,8 +76,8 @@ def tick(robot: LeRobotIKController, state: InputState):
     axes = state.axes
     # Fixed base/table axes: +X forward, -Y right, +Z up in the URDF.
     delta = XYZ_STEP_M * np.array([-axes["LY"], -axes["LX"], -axes["RY"]])
-    pitch = np.deg2rad(ANGLE_STEP_DEG * (axes["RT"] - axes["LT"]))
-    roll = np.deg2rad(ANGLE_STEP_DEG * axes["RX"])
+    pitch = np.deg2rad(PITCH_STEP_DEG * (axes["RT"] - axes["LT"]))
+    roll = np.deg2rad(ROLL_STEP_DEG * axes["RX"])
     grip = GRIPPER_STEP * state.hat[1]
     if not np.isfinite([*delta, pitch, roll, grip]).all():
         raise ValueError("Gamepad reported nonfinite input")
@@ -145,7 +146,7 @@ def main():
             if dashboard is not None:
                 host = "<pi-lan-ip>" if args.web_host == "0.0.0.0" else args.web_host
                 print(f"Dashboard available at http://{host}:{dashboard.port}/")
-            print("LeRobot IK ready with fine increments. Hold the left shoulder button to move; Ctrl+C exits.")
+            print("LeRobot IK ready. Hold the left shoulder button to move. Ctrl+C exits.")
             run_loop(robot, gp, state, dashboard)
     except KeyboardInterrupt:
         pass

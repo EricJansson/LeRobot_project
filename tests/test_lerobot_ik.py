@@ -141,15 +141,19 @@ def test_fine_translation_stays_fixed_to_base(controller, yaw_deg):
     np.testing.assert_allclose(target[:3, :3], controller.target_pose[:3, :3])
 
 
-def test_fine_pitch_roll_and_gripper(controller):
+def test_pitch_roll_and_gripper_increments(controller):
     state = teleop.InputState(active=True, was_active=True, hat=(0, 1))
     state.axes.update(RX=1, RT=1)
     controller.move_to_pose = Mock()
     teleop.tick(controller, state)
-    c, s = np.cos(np.deg2rad(0.4)), np.sin(np.deg2rad(0.4))
-    expected = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]]) @ np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+    pitch, roll = np.deg2rad([0.4, 0.75])
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cr, sr = np.cos(roll), np.sin(roll)
+    expected = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]]) @ np.array([
+        [cr, -sr, 0], [sr, cr, 0], [0, 0, 1],
+    ])
     np.testing.assert_allclose(controller.move_to_pose.call_args.args[0][:3, :3], expected)
-    assert controller.move_to_pose.call_args.kwargs['gripper_delta'] == 0.7
+    assert controller.move_to_pose.call_args.kwargs['gripper_delta'] == 1.0
 
 
 @pytest.mark.parametrize('stop', ['disconnect', 'interrupt', 'read_error'])

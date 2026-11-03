@@ -128,9 +128,10 @@ robot base (+X forward, +Y left, +Z up). Use `--web-host` to bind to a specific 
 to select another port. Use `--no-web-dashboard` to run without the server.
 The server stops when teleop exits.
 
-The working fine increments are always active: 2.0 mm translation, 0.4 degrees
-rotation, and 0.7 normalized gripper units per tick at 50 Hz. No `--fine` flag
-or stick click is needed. Ctrl+C or controller loss disables torque and disconnects.
+At 50 Hz, full input requests 2.0 mm of translation, 0.4 degrees of pitch,
+or 0.75 degrees of wrist roll per tick. The gripper command adds 1.0 normalized
+unit per tick to its measured position in the requested direction.
+Ctrl+C or controller loss disables torque and disconnects.
 The existing control modes and calibration/URDF files are unchanged.
 
 The owner confirms working movement. The IK solution must be finite, within the

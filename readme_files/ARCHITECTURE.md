@@ -11,7 +11,7 @@ Reviewed 2026-10-30. All three primary modes have been used on hardware by the o
 | scripts.teleop_axis_control | Self-contained direct-joint loop; owns SO101Follower, bypassing RobotArmController and custom IK |
 | scripts.main_teleop_ik | Wires robot/dashboard/gamepad/state; delegates to scripts/teleop_ik_control.py |
 | scripts.main_teleop_plan | Delegates recording/playback to scripts/teleop_plan_control.py, reusing IK teleop primitives |
-| scripts.main_teleop_lerobot_ik | Headless LeRobot 0.6.1 / Placo IK with fixed fine increments and the tuned follower |
+| scripts.main_teleop_lerobot_ik | Headless LeRobot 0.6.1 / Placo IK with fixed per-axis increments and the tuned follower |
 | scripts.controller_dashboard | Pygame display/panels; IPC client only, never the serial owner |
 
 The existing IK and plan entry points accept --port, --index, and --no-dashboard; plan
@@ -144,7 +144,7 @@ IK_guardrails.py and the preserved filename movement_contrainst.py contain stand
 
 The separate `scripts.main_teleop_lerobot_ik` entry point uses `LeRobotIKController` and LeRobot 0.6.1 FK/IK, preserving existing modes. It reuses gamepad mapping and the tuned follower without importing custom kinematics. See [setup and controls](../README.md#lerobot-ik-raspberry-pi). The existing RobotArmController remains specific to the custom model.
 
-LeRobot `RobotKinematics` loads the URDF with an explicit five-joint order and `gripper_frame_link` target. FK returns a 4×4 transform in meters; IK takes and returns joint degrees. The adapter intersects URDF limits with calibration endpoints converted by the installed bus. The normalized gripper is excluded from IK. The new path uses fixed base/table directions and fine increments only.
+LeRobot `RobotKinematics` loads the URDF with an explicit five-joint order and `gripper_frame_link` target. FK returns a 4×4 transform in meters; IK takes and returns joint degrees. The adapter intersects URDF limits with calibration endpoints converted by the installed bus. The normalized gripper is excluded from IK. Teleop uses fixed base/table directions and per-axis increments.
 
 The repository URDF uses meter/radian geometry and includes six revolute joints plus a fixed gripper frame. All 13 referenced assets/*.stl meshes are now included with their [license and provenance](../assets/README.md). The local URDF was structurally identical to the pinned upstream model during acquisition. Its limits differ from the exported hardware limits; an elbow comment mentions a five-degree calibration offset. Verify joint ordering, frames, zero conventions, gripper treatment, and measured FK before treating it as authoritative. More detailed geometry alone does not prove greater accuracy.
 
