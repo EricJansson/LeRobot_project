@@ -18,7 +18,7 @@ from lerobot.motors.feetech import FeetechMotorsBus
 from robot_program.lerobot_compat import SO101FollowerConfig
 from robot_program.so101_follower import SO101Follower
 from robot_program.lerobot_ik_controller import ARM_JOINTS, MAX_ITERATIONS, LeRobotIKController
-from robot_program.so101_collision_log import CollisionLog
+from robot_program.so101_collision_log import CollisionLog, assess_path
 from scripts import main_teleop_lerobot_ik as teleop
 
 pytestmark = pytest.mark.skipif(version('lerobot') != '0.6.1', reason='Pi IK targets LeRobot 0.6.1')
@@ -157,6 +157,7 @@ def test_collision_log_observes_sent_arm_and_gripper_commands(controller, monkey
     assert arm["sent_gripper_normalized"] == 22.0
     assert arm["collision"] == "base_link and gripper_link"
     assert arm["path_fraction"] == pytest.approx(2 / 3)
+    assert arm["path_status"] == "enters_clearance_zone"
     assert arm["samples_checked"] == 3
     assert arm["check_ms"] >= 0
     assert jaw["sent_arm_deg"] == [0.0] * 5
@@ -164,6 +165,28 @@ def test_collision_log_observes_sent_arm_and_gripper_commands(controller, monkey
     assert jaw["sent_gripper_normalized"] == 23.0
     assert jaw["samples_checked"] == 3
     assert jaw["collision"] is None and jaw["path_fraction"] is None
+    assert jaw["path_status"] == "clear"
+
+
+@pytest.mark.parametrize(("clearances_mm", "status"), [
+    ([10.0, 9.0, 10.0], "clear"),
+    ([10.0, 6.0, 10.0], "enters_clearance_zone"),
+    ([3.0, 3.5, 4.0], "improves_clearance"),
+    ([3.0, 3.5, 9.0], "improves_clearance"),
+    ([3.0, 2.5, 9.0], "worsens_clearance"),
+    ([3.0, 3.0, 3.0], "no_measurable_improvement"),
+    ([3.0, 3.0, 3.01], "no_measurable_improvement"),
+])
+def test_collision_recovery_assessment(clearances_mm, status):
+    def collides(pose, *, gap):
+        distance_mm = clearances_mm[round(pose[0] / 2)]
+        return "base_link and gripper_link" if distance_mm < gap * 1000 else None
+
+    result = assess_path(SimpleNamespace(collides=collides), [0.0] * 6, [4.0] + [0.0] * 5)
+
+    assert result["path_status"] == status
+    expected_fraction = None if status == "clear" else 0.5 if status == "enters_clearance_zone" else 0.0
+    assert result["path_fraction"] == expected_fraction
 
 
 def test_collision_log_failure_stops_logging_without_stopping_motion(controller, capsys):

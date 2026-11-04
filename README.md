@@ -154,8 +154,17 @@ The logger samples the interpolated motion from the measured position to the sen
 command at intervals of up to 2 degrees per joint. It records measured and sent
 positions, the first modeled pair within 8 mm, its position along the sampled
 path, and the check time. Each line describes a command the follower sent.
+
+`path_status` distinguishes a clear path from one that enters the clearance
+zone. If the measured pose is already flagged, the logger estimates its
+minimum point separation to within 0.125 mm. It then reports whether a
+sample worsens that separation, the target improves it, or there is no
+measurable improvement. The logger checks for worsening along the path
+even when the target itself is clear.
+
 The log is diagnostic only. It covers the checker's selected self-collision
-pairs and uses the model's normalized gripper mapping. Use your normal jogs
+pairs and compares sampled point separation. An improvement can coexist
+with a modeled mesh overlap or a different pair getting closer. Use your normal jogs
 and retraction to collect a trace, then exit with Ctrl+C to flush the log.
 
 ## Tests and diagnostics
