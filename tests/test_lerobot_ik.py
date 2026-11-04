@@ -4,6 +4,8 @@ import builtins
 from contextlib import contextmanager
 from dataclasses import replace
 from importlib.metadata import version
+from io import StringIO
+import json
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock
@@ -16,6 +18,7 @@ from lerobot.motors.feetech import FeetechMotorsBus
 from robot_program.lerobot_compat import SO101FollowerConfig
 from robot_program.so101_follower import SO101Follower
 from robot_program.lerobot_ik_controller import ARM_JOINTS, MAX_ITERATIONS, LeRobotIKController
+from robot_program.so101_collision_log import CollisionLog
 from scripts import main_teleop_lerobot_ik as teleop
 
 pytestmark = pytest.mark.skipif(version('lerobot') != '0.6.1', reason='Pi IK targets LeRobot 0.6.1')
@@ -110,6 +113,72 @@ def test_gripper_is_normalized_and_bypasses_ik(controller):
     assert controller.follower.send_action.call_args_list[0].args[0] == {'gripper.pos': 49.7}
     assert controller.follower.send_action.call_args.args[0] == {'gripper.pos': 50.0}
     controller.kinematics.inverse_kinematics.assert_not_called()
+
+
+def test_collision_log_observes_sent_arm_and_gripper_commands(controller, monkeypatch, tmp_path):
+    model = Mock()
+    log_path = tmp_path / "collision.jsonl"
+
+    def collides(pose, *, gap):
+        assert controller.follower.send_action.call_count > 0
+        assert gap == 0.008
+        return "base_link and gripper_link" if pose[0] >= 4 else None
+
+    model.collides.side_effect = collides
+    factory = Mock(return_value=model)
+    monkeypatch.setitem(sys.modules, "so101ik", SimpleNamespace(Model=factory))
+    monkeypatch.setattr(sys, "argv", ["teleop", "--no-web-dashboard", "--collision-log", str(log_path)])
+    monkeypatch.setattr(teleop.LeRobotIKController, "from_port", Mock(return_value=controller))
+    monkeypatch.setattr(teleop, "setup_gamepad", Mock())
+    monkeypatch.setattr(controller, "connect", Mock())
+    monkeypatch.setattr(controller, "disconnect", Mock())
+
+    def run(robot, *_):
+        target = np.eye(4)
+        target[0, 3] = 0.008
+        robot.follower.send_action.side_effect = lambda action: {**action, "shoulder_pan.pos": 6.0}
+        assert robot.move_to_pose(target, gripper_delta=2).accepted
+        assert robot.follower.send_action.call_args.args[0]["shoulder_pan.pos"] == 8.0
+        robot.follower.send_action.side_effect = dict
+        robot.move_gripper(3)
+        robot.follower.send_action.assert_called_with({"gripper.pos": 23.0})
+        target[0, 3] = 10
+        assert not robot.move_to_pose(target).accepted
+        assert robot.follower.send_action.call_count == 2
+
+    monkeypatch.setattr(teleop, "run_loop", run)
+    teleop.main()
+
+    factory.assert_called_once_with(calibration_file=controller.follower.calibration_fpath, offsets={})
+    assert model.table_z == -1e9
+    arm, jaw = map(json.loads, log_path.read_text().splitlines())
+    assert arm["measured_arm_deg"] == [0.0] * 5
+    assert arm["sent_arm_deg"] == [6.0, 0.0, 0.0, 0.0, 0.0]
+    assert arm["sent_gripper_normalized"] == 22.0
+    assert arm["collision"] == "base_link and gripper_link"
+    assert arm["path_fraction"] == pytest.approx(2 / 3)
+    assert arm["samples_checked"] == 3
+    assert arm["check_ms"] >= 0
+    assert jaw["sent_arm_deg"] == [0.0] * 5
+    assert jaw["measured_gripper_normalized"] == 20.0
+    assert jaw["sent_gripper_normalized"] == 23.0
+    assert jaw["samples_checked"] == 3
+    assert jaw["collision"] is None and jaw["path_fraction"] is None
+
+
+def test_collision_log_failure_stops_logging_without_stopping_motion(controller, capsys):
+    model = Mock()
+    model.collides.side_effect = RuntimeError("checker failed")
+    stream = StringIO()
+    controller.collision_log = CollisionLog(model, stream)
+
+    controller.move_gripper(1)
+    controller.move_gripper(2)
+
+    assert controller.follower.send_action.call_count == 2
+    model.collides.assert_called_once()
+    assert stream.getvalue() == ""
+    assert capsys.readouterr().err == "Collision logging stopped: checker failed\n"
 
 
 def test_neutral_and_released_shoulder_send_nothing(controller):

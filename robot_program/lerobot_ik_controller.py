@@ -97,6 +97,7 @@ class LeRobotIKController:
         self.kinematics.solver.mask_dof("gripper")
         self.kinematics.solver.enable_joint_limits(True)
         self.target_pose: np.ndarray | None = None
+        self.collision_log = None
         self._gripper = 0.0
         self._connected = False
 
@@ -204,13 +205,24 @@ class LeRobotIKController:
             self.kinematics.forward_kinematics(measured)
         return IKResult(accepted, reason, q.copy(), achieved.copy())
 
+    def _send_action(self, action: dict[str, float], measured_deg: np.ndarray) -> None:
+        sent = self.follower.send_action(action)
+        if self.collision_log is not None:
+            measured = [*measured_deg.tolist(), self._gripper]
+            goal = [
+                sent.get(f"{name}.pos", value)
+                for name, value in zip((*ARM_JOINTS, "gripper"), measured)
+            ]
+            self.collision_log.record(measured, goal)
+
     def move_to_pose(self, target: np.ndarray, *, gripper_delta: float = 0.0) -> IKResult:
-        result = self.solve_pose(target, self._read_joints())
+        measured_deg = self._read_joints()
+        result = self.solve_pose(target, measured_deg)
         if result.accepted:
             action = {f"{name}.pos": float(value) for name, value in zip(ARM_JOINTS, result.joints_deg)}
             if gripper_delta:
                 action["gripper.pos"] = self._gripper_target(gripper_delta)
-            self.follower.send_action(action)
+            self._send_action(action, measured_deg)
         self.target_pose = result.pose.copy()
         return result
 
@@ -223,7 +235,7 @@ class LeRobotIKController:
         """A jaw-only command leaves all arm targets untouched and bypasses IK."""
         if not delta:
             return
-        self._read_joints()
+        measured_deg = self._read_joints()
         target = self._gripper_target(delta)
         if target != self._gripper:
-            self.follower.send_action({"gripper.pos": target})
+            self._send_action({"gripper.pos": target}, measured_deg)

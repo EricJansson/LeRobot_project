@@ -1,8 +1,9 @@
 """Gamepad control using LeRobot IK with an optional LAN dashboard."""
 
-from contextlib import nullcontext
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from ipaddress import IPv4Address
+from pathlib import Path
 import argparse
 import os
 import subprocess
@@ -13,6 +14,7 @@ from time import perf_counter, sleep
 import numpy as np
 
 from robot_program.lerobot_ik_controller import LeRobotIKController
+from robot_program.so101_collision_log import open_collision_log
 from scripts.lerobot_web_dashboard import WebDashboard
 
 RATE_HZ = 50
@@ -166,6 +168,7 @@ def main():
     parser.add_argument("--no-web-dashboard", action="store_true", help="Disable read-only LAN telemetry")
     parser.add_argument("--web-host", default="0.0.0.0", help="Dashboard bind address (default: all IPv4 interfaces)")
     parser.add_argument("--web-port", type=int, default=8000, help="Dashboard HTTP port (default: 8000)")
+    parser.add_argument("--collision-log", type=Path, help="Record self-collision diagnostics to a new JSONL file")
     args = parser.parse_args()
     if not 0 <= args.web_port <= 65535:
         parser.error("--web-port must be between 0 and 65535")
@@ -174,13 +177,22 @@ def main():
         robot = LeRobotIKController.from_port(args.port)
         state = InputState()
         gp = setup_gamepad(args.index, state)
-        web = nullcontext() if args.no_web_dashboard else WebDashboard(args.web_host, args.web_port)
-        with web as dashboard, robot:
-            if dashboard is not None:
-                for host in _dashboard_hosts(args.web_host):
-                    print(f"Dashboard available at http://{host}:{dashboard.port}/")
-            print("LeRobot IK ready. Hold the left shoulder button to move. Ctrl+C exits.")
-            run_loop(robot, gp, state, dashboard)
+        with ExitStack() as stack:
+            if args.collision_log is not None:
+                robot.collision_log = stack.enter_context(
+                    open_collision_log(args.collision_log, robot.follower.calibration_fpath),
+                )
+            dashboard = None
+            if not args.no_web_dashboard:
+                dashboard = stack.enter_context(WebDashboard(args.web_host, args.web_port))
+            with robot:
+                if dashboard is not None:
+                    for host in _dashboard_hosts(args.web_host):
+                        print(f"Dashboard available at http://{host}:{dashboard.port}/")
+                if args.collision_log is not None:
+                    print(f"Collision logging (observe only) to {args.collision_log}")
+                print("LeRobot IK ready. Hold the left shoulder button to move. Ctrl+C exits.")
+                run_loop(robot, gp, state, dashboard)
     except KeyboardInterrupt:
         pass
     except (ImportError, RuntimeError, ValueError, KeyError, OSError) as exc:

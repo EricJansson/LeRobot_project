@@ -138,8 +138,25 @@ The existing control modes and calibration/URDF files are unchanged.
 The owner confirms working movement. The IK solution must be finite, within the
 URDF and calibration joint limits, and within 0.5 mm of the requested XYZ. This
 limits reach according to the arm model. Teleop sends the validated IK solution
-directly to the follower. Measured model alignment and collision checking remain
-pending.
+directly to the follower. Physical model alignment and live collision enforcement remain pending.
+
+### Optional self-collision log
+
+Install the pinned `so101ik` checker in the Pi environment using a C compiler and
+the development headers for its Python version. Run teleop with a new log path.
+
+```bash
+python -m pip install --no-deps --no-build-isolation 'so101ik @ git+https://github.com/stepankandrushin/lerobot-so101-inverse-kinematics.git@3456805bf11d86d6c0b625aed6239516acd0862c'
+python -m scripts.main_teleop_lerobot_ik --collision-log "/tmp/so101-collision-$(date +%Y%m%d-%H%M%S).jsonl"
+```
+
+The logger samples the interpolated motion from the measured position to the sent
+command at intervals of up to 2 degrees per joint. It records measured and sent
+positions, the first modeled pair within 8 mm, its position along the sampled
+path, and the check time. Each line describes a command the follower sent.
+The log is diagnostic only. It covers the checker's selected self-collision
+pairs and uses the model's normalized gripper mapping. Use your normal jogs
+and retraction to collect a trace, then exit with Ctrl+C to flush the log.
 
 ## Tests and diagnostics
 
@@ -172,7 +189,7 @@ Using the venv interpreter, `python -m robot_program.debug_env` reports environm
 ## Boundaries for future work
 
 - Keep existing mode entry points, custom kinematics, calibration values, and dashboard behavior intact while adding the new path.
-- Unused guardrail helpers and the old web simulator provide no runtime protection. Current controls have joint/input checks but no self-, table-, or obstacle-collision checking.
+- Current controls enforce joint and input checks. The opt-in self-collision log is diagnostic, and table and obstacle collision protection remain pending.
 - Manual LB gating is not a universal motion stop: presets and plan playback can continue after LB release. Dashboard **Act** submits a direct joint target. See [motion protection boundaries](readme_files/ARCHITECTURE.md#motion-protection-boundaries).
 - Verify conversions: custom XYZ uses centimeters, URDF geometry uses meters, joint conventions need alignment, and LeRobot's gripper channel is normalized rather than degrees.
 - Follow [TODO](TODO.md). The previously reported second-pitch-joint/height discrepancy needs revalidation; it is not a confirmed current defect.
