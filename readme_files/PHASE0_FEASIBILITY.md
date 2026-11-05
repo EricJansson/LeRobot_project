@@ -300,6 +300,100 @@ Rerun from WSL in the checkout using the existing isolated environment.
 The [audit data](phase0_results/wsl_collision_audit.json) records individual hit
 angles, raw timings, seeded corpus settings, source hashes and replay outcomes.
 
+## Pair-specific margin study
+
+**OFFLINE VERIFIED.** The study uses the same 115 enabled mesh pairs and six persistent-overlap
+exclusions. The focused profile applies 2 mm to the original 85 pairs and the
+three re-enabled elbow pairs, and 0.25 mm to the other 27 re-enabled pairs. All
+eight replay paths start from the same fake extended-arm feedback and use the
+full IK commands. The jaw stays at zero URDF degrees for this replay.
+
+| Experimental profile | Retractions accepted on each grid | Saved clear pose and transition endpoints |
+|---|---:|---|
+| 85 pairs, uniform 2 mm | 8/8 | Clear |
+| 115 pairs, uniform 0 mm | 8/8 | Clear |
+| 115 pairs, uniform 2 or 5 mm | 0/8 at either margin | Rejected |
+| 115 pairs, 2 mm with only the two gripper overrides at 0.25 mm | 8/8 | Rejected by `base_link_1` / `shoulder_link_2` |
+| 115 pairs, focused profile | 8/8 | Clear |
+
+With the focused profile, the saved transition first rejects about 39.6% along
+the 0.5° path when `base_link_1` approaches `gripper_link_1`. The 0.125° grid
+first rejects at 39.3%. The saved colliding pose still rejects, and the saved
+near pose triggers the wrist pair. In the two independent override probes,
+0 and 0.25 mm accepted every retraction. Raising either gripper pair to 0.5 or
+1 mm rejected all eight at the shared starting pose, with that pair triggering.
+
+| Interference with the focused profile | Zero-margin hits retained | Total hit samples | First additional sample by increasing angle |
+|---|---:|---:|---:|
+| Elbow, upper arm shell / lower arm shell | 5/5 | 8 | −96.83° on the opposite end of travel |
+| Elbow, upper arm shell / wrist motor holder | 7/7 | 8 | +89.84° |
+| Elbow, upper arm shell / lower arm servo | 1/1 | 3 | +94.83° |
+| Wrist roll, gripper follower / roll-pitch piece | 5/5 | 24 | −148.24° |
+
+The elbow shell pair also gained a hit at +91.84° before its first zero-margin
+hit at +92.84°. These are sampled threshold hits in the model, with each hinge
+swept in isolation. The two path grids agreed on all 1,295 short paths, including
+1,280 seeded paths and 15 paths around elbow and wrist boundaries. Each grid
+accepted 647 and rejected 648. Both disagreement lists in the raw data are empty.
+Physical mesh alignment and clearance between samples remain unverified.
+
+### 20 ms budget
+
+Measurements use the focused profile on the i5-14400F WSL2 stack above. The
+repeated cases use 20 warmups and 500 samples per case at 0.5°. The retraction
+rows pool samples across the eight fixed-feedback requests. Combined timing
+starts with the Cartesian request and includes IK, candidate validation and the
+sampled path check. The short corpus measures one path check per path per grid.
+
+| Offline workload | Median ms | p95 ms | p99 ms | Worst ms | >20 ms | Accepted |
+|---|---:|---:|---:|---:|---:|---:|
+| Short corpus path checks, 0.5° | 11.637 | 21.628 | 23.944 | 27.272 | 154 | 647/1,295 |
+| Short corpus path checks, 0.125° | 39.602 | 75.902 | 83.278 | 96.830 | 735 | 647/1,295 |
+| Eight retraction requests, path checks | 27.666 | 42.576 | 46.287 | 67.221 | 2,540 | 4,000/4,000 |
+| Eight retraction requests, IK + path | 27.979 | 43.371 | 48.979 | 66.681 | 2,529 | 4,000/4,000 |
+| 16 mm retraction, IK + path | 40.875 | 46.198 | 51.518 | 76.452 | 500 | 500/500 |
+| Interior-collision transition, path check | 160.015 | 167.271 | 174.711 | 199.222 | 500 | 0/500 |
+
+Replay requests 1–2 met the budget in all combined runs. Request 3 exceeded
+it in 29/500 runs, and requests 4–8 exceeded it every time. Both stages of the
+16 mm case and the long transition path check exceeded the budget every time.
+The other representative IK cases stayed below 20 ms in this run, with a
+combined worst of 18.332 ms for wrist roll. The unreachable case rejected at
+IK, so it has no path-only timing.
+
+A follow-up timing probe used the same two paths at 0.5°, with five warmups and
+20 samples per group. Re-enabling the adjacent pairs already put both paths
+over budget at zero margin. Setting the focused margins once before sampling
+saved a few milliseconds, while both paths still exceeded 20 ms in all runs.
+
+| Timing probe configuration | Final replay path median | Interior-collision path median |
+|---|---:|---:|
+| 85 pairs, uniform 2 mm | 1.068 ms | 9.289 ms |
+| 115 pairs, uniform 0 mm | 30.904 ms | 124.570 ms |
+| 115 pairs, focused profile | 41.616 ms | 160.452 ms |
+| 115 pairs, focused margins set once | 39.986 ms | 154.748 ms |
+
+The separately measured Windows–WSL echo from the earlier benchmark had
+0.740 ms p99 and a 2.861 ms maximum. The focused profile already exceeds
+20 ms before IPC on the workloads above. It remains an offline experiment,
+and the Phase 1 gate remains closed. [Echo results](phase0_results/windows_wsl_ipc_50hz.md)
+
+All 18 Phase 0 regression tests passed in WSL2, including the new test for
+independent overrides, invalid margins and excluded pairs.
+
+Rerun in the isolated WSL2 environment from the checkout.
+
+```bash
+PHASE0_PY="$HOME/.local/share/lerobot-phase0/venv/bin/python"
+"$PHASE0_PY" -B -m scripts.phase0_collision_audit --study pair-margins \
+  --output .runtime/phase0_pair_margins.json
+"$PHASE0_PY" -B -m pytest -o addopts= -q -ra tests/test_phase0_feasibility.py
+```
+
+The [raw study data](phase0_results/wsl_pair_margins.json) records the profile
+thresholds, triggering mesh instances, hinge angles, sampled disagreement
+witnesses, individual timing samples, environment and source hashes.
+
 ## Decisions, remaining gates and rollback
 
 Retain WSL2/PlaCo provisionally for IK. Reject exact all-pair distances as the

@@ -239,7 +239,7 @@ class MarginCollisionChecker(CollisionChecker):
                 if links in included:
                     self.geometry.addCollisionPair(pin.CollisionPair(i, j))
             self.data = self.model.createData()
-            self.geometry_data = pin.GeometryData(self.geometry)
+            self.set_geometry(self.geometry)
             self.indices = [self.model.idx_qs[self.model.getJointId(n)] for n in (*ARM_JOINTS, "gripper")]
             if len(self.geometry.collisionPairs) != 85:
                 raise RuntimeError("Expected all 85 explicitly mapped experimental geometry pairs")
@@ -249,19 +249,56 @@ class MarginCollisionChecker(CollisionChecker):
             self.close()
             raise
 
-    def query_with_margin(self, joints_deg, margin_m):
+    def geometry_pair_names(self):
+        objects = self.geometry.geometryObjects
+        return [tuple(sorted((objects[pair.first].name, objects[pair.second].name)))
+                for pair in self.geometry.collisionPairs]
+
+    def set_geometry(self, geometry):
+        geometry_data = self.pin.GeometryData(geometry)
+        self.geometry = geometry
+        self.geometry_data = geometry_data
+        self._pair_margin_overrides = {}
+
+    def set_pair_margin_overrides(self, overrides):
+        """Set absolute meter thresholds for explicitly enabled mesh pairs."""
+        indices = {pair: index for index, pair in enumerate(self.geometry_pair_names())}
+        configured = {}
+        for pair, margin in overrides.items():
+            key = tuple(sorted(pair))
+            if key not in indices:
+                raise ValueError(f"Mesh pair is unknown or excluded: {key}")
+            if not math.isfinite(margin) or margin < 0:
+                raise ValueError(f"Mesh pair margin must be finite and nonnegative: {key}")
+            index = indices[key]
+            if index in configured:
+                raise ValueError(f"Duplicate mesh pair margin: {key}")
+            configured[index] = margin
+        self._pair_margin_overrides = configured
+
+    def query_with_margin(self, joints_deg, margin_m, *, all_hits=False):
+        """Use the supplied default margin plus any configured mesh overrides."""
         values = finite_joints(joints_deg)
         if not math.isfinite(margin_m) or margin_m < 0:
             raise ValueError("Margin must be finite and nonnegative")
         q = self.pin.neutral(self.model)
         q[self.indices] = np.deg2rad(values)
-        for request in self.geometry_data.collisionRequests:
+        requests = self.geometry_data.collisionRequests
+        for request in requests:
             request.security_margin = margin_m
+        for index, margin in self._pair_margin_overrides.items():
+            requests[index].security_margin = margin
         colliding = self.pin.computeCollisions(self.model, self.data, self.geometry,
-                                               self.geometry_data, q, True)
-        return {"colliding": bool(colliding), "margin_m": margin_m,
-                "min_distance_m": None, "distance_pair_count": len(self.geometry.collisionPairs),
-                "backend": "Pinocchio/Coal security_margin predicate, stop at first collision"}
+                                               self.geometry_data, q, not all_hits)
+        result = {"colliding": bool(colliding), "margin_m": margin_m,
+                  "min_distance_m": None, "distance_pair_count": len(self.geometry.collisionPairs),
+                  "backend": "Pinocchio/Coal security_margin predicate, stop at first collision"}
+        if all_hits:
+            result["backend"] = "Pinocchio/Coal security_margin predicate, all enabled pairs"
+            result["geometry_pairs"] = [pair for pair, outcome in zip(
+                self.geometry_pair_names(), self.geometry_data.collisionResults, strict=True
+            ) if outcome.isCollision()]
+        return result
 
     def query(self, joints_deg):
         return self.query_with_margin(joints_deg, 0.)
@@ -382,12 +419,17 @@ def measure(operation, warmup=20, repetitions=500):
             "reasons": reasons, "last_outcome": outcomes[-1], "raw_ms": samples}
 
 
-def ik_case(controller, case):
+def ik_request(controller, case):
     q = finite_joints(case["joints_deg"], 5)
     target = np.array(controller.kinematics.forward_kinematics(q), copy=True)
     target[:3, 3] += np.array(case.get("translation_m", [0, 0, 0]), dtype=float)
     if "target_joints_deg" in case:
         target = np.array(controller.kinematics.forward_kinematics(finite_joints(case["target_joints_deg"], 5)), copy=True)
+    return q, target
+
+
+def ik_case(controller, case):
+    q, target = ik_request(controller, case)
     result = controller.solve_pose(target, q)
     return {"accepted": result.accepted, "reason": result.reason,
             "joints_deg": result.joints_deg.tolist(), "target_xyz_m": target[:3, 3].tolist(),

@@ -133,6 +133,40 @@ def test_native_mapping_matches_placo_fk_and_collision_predicates():
         checker.close()
 
 
+@pytest.mark.skipif(find_spec("placo") is None, reason="Requires isolated Linux PlaCo environment")
+def test_mesh_margin_overrides_are_pair_specific():
+    checker = f.MarginCollisionChecker()
+    jaw_pair = ("gripper_link_1", "moving_jaw_so101_v1_link_0")
+    wrist_pair = ("gripper_link_1", "wrist_link_1")
+    pose = [0., 25., -12., 3., 0., 0.]
+    try:
+        with pytest.raises(ValueError, match="unknown or excluded"):
+            checker.set_pair_margin_overrides({jaw_pair: 0.})
+        geometry = checker.geometry.copy()
+        geometry.removeAllCollisionPairs()
+        indices = {obj.name: index for index, obj in enumerate(geometry.geometryObjects)}
+        for first, second in (jaw_pair, wrist_pair):
+            geometry.addCollisionPair(checker.pin.CollisionPair(indices[first], indices[second]))
+        checker.set_geometry(geometry)
+
+        assert set(checker.query_with_margin(pose, 0.002, all_hits=True)["geometry_pairs"]) == {jaw_pair, wrist_pair}
+        checker.set_pair_margin_overrides({jaw_pair[::-1]: 0.00025})
+        assert checker.query_with_margin(pose, 0.002, all_hits=True)["geometry_pairs"] == [wrist_pair]
+        for margin in (-1., float("nan"), float("inf")):
+            with pytest.raises(ValueError, match="finite and nonnegative"):
+                checker.set_pair_margin_overrides({wrist_pair: margin})
+        with pytest.raises(ValueError, match="Duplicate"):
+            checker.set_pair_margin_overrides({jaw_pair: 0., jaw_pair[::-1]: 0.})
+        assert not checker.query_with_margin(pose, 0.)["colliding"]
+        assert checker.query_with_margin(pose, 0.002)["colliding"]
+        checker.set_pair_margin_overrides({jaw_pair: 0.00025, wrist_pair: 0.00025})
+        assert f.check_path(checker, pose, pose, 0.5, 0.002)["accepted"]
+        checker.set_geometry(geometry)
+        assert checker.query_with_margin(pose, 0.002)["colliding"]
+    finally:
+        checker.close()
+
+
 def test_missing_collision_dependency_is_not_a_clear_result(monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "placo", None)
