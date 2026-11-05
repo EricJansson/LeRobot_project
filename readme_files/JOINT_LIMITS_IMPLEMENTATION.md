@@ -1,5 +1,7 @@
 # Joint limits and calibration
 
+> **Legacy implementation reference; target not yet implemented.** The approved [PC–Pi architectural refactor](PC_PI_ARCHITECTURAL_REFACTOR.md) will make the Pi the sole hardware/motor owner, with self-collision and URDF IK computed in WSL2. Treat the normalized-gripper/degree-limit mismatch described below as an explicit *new-path blocking issue* before hardware trials. Preserve the owner's calibration and PID tuning; do not silently regenerate or re-home. See [implementation Phase 2](PC_PI_IMPLEMENTATION_PLAN.md#phase-2--wsl2-motion-worker-and-independent-collision-validation).
+
 [Home](../README.md) | [Architecture](ARCHITECTURE.md) | [Setup](CONNECT_SETUP.md)
 
 Reviewed 2026-11-02 against the current implementation and [degree-limit export](../calibration/lerobot_arm_with_degrees.json). Project calibration was synchronized from the owner-approved Pi LeRobot calibration, and the degree-limit export regenerated. No motor registers were written.
@@ -35,6 +37,8 @@ validate_calibration.py checks that arithmetic using export metadata. It does no
 | 6 | gripper | -38.06 | 90.26 | Independent controller channel; see unit mismatch below |
 
 The table contains exported degree bounds. Body channels use degrees with use_degrees=True, but LeRobot configures the gripper in normalized 0–100 units. RobotArmController applies these gripper degree bounds directly to normalized values; this is an unresolved mismatch, not an established conversion. Axis mode instead clamps the gripper to normalized 0–50.
+
+The standalone `LeRobotIKController` follows a separate limit path: five arm-joint bounds intersect URDF limits with calibrated endpoints converted by the installed LeRobot bus. It excludes the normalized gripper from IK and clamps jaw commands to 0–50. It does not use the custom controller's exported gripper degree bounds. The PC-led adapter must preserve explicit conversion boundaries and verify the intended gripper range before hardware trials; this existing handling supplies no collision checking.
 
 ## Enforcement behavior
 

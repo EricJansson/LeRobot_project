@@ -1,8 +1,19 @@
 # Architecture and control reference
 
+> **This document primarily records the existing/legacy implementation, not the agreed target architecture.** Approved next design: [PC–Pi architectural refactor](PC_PI_ARCHITECTURAL_REFACTOR.md). Implement incrementally using [PC–Pi implementation plan](PC_PI_IMPLEMENTATION_PLAN.md). The 2026-11-05 architectural decisions override **older future-work proposals** but do not change the truth of existing-code observations below. Current legacy modes must be preserved.
+
+## Approved next architecture (not implemented)
+
+- **PC mothership:** Windows physical gamepad and startup/orchestration; WSL2 LeRobot/URDF/PlaCo IK, separate self-collision/path checking; PC-hosted read-only dashboard.
+- **Development host:** resume in the Windows PC checkout. WSL2 is a provisional solver runtime to validate; the Pi hosts hardware execution and retains its legacy environment.
+- **Pi sole motor owner:** receives fresh validated targets over LAN (PC Ethernet; Pi Wi-Fi), enforces local limits and watchdog, reads measured joints, safely pauses through transient disconnects and resumes only with fresh state and input.
+- **Immediate scope:** gamepad + gripper, self-collision, measured 50 Hz target, safety/latency observability, modular tests. **Deferred:** table collision, migrating presets/plans, Android/ArUco and remote access, camera, event-driven motor writes, optional solver replacement.
+- The old Pygame dashboard, Pi-hosted read-only dashboard, direct-axis/custom-IK/plan modes, and the standalone Pi LeRobot IK mode remain **legacy**. The new target does not silently convert them to networked modes.
+
+
 [Home](../README.md) | [Run guide](CONNECT_SETUP.md) | [Calibration and limits](JOINT_LIMITS_IMPLEMENTATION.md)
 
-Reviewed 2026-10-30. All three primary modes have been used on hardware by the owner. Behavior below is source-derived; this review did not operate hardware.
+Original implementation review: 2026-10-30; architecture/documentation reconciliation: 2026-11-05. The owner has used direct-axis, custom IK and plan modes on hardware and separately confirmed working fine movement/retraction in standalone LeRobot Pi IK. Behavior below is source-derived; this documentation review did not operate hardware or revalidate those reports.
 
 ## Entry points and ownership
 
@@ -148,4 +159,10 @@ LeRobot `RobotKinematics` loads the URDF with an explicit five-joint order and `
 
 The repository URDF uses meter/radian geometry and includes six revolute joints plus a fixed gripper frame. All 13 referenced assets/*.stl meshes are now included with their [license and provenance](../assets/README.md). The local URDF was structurally identical to the pinned upstream model during acquisition. Its limits differ from the exported hardware limits; an elbow comment mentions a five-degree calibration offset. Verify joint ordering, frames, zero conventions, gripper treatment, and measured FK before treating it as authoritative. More detailed geometry alone does not prove greater accuracy.
 
-The upstream wrapper does not configure collision avoidance. Future checking must cover self-collision, base/table/environment, and motion between targets, with explicit margins and failure behavior. Phone input should feed the new hardware owner rather than open another connection. Transport/UI/protocol choices remain future work; command arbitration and disconnect behavior belong in that design. See [TODO](../TODO.md).
+The upstream wrapper does not configure collision avoidance. The first PC-led release requires separate **self-collision and transition validation**, including robot base/gripper geometry, with explicit margins and failure behavior. **Table/environment checks are deferred**; the older combined collision backlog does not define the initial scope. The approved future **native Android app** will be a mutually exclusive input source connecting to the **PC gateway**, never directly to the Pi motor service; it is **not part of the first release**. The target transport/API and the separate PC-hosted dashboard are specified as design constraints in [PC–Pi architectural refactor](PC_PI_ARCHITECTURAL_REFACTOR.md), with actual transport choice pending benchmarks. All new commands must pass the same validated motion path. See [TODO](../TODO.md).
+
+### Standalone Pi IK feedback and dashboard
+
+The current LeRobot launcher runs input, FK/IK and serial ownership together on the Pi, targeting 50 Hz. `LeRobotIKController` reads measured joints for motion candidates; jaw-only input uses a separate normalized 0–50 command path. Neither route checks collisions. Accepted arm solutions are sent in full; the old `--no-joint-step-limit` flag remains accepted for compatibility, with no active 5° step filter. See [hardware lessons](context/IK_TELEOP_LESSONS.md).
+
+`scripts.lerobot_web_dashboard` serves read-only HTTP telemetry from the same legacy launcher, with measured joints, FK XYZ, gripper and gamepad state sampled at about 10 Hz. It is distinct from the Pygame dashboard/file IPC described above. HTTP handlers serve snapshots, while motor telemetry reads remain in the teleop loop. It is not the planned independent PC dashboard or network motor service. Controller loss exits teleop and normal cleanup disables torque; the new architecture's persistent Pi watchdog/hold/reconnect behavior does not exist in this path.

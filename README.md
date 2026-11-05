@@ -1,12 +1,25 @@
 # SO-101 robot arm workspace
 
+> **New architectural refactor approved (2026-11-05) — design, not implemented.** The PC will orchestrate Windows gamepad input, WSL2 LeRobot/PlaCo IK + self-collision and a PC-hosted monitoring dashboard; the Raspberry Pi will exclusively execute motor commands over Wi-Fi. **Existing scripts below remain legacy and should not be removed or broken.** The authoritative target is [PC–Pi architectural refactor](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md); implementation priorities and gates are in [PC–Pi implementation plan](readme_files/PC_PI_IMPLEMENTATION_PLAN.md). Where older plans conflict with these target documents, follow the new decisions, but retain accurate descriptions of existing behavior.
+
 This personal project controls a physical **SO-101 follower arm** using Python, a PlayStation-style gamepad, and LeRobot's Feetech hardware interface. It includes direct joint control, custom Cartesian inverse kinematics (IK), recorded motion playback, a desktop dashboard, calibration data, and offline tests.
 
 A separate Pi mode uses **LeRobot's URDF-based FK/IK with fine movement** and starts a LAN dashboard by default. Existing IK and plan modes retain their custom solver. See [LeRobot IK setup and controls](#lerobot-ik-raspberry-pi). Collision checking and phone control remain planned.
 
+## Architectural refactor: next implementation (not yet available)
+
+**Development resumes on the Windows PC, not on the Raspberry Pi.** Start with the [Phase 0 source audit and offline feasibility work](readme_files/PC_PI_IMPLEMENTATION_PLAN.md#phase-0--baseline-and-feasibility-gates-start-here). The existing Windows venv is a legacy baseline; the WSL2 solver environment still needs verification. The Pi remains the hardware runtime/reference, not the primary development host.
+
+The new path is an **addition**, initially gamepad-only: `Windows gamepad → PC gateway → WSL2 URDF/PlaCo IK + separate self-collision/path checks → LAN → Pi motor service → SO-101`, with measured joint feedback returning and a **PC-hosted read-only dashboard**. The PC launches/supervises the Pi service; brief Wi-Fi loss pauses safely without terminating it. Target 50 Hz; benchmark latency and safeguard execution before hardware use. The exact commands, transport and WSL environment are **not decided/implemented**; do not try the legacy commands below expecting this topology.
+
+**First release:** gamepad, gripper, collision-aware motion, motor-side limits/watchdog and reconnect, telemetry/dashboard, modular tests and latency instrumentation. **Later:** table collision, plan/presets migration, Android app/ArUco, remote phone authentication, robot camera and event-driven writes. The current independent direct-joint/custom IK/plan/LeRobot-Pi launchers stay available as legacy, subject to their existing safety limitations.
+
+See [approved architectural refactor](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md) and [phased tasks + acceptance tests](readme_files/PC_PI_IMPLEMENTATION_PLAN.md).
+
 ## Start here
 
-- [Connection and run guide](readme_files/CONNECT_SETUP.md): Raspberry Pi headless setup, Windows venv setup, alternate WSL instructions, and commands.
+- [PC–Pi architectural refactor](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md) and [implementation plan](readme_files/PC_PI_IMPLEMENTATION_PLAN.md): **authoritative new direction**, scope, safety/performance gates and phased work.
+- [Connection and run guide](readme_files/CONNECT_SETUP.md): **existing/legacy** Raspberry Pi headless setup, Windows venv setup, alternate WSL instructions, and commands.
 - [Architecture and control reference](readme_files/ARCHITECTURE.md): code ownership, controls, units, state, dashboard communication, and extension boundaries.
 - [Joint limits and calibration](readme_files/JOINT_LIMITS_IMPLEMENTATION.md): current limits and enforcement.
 - [Project status](readme_files/PROJECT_PROGRESS.md), [TODO](TODO.md), and [sources](readme_files/SOURCES.md).
@@ -23,11 +36,14 @@ A separate Pi mode uses **LeRobot's URDF-based FK/IK with fine movement** and st
 | Offline tests | 159-test historical baseline; venv validation below |
 | web_sim | Outdated standalone browser experiment; retained for historical reference |
 | LeRobot URDF FK/IK integration | Separate headless Pi mode; owner confirms working fine movement |
-| Collision avoidance / phone control | Planned; neither is implemented in the active control paths |
+| PC-led distributed control | Approved target; not implemented; development resumes on Windows |
+| Collision avoidance / phone control | Neither implemented; self-collision/path validation is first-release scope, phone control deferred |
 
 Hardware use of the prior setup is confirmed by the owner. The venv migration did not connect to or move the arm; physical validation of the new environment remains pending. Passing offline tests does not validate physical accuracy or collision safety.
 
 ## Run an existing mode
+
+**Legacy commands; not the new PC–Pi refactor.**
 
 From the repository root in the existing environment, choose **one**:
 
@@ -46,6 +62,8 @@ From the repository root in the existing environment, choose **one**:
 Replace COM3 with the actual adapter port. Windows automatic port selection currently returns COM3; it does not discover the arm. IK and plan launch their dashboard automatically. Only one process should own the robot connection, and IK/plan sessions also share runtime files. Read the [run guide](readme_files/CONNECT_SETUP.md) before operating the arm.
 
 ## Architecture
+
+**This section describes the currently implemented legacy paths.**
 
 ```text
 Gamepad -> gamepad_mapper -> teleop loop
@@ -68,12 +86,14 @@ RobotArm is a hardware-independent model: solving IK changes internal state. Rob
 | [controller/scripts/run_teleop.py](controller/scripts/run_teleop.py) | Input-profile example; does not send commands to the arm |
 | [calibration/](calibration/) | Project-local hardware calibration, degree-limit export, and conversion utility |
 | [so101_new_calib.urdf](so101_new_calib.urdf) | Model for the LeRobot IK mode; all 13 referenced meshes are in [assets/](assets/) |
-| [tests/](tests/) | Offline custom solver, model, and joint-limit tests |
+| [tests/](tests/) | Offline model/limits, hardware-adapter, gamepad, dashboard and conditional LeRobot IK regressions |
 | [web_sim/](web_sim/) | Early JavaScript FK/IK visualization, disconnected from Python/hardware |
 | [readme_files/](readme_files/) | Setup, implementation references, status, sources, historical design material |
 | .runtime/ | Ignored dashboard IPC and default saved-plan location |
 
 ## Setup
+
+**Existing environments only.** Resume development on Windows using the [setup guide](readme_files/CONNECT_SETUP.md#windows-setup). The Pi instructions below preserve the legacy environment; they are not a direction to resume development there. No distributed launcher or new-path setup commands exist yet.
 
 On the Raspberry Pi (Debian 13 ARM64), reuse `~/lerobot-env`. Install only the
 supplement with `~/lerobot-env/bin/python -m pip install -r requirements-pi.txt`.
@@ -101,6 +121,8 @@ mismatched hardware calibration stops connection instead of starting interactive
 
 ## LeRobot IK (Raspberry Pi)
 
+**Existing standalone Pi IK path (legacy); not the new WSL2/PC-led path.**
+
 In the existing Python 3.13 / LeRobot 0.6.1 Pi environment:
 
 ```bash
@@ -117,7 +139,8 @@ forward/backward and right/left; right stick controls height and wrist roll.
 Triggers control pitch, and D-pad up/down increases/decreases the gripper.
 Translation stays fixed relative to the base/table: model +X is forward, -Y
 is right, and +Z is up. Pitch/roll use tool-local axes with soft orientation
-tracking. Face-button presets and recording are deferred in [TODO](TODO.md).
+tracking. Face-button presets and recording are not implemented in this mode;
+migration of these features to the PC-led path is [deferred](TODO.md#deferred--not-in-initial-implementation).
 
 The LeRobot IK command starts the read-only browser dashboard by default and
 prints its URLs using the Pi's IPv4 addresses. Open a printed LAN URL on a phone
@@ -142,6 +165,8 @@ directly to the follower. Measured model alignment and collision checking remain
 pending.
 
 ## Tests and diagnostics
+
+The current suite includes custom-model tests, mocked hardware/teleop integration, gamepad mapping, read-only dashboard HTTP checks and [LeRobot IK regressions](tests/test_lerobot_ik.py). The LeRobot IK module is skipped unless LeRobot 0.6.1 is installed; real solver cases also require PlaCo. The legacy Windows LeRobot 0.4.0 baseline therefore does not run those IK cases. Check skips as well as passes; do not replace the Windows environment just to match historical Pi results. None of these tests verifies the future distributed runtime or physical collision safety.
 
 Run offline tests from the root:
 
@@ -171,10 +196,12 @@ Using the venv interpreter, `python -m robot_program.debug_env` reports environm
 
 ## Boundaries for future work
 
+The approved target and priority order are in [PC–Pi architectural refactor](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md) and [implementation plan](readme_files/PC_PI_IMPLEMENTATION_PLAN.md). In particular, the old proposal of phone input through the Pi dashboard is **superseded**; a **future native Android app** must connect to the PC gateway, with one controller active at a time. A PC-hosted monitoring dashboard replaces the Pi dashboard **only in the new path**.
+
 - Keep existing mode entry points, custom kinematics, calibration values, and dashboard behavior intact while adding the new path.
 - Unused guardrail helpers and the old web simulator provide no runtime protection. Current controls have joint/input checks but no self-, table-, or obstacle-collision checking.
 - Manual LB gating is not a universal motion stop: presets and plan playback can continue after LB release. Dashboard **Act** submits a direct joint target. See [motion protection boundaries](readme_files/ARCHITECTURE.md#motion-protection-boundaries).
 - Verify conversions: custom XYZ uses centimeters, URDF geometry uses meters, joint conventions need alignment, and LeRobot's gripper channel is normalized rather than degrees.
 - Follow [TODO](TODO.md). The previously reported second-pitch-joint/height discrepancy needs revalidation; it is not a confirmed current defect.
 
-Last reviewed: 2026-11-03.
+Documentation reconciled with local source and the proposed architecture: 2026-11-05. Dated test and hardware reports above remain historical evidence; no tests or hardware operations were performed in this documentation update.

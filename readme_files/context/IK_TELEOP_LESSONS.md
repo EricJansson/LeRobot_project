@@ -1,5 +1,8 @@
 # LeRobot IK teleop hardware lessons
 
+> **Required regression context for the PC-led refactor.** [Target architecture](../PC_PI_ARCHITECTURAL_REFACTOR.md) · [implementation plan](../PC_PI_IMPLEMENTATION_PLAN.md). The lesson is about real observed motion behavior, not just solver output. The new collision rejection and Pi hold/watchdog policy must be tested at the extended-arm pose; avoid reintroducing the former measured-joint 5° gate or repeated recapture of a sagging measured hold position.
+
+
 ## Extended-arm retraction
 
 The owner reported that the arm stalled near full extension and sometimes resumed after a physical assist. The legacy Cartesian controller could retract from the same kind of pose. In LeRobot mode, the console reported `IK rejected: joint step exceeds 5 degrees` during some stalls. That check came from the project controller. It rejected an entire solver candidate if any joint was more than 5° from its measured position.

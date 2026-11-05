@@ -1,16 +1,50 @@
-# TODO
+# TODO — approved PC-led architectural refactor
 
-Documentation baseline: 2026-10-30. Existing direct-axis, custom-IK, and plan modes are to remain intact. Unchecked tasks describe future implementation; completed asset acquisition is recorded below.
+**Updated 2026-11-05; design approved, implementation not yet started.** This is a **separate new control path**, not a rewrite of the existing direct-axis/custom IK/plan/standalone Pi LeRobot IK modes. Preserve those existing modes as legacy. The [architecture decision document](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md) has priority over older planned approaches; the [phased implementation plan](readme_files/PC_PI_IMPLEMENTATION_PLAN.md) specifies benchmarks, safety gates, tests and acceptance evidence. No physical motion without owner approval.
 
-- [x] Set up a Python 3.11 `.venv` with dependencies in `requirements.txt`, preserving custom motor tuning and existing calibration/controls. Validate offline; see [setup](readme_files/CONNECT_SETUP.md).
-- [x] Add a separate headless Pi mode using LeRobot URDF FK/IK and the working fine increments, preserving existing modes. See [setup and controls](README.md#lerobot-ik-raspberry-pi); physical model validation remains below.
-- [ ] Add joint presets to the LeRobot IK mode with synchronized interpolation, joint limits, and FK target resynchronization.
-- [ ] Add recording/playback to the LeRobot IK path while preserving joint MOVE/PAUSE actions, persistence, and cancellation controls.
-- [x] Obtain the 13 URDF-referenced assets/*.stl meshes and record their pinned upstream revision, checksums, and Apache-2.0 license; see [asset provenance](assets/README.md).
-- [ ] Validate the model against physical hardware: frames, zero conventions, motor direction, joint limits, elbow offset, and gripper representation. Resolve the existing normalized-gripper/degree-limit mismatch at the new integration boundary.
-- [ ] Implement and validate collision checking separately from IK: arm self-collision, base/table/environment, configurable clearance, and motion between targets. Define behavior for invalid/unreachable/colliding targets and verify offline before controlled hardware trials.
-- [ ] Add phone control through the Pi web dashboard with deliberate HTTP command submission, one hardware owner, command arbitration, stale-input/disconnect handling, and explicit stop behavior. Define the UI and command protocol during that implementation.
-- [x] Add read-only LeRobot IK telemetry for a PC or phone on the Pi's local network. See [launch instructions](README.md#lerobot-ik-raspberry-pi).
-- [ ] Revalidate the previously reported second-pitch-joint offset / end-effector height discrepancy using measured reference poses; record whether it persists before changing calibration or geometry.
+## Priority 0 — feasibility and baseline (FIRST)
 
-See [README](README.md), [architecture](readme_files/ARCHITECTURE.md), and [current environment/tuning](readme_files/CONNECT_SETUP.md).
+- [ ] Resume in the **Windows PC checkout**; audit source and actual runtime, preserve legacy and record existing tests/mappings and regression cases (especially extended-arm retraction). The documentation review is not a completed runtime/feasibility audit.
+- [ ] Check WSL2 LeRobot/PlaCo/URDF environment and model fit; benchmark IK speed on representative poses.
+- [ ] Verify Windows gamepad mapping, neutral triggers and deadman without motors; the existing Windows fallback is not a newly verified device profile.
+- [ ] Reconcile frames, zero conventions, motor directions, hardware/URDF limits, gripper normalization and the historical elbow/height discrepancy against recorded reference poses. Obtain owner approval for any new physical measurements; establish model alignment before live integration.
+- [ ] Find and validate a **separate self-collision + path checker**, not assumed to exist in LeRobot/PlaCo wrapper; establish geometry, margins and exclusions.
+- [ ] Measure Windows gamepad+WSL2 IPC offline; measure Pi motor read/write budget only with owner approval. Decide whether WSL2/PlaCo meets initial 50 Hz goals.
+
+## Priority 1 — new offline modular runtime
+
+- [ ] Implement Windows gamepad-only input/gateway, controller-neutral `MotionIntent` interface and **PC orchestrator** that will start the supervised Pi service remotely.
+- [ ] Implement WSL2 IK worker with actual-joint feedback, validated movement path, self-collision, explicit frame/unit conversions and separate gripper normalization.
+- [ ] Implement exclusive Pi motor-service skeleton (fake bus first): safe limits, one-session control, fresh sequenced commands, watchdog, bounded hold, reconnect/re-arm and structured telemetry.
+- [ ] Mock and test every boundary including malformed/stale/reordered commands, dashboard crash, IK rejection and Wi-Fi dropouts; no uncontrolled movement or torque disable on brief loss.
+
+## Priority 2 — integrated approved hardware control and monitoring
+
+- [ ] Integrate tuned `SO101Follower` on Pi only; verify calibration, motor serial ownership, gripper normalization, motor limits and stop/torque policy before movements.
+- [ ] Test low-speed gamepad IK and gripper, retraction from extended arm, actual feedback reconciliation, self-collision rejection, deadman, dropouts and startup/shutdown with owner approval.
+- [ ] Instrument 50 Hz scheduling, IK/collision time, IPC/network jitter, bus read/write and actual mechanical response (median/p95/p99/worst).
+- [ ] Implement **PC-hosted read-only web dashboard** with state, actual joints, requested/accepted targets, collision warnings, connectivity and performance; telemetry must not block control.
+- [ ] Document actual new-path setup commands and rollback, update progress/status, and test no breakage to legacy modes.
+
+## Deferred — not in initial implementation
+
+- [ ] Table collision: whole-arm geometry and paths above measured table plane, not only tool Z. No wall/furniture checks planned.
+- [ ] Port presets and recorded plan MOVE/PAUSE, looping, plan editing and safe cancellation through same validated executor.
+- [ ] Native Android controller app with virtual joystick and ArUco tracking. **No phone control in first implementation.** One active input source at a time; future phone enters through PC, not Pi dashboard.
+- [ ] Secure phone control from untrusted/public networks via authenticated/encrypted PC gateway, preferably private VPN/tunnel; never publish Pi motor endpoint.
+- [ ] Robot-mounted Pi camera feed to PC through a separately scheduled/isolated stream.
+- [ ] Evaluate event-driven Pi motor writes under safe maximum bus rate and compare against fixed 50 Hz.
+- [ ] Consider native-Windows IK or other library only if WSL2/PlaCo proves inadequate in reliability, collision functionality or measured performance.
+
+## Completed legacy preparation (preserved history)
+
+- [x] Python 3.11 Windows venv baseline, calibration/tuning retained, offline tests documented. See [setup](readme_files/CONNECT_SETUP.md).
+- [x] Separate headless Raspberry Pi LeRobot URDF IK mode with working fine increments. It remains **legacy**, not the final distributed pipeline.
+- [x] Acquired the 13 URDF-referenced meshes and recorded provenance/checksums/license; see [assets](assets/README.md).
+- [x] Implemented a read-only Pi-hosted legacy LeRobot IK dashboard. It is **not** the target PC-hosted monitoring dashboard.
+
+## Superseded proposals (historical context)
+
+The previous backlog proposed phone commands through the Pi web dashboard, combined self/table/environment collision work, and presets/recording for standalone Pi IK. The approved target replaces phone-through-Pi control with a deferred Android-to-PC gateway, prioritizes self-collision and transition validation first, and defers table checks and plan/preset migration. These older proposals were not completed features; their historical intent does not determine the next implementation order.
+
+**Important known gaps:** No validated self-collision in current active control modes; current plan playback is not collision-aware; legacy dashboard Act and presets can bypass manual LB hold; `gripper` normalized-unit handling differs from degree-limit export; physical model and path accuracy require measurement. See [legacy architecture](readme_files/ARCHITECTURE.md), [calibration](readme_files/JOINT_LIMITS_IMPLEMENTATION.md) and [IK hardware lessons](readme_files/context/IK_TELEOP_LESSONS.md).

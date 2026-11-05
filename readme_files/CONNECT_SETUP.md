@@ -1,8 +1,32 @@
 # Connection and run guide
 
+> **Development resumes on the Windows PC, not on the Raspberry Pi.** Current commands here run existing legacy modes and diagnostics. The approved PC-started Windows→WSL2 IK/self-collision→Pi motor service is **not yet implemented**. Do not interpret `usbipd` WSL USB-forwarding or Pi-connected gamepad steps below as instructions for the new design. See [target architecture](PC_PI_ARCHITECTURAL_REFACTOR.md) and [implementation phases](PC_PI_IMPLEMENTATION_PLAN.md). New-path commands will be documented when implemented and verified; Phase 5 consolidates rollout instructions.
+
 [Home](../README.md) | [Architecture and controls](ARCHITECTURE.md) | [Sources](SOURCES.md)
 
+## Resuming development on Windows
+
+Use the Windows checkout for source review, editing and offline verification. Start with [Phase 0](PC_PI_IMPLEMENTATION_PLAN.md#phase-0--baseline-and-feasibility-gates-start-here), not a Pi-local feature implementation. The Windows venv below preserves the legacy baseline. Provision and verify a **separate WSL2 Linux solver environment** during Phase 0; neither Windows LeRobot 0.4.0 requirements nor the Pi's ARM64 CPU package pins establish a compatible WSL2 stack.
+
+For the new path, connect the gamepad to Windows and leave the motor adapter on the Pi. WSL2 will compute motion and self-collision/path checks without owning USB serial. The future Windows supervisor will start a supervised Pi motor service over the LAN; that launcher/service does not exist yet. Keep the existing Pi environment/calibration as the hardware reference, and defer hardware operations until owner-approved tests.
+
+## Windows setup
+
+**Existing Windows baseline; this does not install the proposed distributed runtime.**
+
+Use Python 3.11 and a normal project venv. From the repository root:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+If the Python launcher is unavailable, use the path to your installed Python 3.11 executable in place of `py -3.11`. Create the environment once; activate it when opening a new terminal. Dependencies are listed in `requirements.txt`. Optional test and development tools are in `requirements-dev.txt`. Use the [offline diagnostics](#motor-reading-and-offline-diagnostics) for the legacy baseline; a passing baseline does not verify the proposed distributed runtime.
+
 ## Raspberry Pi (Debian 13 ARM64)
+
+**Legacy Pi environment and local controller instructions.**
 
 Use the existing `~/lerobot-env` with Python 3.13.5, LeRobot 0.6.1,
 Torch 2.11.0+cpu, and torchvision 0.26.0+cpu. Windows retains its separate
@@ -157,19 +181,9 @@ optional and deferred on Linux; gamepad modes do not require that package.
 The already tested USB camera needs no changes because these modes configure
 no cameras.
 
-## Windows setup
-
-Use Python 3.11 and a normal project venv. From the repository root:
-
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
-
-If the Python launcher is unavailable, use the path to your installed Python 3.11 executable in place of `py -3.11`. Create the environment once; activate it when opening a new terminal. Dependencies are listed in `requirements.txt`. Optional test and development tools are in `requirements-dev.txt`.
-
 ## Run the arm
+
+**Legacy instructions only. Physical operation requires owner approval.**
 
 For hardware use, connect arm power, the Feetech/CH343 USB adapter, and the controller. Keep the existing adapter driver; install its vendor driver if Device Manager does not expose a COM port. Identify the adapter under Device Manager → Ports (COM & LPT). Choose exactly one mode and substitute the actual port and gamepad index:
 
@@ -211,7 +225,7 @@ python -m pytest -q -o addopts= --tb=short
 
 The calibration validator prints Unicode symbols; `-X utf8` avoids encoding errors in Windows terminals using a legacy code page.
 
-The offline suite covers the custom solver, joint limits, motor configuration, and command-line entry points. Hardware behavior still needs physical validation.
+The offline suite covers the custom solver, joint limits, motor configuration, command-line entry points, mocked teleop integration, gamepad mapping and read-only web telemetry. LeRobot IK tests require LeRobot 0.6.1 and are skipped in the legacy Windows 0.4.0 environment; real solver cases additionally require PlaCo. Review skipped tests before comparing counts across environments. These checks do not validate the proposed distributed runtime; hardware behavior still needs physical validation.
 
 The motor reader **does connect to hardware**. Default torque off disables torque so the arm can be moved by hand:
 
@@ -222,6 +236,8 @@ python -m robot_program.read_motors --port COM3 --torque off
 Its displayed Degrees column uses the exported normalized-to-degree conversion. The --deg flag changes bus output units, but the script still applies that conversion; do not treat that column with --deg as authoritative measured angles. This is a known diagnostic limitation, not corrected by this documentation change.
 
 ## WSL 2 alternate setup
+
+**Legacy USB-forwarding option, not the new architecture.** The new WSL2 worker will not own the motor serial bus.
 
 Windows and WSL cannot simultaneously own the USB serial adapter. Close other control sessions before handing it over.
 

@@ -1,5 +1,8 @@
 # Phi adaptation and offline tests
 
+> **Legacy custom IK only.** The custom-IK tests documented here do not validate LeRobot/PlaCo URDF IK, self-collision, WSL2 IPC, Pi network motor control, or end-to-end latency. The complete repository suite also contains other regressions; see [current test scope and dependency skips](../README.md#tests-and-diagnostics). The planned PC-led architecture has its own gates in [PC–Pi implementation plan](PC_PI_IMPLEMENTATION_PLAN.md); preserve the custom tests unchanged as a legacy regression baseline.
+
+
 [Home](../README.md) | [Architecture](ARCHITECTURE.md) | [Joint limits](JOINT_LIMITS_IMPLEMENTATION.md)
 
 Reviewed 2026-10-30. This describes current custom-solver tests, replacing historical illustrative transcripts and unsupported blanket accuracy/coverage claims.

@@ -16,4 +16,6 @@ The local URDF and upstream URDF at that revision are structurally identical aft
 
 Every URDF mesh reference resolves to a downloaded file. All 13 files passed binary STL length/triangle-count checks and finite normal/vertex checks; total STL size is 16,129,292 bytes. These checks establish basic file integrity, not watertightness, physical accuracy, or suitability for a particular collision engine. STL has no intrinsic unit declaration; validate scale against the URDF and hardware before use.
 
-The current teleop paths still do not load this model or check collisions. Acquisition does not enable self-collision avoidance. Model alignment, collision-pair selection, clearance, motion checking, and collision-engine integration remain future work; see [TODO](../TODO.md).
+The standalone [LeRobot Pi IK mode](../README.md#lerobot-ik-raspberry-pi) loads this URDF for FK/IK; direct-axis and custom IK/plan modes do not use it. None of the active paths checks collisions. Mesh acquisition and URDF loading do not enable self-collision avoidance.
+
+The approved [PC-led architecture](../readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md) will reuse the model in a provisional WSL2 motion worker, with separate self-collision and transition validation. Model alignment, collision-pair selection, clearance margins and collision-engine integration must be verified first; table/environment checking is deferred. Development resumes on Windows; see the [implementation plan](../readme_files/PC_PI_IMPLEMENTATION_PLAN.md).
