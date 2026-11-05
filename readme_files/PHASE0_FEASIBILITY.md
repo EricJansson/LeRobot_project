@@ -248,6 +248,58 @@ verified**. No Pi serial timing was collected. The historical ~2.78 ms six-motor
 read figure remains reported background, not a reproduced result or a write/read
 cycle measurement. There is no end-to-end 50 Hz or motion-latency claim.
 
+## Follow-up on collision exclusions and sampling
+
+**OFFLINE VERIFIED.** The audit swept each of the six excluded hinges over its
+modeled range at steps of at most 1°, with zero included explicitly. It used the
+intersected LeRobot limits for the arm and URDF angles for the jaw. Of 36 omitted
+mesh pairs, six intersected at every sampled angle and four more intersected
+away from neutral. The latter intersections would go unreported with blanket
+adjacent-link exclusions.
+
+| Joint | Additional intersecting meshes | Observed samples |
+|---|---|---|
+| Elbow flex | Upper arm shell against the lower arm shell, wrist motor holder and lower arm servo | Three distinct pairs, first hit at +90.84°, +92.84° or +96.83° depending on the pair |
+| Wrist roll | Gripper wrist-roll follower against the wrist roll/pitch piece | Five samples between −146.25° and −115.34° |
+
+The mesh-level experiment re-enabled 30 pairs and kept the six persistent
+overlaps excluded. The original 85-pair link mask accepted all eight fixed-feedback
+retraction paths at every tested margin. The narrower mask checked 115 pairs
+and accepted all eight paths at zero margin. At 2 mm and 5 mm it rejected all
+eight at the same extended starting pose. At 2 mm, the gripper follower was
+within the threshold of both the moving jaw and the wrist roll/pitch piece.
+The jaw was held at zero URDF degrees throughout the comparison. This points
+to a need for pair-specific contact and margin review before choosing a mask
+that preserves retraction. Physical interpretation of the mesh contacts remains
+open.
+
+The existing 85-pair checker classified 1,280 seeded paths with at most 4° of
+change per joint. The corpus includes 512 uniformly seeded paths and 768 paths
+near sampled collision boundaries of the saved transition. The 2°, 1°, 0.5° and
+0.125° grids agreed on every path at each margin. The finer grid provides a
+sampled comparison and can miss contact between samples too.
+
+| Margin | Rejected paths out of 1,280 | 0.5° p99 / worst | 0.125° p99 / worst |
+|---|---:|---:|---:|
+| 0 mm | 496 | 1.859 / 3.390 ms | 5.976 / 9.841 ms |
+| 2 mm | 584 | 2.600 / 4.908 ms | 8.059 / 14.846 ms |
+| 5 mm | 704 | 3.070 / 15.070 ms | 9.747 / 51.437 ms |
+
+One 0.125° / 5 mm path check exceeded 20 ms on this run. These are collision
+path times, with IK and IPC outside the measurement. Any eventual validator
+needs a latency budget that leaves room for those other stages. The 17 existing
+feasibility regressions passed in the isolated WSL stack.
+
+Rerun from WSL in the checkout using the existing isolated environment.
+
+```bash
+"$HOME/.local/share/lerobot-phase0/venv/bin/python" -m scripts.phase0_collision_audit \
+  --output .runtime/phase0_collision_audit.json
+```
+
+The [audit data](phase0_results/wsl_collision_audit.json) records individual hit
+angles, raw timings, seeded corpus settings, source hashes and replay outcomes.
+
 ## Decisions, remaining gates and rollback
 
 Retain WSL2/PlaCo provisionally for IK. Reject exact all-pair distances as the
