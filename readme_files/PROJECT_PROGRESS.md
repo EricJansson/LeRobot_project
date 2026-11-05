@@ -5,7 +5,7 @@
 
 [Home](../README.md) | [Architecture](ARCHITECTURE.md) | [TODO](../TODO.md)
 
-Original implementation review: 2026-10-30. Documentation reconciled with local source and the proposed plans on 2026-11-05. Hardware status comes from the owner; implementation status comes from source inspection. This update changed documentation only: no tests, runtime installation, robot commands or motor-register operations were performed.
+Original implementation review: 2026-10-30. Documentation reconciled with local source and the proposed plans on 2026-11-05. Hardware status comes from the owner; implementation status comes from source inspection. That documentation review performed no runtime tests, installation, robot commands or motor-register operations. The subsequent offline asset synchronization is recorded below.
 
 ## Historical work
 
@@ -54,5 +54,6 @@ Earlier plans centered on Pi-local LeRobot IK, combined self/table/environment c
 - **2026-11-02 — OFFLINE:** 204 tests passed on the Pi with Python 3.13.5 / LeRobot 0.6.1; `pip check` and calibration arithmetic passed. Serial connections were blocked and no physical gamepad was exposed. These results do not validate the future PC-led runtime.
 - **2026-11-02 — owner-approved calibration synchronization:** The completed Pi LeRobot calibration was copied unchanged into the project and the degree export regenerated. No recalibration or motor-register writes were performed by that synchronization. The controller loads calibration directly from the project.
 - **Subsequent owner hardware reports (not newly tested here):** Standalone LeRobot Pi IK fine movement worked. Full IK commands restored extended-arm retraction; both the old measured-joint 5° rejection and coordinated 5° partial commands had stalled. Preserve this evidence separately from passing mocks; see [IK hardware lessons](context/IK_TELEOP_LESSONS.md).
+- **2026-11-05 — OFFLINE asset synchronization:** Copied all 13 reduced STLs and `SOURCES.json` from `IK-collision` commit `e836a3ede4df3d8e7d4c022fc47cb25ac46e9032`. Total size fell from 16,129,292 to 1,968,242 bytes; triangle count fell from 322,564 to 39,343. URDF changes were limited to line endings so its bytes match the manifest. File/manifest integrity checks do not validate physical clearance or implement collision avoidance. No hardware was operated.
 
 Physical model alignment, collision validation, gripper conversion and the proposed stop/hold policy remain open. Migration test results and owner motion reports have different scopes; neither proves the target architecture or collision safety. See [README verification history](../README.md#tests-and-diagnostics) and [current priorities](../TODO.md).

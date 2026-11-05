@@ -41,6 +41,7 @@
 - [x] Python 3.11 Windows venv baseline, calibration/tuning retained, offline tests documented. See [setup](readme_files/CONNECT_SETUP.md).
 - [x] Separate headless Raspberry Pi LeRobot URDF IK mode with working fine increments. It remains **legacy**, not the final distributed pipeline.
 - [x] Acquired the 13 URDF-referenced meshes and recorded provenance/checksums/license; see [assets](assets/README.md).
+- [x] Replaced all 13 STLs with the reduced `IK-collision` asset set and matching source manifest; preserved the model geometry and verified file integrity offline. Physical clearance validation remains open.
 - [x] Implemented a read-only Pi-hosted legacy LeRobot IK dashboard. It is **not** the target PC-hosted monitoring dashboard.
 
 ## Superseded proposals (historical context)
