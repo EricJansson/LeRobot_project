@@ -1,0 +1,85 @@
+{
+  "seed": 0,
+  "search_limit": 2000,
+  "poses_searched": 1146,
+  "clear": {
+    "joints_deg": [
+      30.131537040418735,
+      -46.04267697998907,
+      -88.89494559968004,
+      -91.85959471195198,
+      103.03574985023604,
+      90.4031135005494
+    ],
+    "colliding": false,
+    "margin_m": 0.0,
+    "min_distance_m": null,
+    "distance_pair_count": 85,
+    "backend": "Pinocchio/Coal security_margin predicate, stop at first collision"
+  },
+  "colliding": {
+    "joints_deg": [
+      25.384695738671965,
+      -23.264499118217557,
+      96.2895442821005,
+      91.35856067275797,
+      62.16266154961994,
+      61.55052038945979
+    ],
+    "colliding": true,
+    "margin_m": 0.0,
+    "min_distance_m": null,
+    "distance_pair_count": 85,
+    "backend": "Pinocchio/Coal security_margin predicate, stop at first collision"
+  },
+  "near": {
+    "joints_deg": [
+      -106.28476479876878,
+      -92.60422624048607,
+      89.1881279007303,
+      -68.30224376412288,
+      -140.28384890921907,
+      96.8346311072077
+    ],
+    "colliding": false,
+    "margin_m": 0.0,
+    "min_distance_m": null,
+    "distance_pair_count": 85,
+    "backend": "Pinocchio/Coal security_margin predicate, stop at first collision"
+  },
+  "interior_collision": {
+    "start": [
+      -20.95475666293774,
+      84.40178792398471,
+      36.23978012146323,
+      32.72677402676996,
+      70.65908487285986,
+      49.60106765678082
+    ],
+    "end": [
+      91.04418364055239,
+      -4.7705876508063625,
+      70.45074695809556,
+      38.29796312216219,
+      -63.15515503262296,
+      74.4417496981821
+    ],
+    "result": {
+      "accepted": false,
+      "reason": "collision_or_margin",
+      "checked_samples": 30,
+      "total_samples": 68,
+      "min_distance_m": null,
+      "rejected_fraction": 0.43283582089552236
+    }
+  },
+  "joint_order": [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_roll",
+    "gripper"
+  ],
+  "jaw_units": "URDF degrees only; NOT a normalized motor mapping"
+}

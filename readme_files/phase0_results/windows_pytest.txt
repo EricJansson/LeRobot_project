@@ -1,0 +1,41 @@
+.............................................................sssssssssss [ 28%]
+ssssssssssssssssssF.............ss...................................... [ 56%]
+........................................................................ [ 85%]
+.....................................                                    [100%]
+================================== FAILURES ===================================
+______________________ test_dashboard_http_and_shutdown _______________________
+
+    def test_dashboard_http_and_shutdown():
+        try:
+            dashboard = WebDashboard("127.0.0.1", 0)
+        except PermissionError:
+            pytest.skip("Local sockets are disabled in this environment")
+    
+        with dashboard:
+            with pytest.raises(OSError):
+                with WebDashboard("127.0.0.1", dashboard.port):
+>                   pytest.fail("Second bind unexpectedly succeeded")
+E                   Failed: Second bind unexpectedly succeeded
+
+tests\test_lerobot_web_dashboard.py:19: Failed
+=========================== short test summary info ===========================
+SKIPPED [1] tests\test_lerobot_ik.py:62: Pi IK targets LeRobot 0.6.1
+SKIPPED [3] tests\test_lerobot_ik.py:72: Pi IK targets LeRobot 0.6.1
+SKIPPED [1] tests\test_lerobot_ik.py:81: Pi IK targets LeRobot 0.6.1
+SKIPPED [1] tests\test_lerobot_ik.py:90: Pi IK targets LeRobot 0.6.1
+SKIPPED [1] tests\test_lerobot_ik.py:106: Pi IK targets LeRobot 0.6.1
+SKIPPED [1] tests\test_lerobot_ik.py:115: Pi IK targets LeRobot 0.6.1
+SKIPPED [4] tests\test_lerobot_ik.py:131: Pi IK targets LeRobot 0.6.1
+SKIPPED [1] tests\test_lerobot_ik.py:144: Pi IK targets LeRobot 0.6.1
+SKIPPED [3] tests\test_lerobot_ik.py:159: Pi IK targets LeRobot 0.6.1
+SKIPPED [1] tests\test_lerobot_ik.py:183: Pi IK targets LeRobot 0.6.1
+SKIPPED [1] tests\test_lerobot_ik.py:205: Pi IK targets LeRobot 0.6.1
+SKIPPED [1] tests\test_lerobot_ik.py:228: Pi IK targets LeRobot 0.6.1
+SKIPPED [1] tests\test_lerobot_ik.py:246: Pi IK targets LeRobot 0.6.1
+SKIPPED [2] tests\test_lerobot_ik.py:273: Pi IK targets LeRobot 0.6.1
+SKIPPED [1] tests\test_lerobot_ik.py:307: Pi IK targets LeRobot 0.6.1
+SKIPPED [6] tests\test_lerobot_ik.py:313: Pi IK targets LeRobot 0.6.1
+SKIPPED [1] tests\test_phase0_feasibility.py:94: Requires isolated Linux PlaCo environment
+SKIPPED [1] tests\test_phase0_feasibility.py:115: Requires isolated Linux PlaCo environment
+FAILED tests/test_lerobot_web_dashboard.py::test_dashboard_http_and_shutdown
+1 failed, 221 passed, 31 skipped in 54.67s

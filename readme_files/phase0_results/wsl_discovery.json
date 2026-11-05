@@ -1,0 +1,568 @@
+{
+  "status": "OFFLINE VERIFIED",
+  "timestamp_utc": "2026-11-05T15:52:39.115211+00:00",
+  "mode": "discover",
+  "environment": {
+    "status": "OFFLINE VERIFIED",
+    "python": "3.12.12 (main, Oct 28 2025, 12:10:49) [Clang 20.1.4 ]",
+    "executable": "/home/eric_wsl/.local/share/lerobot-phase0/venv/bin/python",
+    "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+    "machine": "x86_64",
+    "cpu": "Intel(R) Core(TM) i5-14400F",
+    "logical_cpus": 16,
+    "packages": {
+      "Farama-Notifications": "0.0.6",
+      "Jinja2": "3.1.6",
+      "MarkupSafe": "3.0.4",
+      "PyYAML": "6.0.3",
+      "Pygments": "2.21.0",
+      "anyio": "4.16.0",
+      "asttokens": "3.0.2",
+      "certifi": "2026.10.23",
+      "charset-normalizer": "3.5.2",
+      "click": "8.5.0",
+      "cloudpickle": "3.1.2",
+      "cmake": "4.1.3",
+      "cmeel": "0.62.0",
+      "cmeel-assimp": "5.4.3.1",
+      "cmeel-boost": "1.87.0.1",
+      "cmeel-console-bridge": "1.0.2.3",
+      "cmeel-octomap": "1.10.0",
+      "cmeel-qhull": "8.0.2.1",
+      "cmeel-tinyxml2": "10.0.0",
+      "cmeel-urdfdom": "4.0.1",
+      "cmeel-zlib": "1.3.2",
+      "coal-library": "3.0.1",
+      "deepdiff": "8.6.2",
+      "draccus": "0.11.6",
+      "eigenpy": "3.10.3",
+      "einops": "0.8.2",
+      "eiquadprog": "1.2.9",
+      "executing": "2.3.0",
+      "feetech-servo-sdk": "1.0.0",
+      "filelock": "4.2.9",
+      "fsspec": "2026.9.0",
+      "gymnasium": "1.4.0",
+      "h11": "0.16.0",
+      "hf-xet": "1.8.0",
+      "httpcore": "1.0.9",
+      "httpx": "0.28.1",
+      "huggingface_hub": "1.33.0",
+      "idna": "3.20",
+      "iniconfig": "2.3.1",
+      "ipython": "9.18.1",
+      "ipython_pygments_lexers": "1.1.1",
+      "ischedule": "1.2.7",
+      "jedi": "0.20.1",
+      "keyboard": "0.13.5",
+      "lerobot": "0.6.1",
+      "matplotlib-inline": "0.2.2",
+      "mergedeep": "1.3.4",
+      "meshcat": "0.3.2",
+      "mpmath": "1.3.0",
+      "mypy_extensions": "1.2.0",
+      "networkx": "3.7",
+      "numpy": "2.2.6",
+      "opencv-python-headless": "4.13.0.92",
+      "orderly-set": "5.5.0",
+      "packaging": "25.0",
+      "parso": "0.8.7",
+      "pexpect": "4.9.0",
+      "pillow": "12.3.0",
+      "pin": "3.4.0",
+      "placo": "0.9.15",
+      "pluggy": "1.7.0",
+      "prompt_toolkit": "3.0.53",
+      "psutil": "7.2.2",
+      "ptyprocess": "0.7.0",
+      "pure_eval": "0.2.4",
+      "pygame": "2.6.1",
+      "pyngrok": "9.1.2",
+      "pyserial": "3.5",
+      "pytest": "8.4.2",
+      "pyzmq": "27.3.0",
+      "requests": "2.34.2",
+      "rhoban-cmeel-jsoncpp": "1.9.4.9",
+      "safetensors": "0.8.0",
+      "setuptools": "81.0.0",
+      "stack-data": "0.6.3",
+      "sympy": "1.14.0",
+      "termcolor": "3.3.0",
+      "toml": "0.10.2",
+      "torch": "2.7.1+cpu",
+      "torchvision": "0.22.1+cpu",
+      "tornado": "6.6",
+      "tqdm": "4.70.1",
+      "traitlets": "5.16.1",
+      "typing-inspect": "0.9.0",
+      "typing_extensions": "4.16.0",
+      "u-msgpack-python": "2.8.0",
+      "urllib3": "2.8.0",
+      "wcwidth": "0.9.4"
+    }
+  },
+  "benchmarks": {},
+  "source_sha256": {
+    "scripts/phase0_benchmark.py": "74b621c7298260dc098c53fbd8227f99274c7f6b97197e1c453ea67d96bb511c",
+    "robot_program/phase0_feasibility.py": "45ea71774440869851c8e44c5048c8e14e00f1365180c6f0cb0177ba2dd8b461",
+    "robot_program/lerobot_ik_controller.py": "173462c3d590bf4b4ee0d9cbf0fc842d102ad531dfbedecaac7ab53b5526d743"
+  },
+  "invocation": [
+    "/mnt/c/Users/rapid/Documents/GitHub/LeRobot_project/scripts/phase0_benchmark.py",
+    "--mode",
+    "discover",
+    "--output",
+    "readme_files/phase0_results/wsl_discovery.json"
+  ],
+  "hardware": "NOT RUN",
+  "phase1_gate": "NOT APPROVED",
+  "model": {
+    "status": "OFFLINE VERIFIED",
+    "urdf_sha256": "3a65d2d35e68a8d2f0c2cc176d19b884506543c93ba72980145b80abe276022c",
+    "calibration_sha256": {
+      "lerobot_arm.json": "542352cd58b5ee6971d06e367caa45a200d80c5dfe9b602cb9d84190f74a67eb",
+      "lerobot_arm_with_degrees.json": "4993c867e32b433aace9c81f3b442b22155d92b44c8ea8a811e07c632b2e35ba"
+    },
+    "mesh_count": 13,
+    "collision_instances": 17,
+    "mesh_triangles": 39343,
+    "mesh_bytes": 1968242,
+    "links": [
+      "base_link",
+      "shoulder_link",
+      "upper_arm_link",
+      "lower_arm_link",
+      "wrist_link",
+      "gripper_link",
+      "gripper_frame_link",
+      "moving_jaw_so101_v1_link"
+    ],
+    "joints": [
+      {
+        "name": "gripper_frame_joint",
+        "type": "fixed",
+        "parent": "gripper_link",
+        "child": "gripper_frame_link",
+        "origin": {
+          "xyz": "-0.0079 -0.000218121 -0.0981274",
+          "rpy": "0 3.14159 0"
+        },
+        "axis": {
+          "xyz": "0 0 0"
+        },
+        "limit": {}
+      },
+      {
+        "name": "gripper",
+        "type": "revolute",
+        "parent": "gripper_link",
+        "child": "moving_jaw_so101_v1_link",
+        "origin": {
+          "xyz": "0.0202 0.0188 -0.0234",
+          "rpy": "1.5708 -5.24284e-08 -1.41553e-15"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-0.174533",
+          "upper": "1.74533"
+        }
+      },
+      {
+        "name": "wrist_roll",
+        "type": "revolute",
+        "parent": "wrist_link",
+        "child": "gripper_link",
+        "origin": {
+          "xyz": "5.55112e-17 -0.0611 0.0181",
+          "rpy": "1.5708 0.0486795 3.14159"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-2.74385",
+          "upper": "2.84121"
+        }
+      },
+      {
+        "name": "wrist_flex",
+        "type": "revolute",
+        "parent": "lower_arm_link",
+        "child": "wrist_link",
+        "origin": {
+          "xyz": "-0.1349 0.0052 3.62355e-17",
+          "rpy": "4.02456e-15 8.67362e-16 -1.5708"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.65806",
+          "upper": "1.65806"
+        }
+      },
+      {
+        "name": "elbow_flex",
+        "type": "revolute",
+        "parent": "upper_arm_link",
+        "child": "lower_arm_link",
+        "origin": {
+          "xyz": "-0.11257 -0.028 1.73763e-16",
+          "rpy": "-3.63608e-16 8.74301e-16 1.5708"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.69",
+          "upper": "1.69"
+        }
+      },
+      {
+        "name": "shoulder_lift",
+        "type": "revolute",
+        "parent": "shoulder_link",
+        "child": "upper_arm_link",
+        "origin": {
+          "xyz": "-0.0303992 -0.0182778 -0.0542",
+          "rpy": "-1.5708 -1.5708 0"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.74533",
+          "upper": "1.74533"
+        }
+      },
+      {
+        "name": "shoulder_pan",
+        "type": "revolute",
+        "parent": "base_link",
+        "child": "shoulder_link",
+        "origin": {
+          "xyz": "0.0388353 -8.97657e-09 0.0624",
+          "rpy": "3.14159 4.18253e-17 -3.14159"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.91986",
+          "upper": "1.91986"
+        }
+      }
+    ],
+    "physical_alignment": "UNVERIFIED: no new hardware measurements"
+  },
+  "limits_deg": {
+    "shoulder_pan": [
+      -109.99987525598623,
+      109.99987525598623
+    ],
+    "shoulder_lift": [
+      -100.00004285756798,
+      100.00004285756798
+    ],
+    "elbow_flex": [
+      -96.82986737710912,
+      96.82986737710912
+    ],
+    "wrist_flex": [
+      -94.99984017946129,
+      94.99984017946129
+    ],
+    "wrist_roll": [
+      -157.21102461697095,
+      162.78934171036462
+    ]
+  },
+  "synthetic_collision_proof": [
+    {
+      "separation_m": 0.05,
+      "colliding": true,
+      "min_distance_m": -0.050000000005
+    },
+    {
+      "separation_m": 0.3,
+      "colliding": false,
+      "min_distance_m": 0.199999999995
+    }
+  ],
+  "native_margin_proof": [
+    {
+      "separation_m": 0.05,
+      "margin_m": 0.0,
+      "colliding": true
+    },
+    {
+      "separation_m": 0.3,
+      "margin_m": 0.0,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.101,
+      "margin_m": 0.0,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.101,
+      "margin_m": 0.002,
+      "colliding": true
+    },
+    {
+      "separation_m": 0.104,
+      "margin_m": 0.002,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.104,
+      "margin_m": 0.005,
+      "colliding": true
+    }
+  ],
+  "native_mesh_margin_proof": [
+    {
+      "separation_m": 0.05,
+      "margin_m": 0.0,
+      "colliding": true
+    },
+    {
+      "separation_m": 0.3,
+      "margin_m": 0.0,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.101,
+      "margin_m": 0.0,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.101,
+      "margin_m": 0.002,
+      "colliding": true
+    },
+    {
+      "separation_m": 0.104,
+      "margin_m": 0.002,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.104,
+      "margin_m": 0.005,
+      "colliding": true
+    }
+  ],
+  "collision_policy": {
+    "status": "EXPERIMENTAL, not hardware validated",
+    "backend": "native-margin",
+    "included_link_pairs": [
+      [
+        "base_link",
+        "gripper_link"
+      ],
+      [
+        "base_link",
+        "lower_arm_link"
+      ],
+      [
+        "base_link",
+        "moving_jaw_so101_v1_link"
+      ],
+      [
+        "base_link",
+        "upper_arm_link"
+      ],
+      [
+        "base_link",
+        "wrist_link"
+      ],
+      [
+        "gripper_link",
+        "lower_arm_link"
+      ],
+      [
+        "gripper_link",
+        "shoulder_link"
+      ],
+      [
+        "gripper_link",
+        "upper_arm_link"
+      ],
+      [
+        "lower_arm_link",
+        "moving_jaw_so101_v1_link"
+      ],
+      [
+        "lower_arm_link",
+        "shoulder_link"
+      ],
+      [
+        "moving_jaw_so101_v1_link",
+        "shoulder_link"
+      ],
+      [
+        "moving_jaw_so101_v1_link",
+        "upper_arm_link"
+      ],
+      [
+        "moving_jaw_so101_v1_link",
+        "wrist_link"
+      ],
+      [
+        "shoulder_link",
+        "wrist_link"
+      ],
+      [
+        "upper_arm_link",
+        "wrist_link"
+      ]
+    ],
+    "excluded_link_pairs": [
+      {
+        "links": [
+          "base_link",
+          "shoulder_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      },
+      {
+        "links": [
+          "gripper_link",
+          "moving_jaw_so101_v1_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      },
+      {
+        "links": [
+          "gripper_link",
+          "wrist_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      },
+      {
+        "links": [
+          "lower_arm_link",
+          "upper_arm_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      },
+      {
+        "links": [
+          "lower_arm_link",
+          "wrist_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      },
+      {
+        "links": [
+          "shoulder_link",
+          "upper_arm_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      }
+    ],
+    "same_link": "Same-link geometry belongs to one rigid body; not self-tested",
+    "jaw": "Sixth coordinate is a URDF degree angle, not normalized motor feedback",
+    "distance_pair_count_at_zero": 85
+  },
+  "robot_fixtures": {
+    "seed": 0,
+    "search_limit": 2000,
+    "poses_searched": 1146,
+    "clear": {
+      "joints_deg": [
+        30.131537040418735,
+        -46.04267697998907,
+        -88.89494559968004,
+        -91.85959471195198,
+        103.03574985023604,
+        90.4031135005494
+      ],
+      "colliding": false,
+      "margin_m": 0.0,
+      "min_distance_m": null,
+      "distance_pair_count": 85,
+      "backend": "Pinocchio/Coal security_margin predicate, stop at first collision"
+    },
+    "colliding": {
+      "joints_deg": [
+        25.384695738671965,
+        -23.264499118217557,
+        96.2895442821005,
+        91.35856067275797,
+        62.16266154961994,
+        61.55052038945979
+      ],
+      "colliding": true,
+      "margin_m": 0.0,
+      "min_distance_m": null,
+      "distance_pair_count": 85,
+      "backend": "Pinocchio/Coal security_margin predicate, stop at first collision"
+    },
+    "near": {
+      "joints_deg": [
+        -106.28476479876878,
+        -92.60422624048607,
+        89.1881279007303,
+        -68.30224376412288,
+        -140.28384890921907,
+        96.8346311072077
+      ],
+      "colliding": false,
+      "margin_m": 0.0,
+      "min_distance_m": null,
+      "distance_pair_count": 85,
+      "backend": "Pinocchio/Coal security_margin predicate, stop at first collision"
+    },
+    "interior_collision": {
+      "start": [
+        -20.95475666293774,
+        84.40178792398471,
+        36.23978012146323,
+        32.72677402676996,
+        70.65908487285986,
+        49.60106765678082
+      ],
+      "end": [
+        91.04418364055239,
+        -4.7705876508063625,
+        70.45074695809556,
+        38.29796312216219,
+        -63.15515503262296,
+        74.4417496981821
+      ],
+      "result": {
+        "accepted": false,
+        "reason": "collision_or_margin",
+        "checked_samples": 30,
+        "total_samples": 68,
+        "min_distance_m": null,
+        "rejected_fraction": 0.43283582089552236
+      }
+    },
+    "joint_order": [
+      "shoulder_pan",
+      "shoulder_lift",
+      "elbow_flex",
+      "wrist_flex",
+      "wrist_roll",
+      "gripper"
+    ],
+    "jaw_units": "URDF degrees only; NOT a normalized motor mapping"
+  }
+}

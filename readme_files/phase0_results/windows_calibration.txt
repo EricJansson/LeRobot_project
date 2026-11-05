@@ -1,0 +1,42 @@
+================================================================================
+CALIBRATION VALIDATION REPORT
+================================================================================
+Motor Resolution: 4096
+Total Degree Range: 360°
+Center Position: 2048
+Formula: degrees = ((raw_value - 2048) / 4096) * 360
+================================================================================
+
+SHOULDER_PAN ✓ VALID
+  Range:     728 → 3440
+  Dégrees (stored):       -116.02° →   122.34°
+  Degrees (calculated):   -116.02° →   122.34°
+
+SHOULDER_LIFT ✓ VALID
+  Range:     827 → 3219
+  Dégrees (stored):       -107.31° →   102.92°
+  Degrees (calculated):   -107.31° →   102.92°
+
+ELBOW_FLEX ✓ VALID
+  Range:     858 → 3071
+  Dégrees (stored):       -104.59° →    89.91°
+  Degrees (calculated):   -104.59° →    89.91°
+
+WRIST_FLEX ✓ VALID
+  Range:     711 → 3047
+  Dégrees (stored):       -117.51° →    87.80°
+  Degrees (calculated):   -117.51° →    87.80°
+
+WRIST_ROLL ✓ VALID
+  Range:     0 → 4095
+  Dégrees (stored):       -180.00° →   179.91°
+  Degrees (calculated):   -180.00° →   179.91°
+
+GRIPPER ✓ VALID
+  Range:     1615 → 3075
+  Dégrees (stored):        -38.06° →    90.26°
+  Degrees (calculated):    -38.06° →    90.26°
+
+================================================================================
+✓ ALL CALIBRATION VALUES ARE CORRECT
+================================================================================

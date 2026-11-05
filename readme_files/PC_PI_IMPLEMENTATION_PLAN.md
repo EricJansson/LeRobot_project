@@ -1,12 +1,12 @@
 # PC-led SO-101 control: phased implementation plan
 
-**Status: PROPOSED IMPLEMENTATION ORDER / WORK NOT YET DONE**  
+**Status: PHASE 0 IN PROGRESS / PHASES 1–5 NOT STARTED**
 **Decision date: 2026-11-05**  
 [Target architecture](PC_PI_ARCHITECTURAL_REFACTOR.md) · [Current implementation](ARCHITECTURE.md) · [TODO](../TODO.md)
 
 This is an **incremental architectural refactor alongside the existing system**, not a ground-up rewrite or replacement. The existing direct-axis, custom IK, LeRobot Pi IK and plan modes continue as **legacy** and must not be broken by early work. The project owner must approve all physical tests, calibration changes, motor register writes and nontrivial torque behavior. The coding AI must follow [AGENTS.md](../AGENTS.md) and make **no Git commits**.
 
-**Work location and status:** Resume development in the **Windows PC checkout, not on the Raspberry Pi**. WSL2 is the provisional PC-side solver runtime; the Pi is the motor-service deployment host and legacy hardware reference. All implementation phases below are **NOT STARTED**. Promotion/reconciliation of these documents on 2026-11-05 is documentation work only and does not satisfy Phase 0 runtime checks or benchmarks. These canonical plans supersede conflicting older plans; use the copies in `readme_files/` for future updates.
+**Work location and status:** Development is in the **Windows PC checkout, not on the Raspberry Pi**. Phase 0 is **IN PROGRESS**, with offline source audit, an isolated WSL2 solver stack and feasibility benchmarks recorded in the [Phase 0 report](PHASE0_FEASIBILITY.md). Phases 1–5 remain **NOT STARTED**. The Pi remains the future motor-service host and legacy hardware reference; no new distributed control path or hardware verification is implied. These canonical plans supersede conflicting older plans; use the copies in `readme_files/` for future updates.
 
 ## Cross-phase rules
 
@@ -25,16 +25,18 @@ This is an **incremental architectural refactor alongside the existing system**,
 **Tasks**
 
 - [ ] Confirm current working Pi motor path, motor port, owner-approved calibration, motor tuning, current LeRobot IK script and actual rejection/hold behavior. Identify every path capable of hardware motion.
-- [ ] Record the existing legacy modes and their tests/launch commands. Capture a reproducible baseline with the robot disconnected, where possible.
-- [ ] Verify or provision a separate WSL2 Linux environment, compatible Python/LeRobot/PlaCo stack, URDF/meshes and LeRobot IK import. The Windows Python 3.11 / LeRobot 0.4.0 venv is a legacy baseline, not the new worker environment; do not copy Pi ARM64 CPU package pins or assume its Python 3.13 / LeRobot 0.6.1 installation works unchanged in WSL2.
+- [x] Record the existing legacy modes and their tests/launch commands. Capture a reproducible baseline with the robot disconnected, where possible. **OFFLINE VERIFIED:** Windows baseline retains one known dashboard test failure; see report.
+- [x] Verify or provision a separate WSL2 Linux environment, compatible Python/LeRobot/PlaCo stack, URDF/meshes and LeRobot IK import. **OFFLINE VERIFIED:** isolated x86-64 Python 3.12.12 / LeRobot 0.6.1 / PlaCo 0.9.15 stack; Windows and Pi environments preserved.
 - [ ] Check that URDF joint order, frames, limits and tool pose match recorded real hardware measurements before assuming physically meaningful collision clearance. Include the historical elbow/second-pitch offset and end-effector height question; this is an unconfirmed discrepancy to revalidate, not permission to change calibration. Verify links/meshes and exclusions needed for self-collision (adjacent links, robot base, gripper). Any new physical measurements require owner approval; establish model alignment before live integration.
-- [ ] Build a **CPU-only offline benchmark** over representative poses: neutral, extended, retraction from full reach, near singularity/limit, wrist-roll, unreachable and collision-near poses; measure IK and collision check separately and together (median/p95/p99/worst, accepted/rejected ratio, variance and path-check cost).
-- [ ] Prove the candidate collision checker really detects self-collisions and can check *transitions*; Placo/LeRobot IK alone does not do this. If no feasible safety checker, do **not** proceed to live teleop; evaluate simpler validated collision geometry or an alternative library before committing to WSL2.
+- [x] Build a **CPU-only offline benchmark** over representative poses: neutral, extended, retraction from full reach, near singularity/limit, wrist-roll, unreachable and collision-near poses; measure IK and collision check separately and together (median/p95/p99/worst, accepted/rejected ratio, variance and path-check cost). **OFFLINE VERIFIED:** see raw samples and experimental-setting limits in the report.
+- [x] Prove the candidate collision checker really detects self-collisions and can check *transitions*; Placo/LeRobot IK alone does not do this. **OFFLINE VERIFIED:** analytic/BVH fixtures and endpoint-clear/interior-colliding robot path pass with a separate Pinocchio/Coal margin predicate. Exclusions, margins and physical alignment remain unapproved; this is not live-motion clearance.
 - [ ] Benchmark Windows gamepad polling and Windows↔WSL2 message transit without motors. Verify deadman and correct Windows gamepad mapping.
 - [ ] Measure Pi serial read and command write separately and together, **only with owner approval for hardware operations**. The supplied proposal's historical ~2.78 ms all-motor **read** figure needs its setup recorded and reproduction; it is not a complete motor update measurement or a result of this documentation review.
-- [ ] Write a short performance/feasibility report: feasible, feasible with changes, or blocked. Record whether WSL2/PlaCo is retained and the evidence.
+- [x] Write a short performance/feasibility report: feasible, feasible with changes, or blocked. **OFFLINE: feasible with changes.** Retain WSL2/PlaCo provisionally for IK; exact all-pair distances fail the timing budget, native margin predicates warrant further work. See [report](PHASE0_FEASIBILITY.md).
 
 **Gate to Phase 1:** PlaCo/URDF FK/IK operates correctly in WSL2; collision safety approach demonstrably feasible; explicit plan to measure/respect 50 Hz. If not, pause and revisit solver choice rather than hiding a blocker.
+
+**Current gate disposition:** Not approved. Device mapping, physical model alignment, collision-policy review and remaining measurement decisions are recorded in the Phase 0 report. No Phase 1 implementation or hardware work was performed.
 
 ## Phase 1 — shared contracts and offline motor service
 

@@ -1,0 +1,283 @@
+{
+  "status": "BLOCKED",
+  "timestamp_utc": "2026-11-05T15:53:32.560699+00:00",
+  "mode": "gamepad",
+  "environment": {
+    "status": "OFFLINE VERIFIED",
+    "python": "3.11.14 (main, Oct 14 2025, 21:21:22) [MSC v.1944 64 bit (AMD64)]",
+    "executable": "C:\\Users\\rapid\\Documents\\GitHub\\LeRobot_project\\.venv\\Scripts\\python.exe",
+    "platform": "Windows-10-10.0.26300-SP0",
+    "machine": "AMD64",
+    "cpu": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "logical_cpus": 16,
+    "packages": {
+      "Farama-Notifications": "0.0.4",
+      "GitPython": "3.1.45",
+      "Jinja2": "3.1.6",
+      "MarkupSafe": "3.0.3",
+      "PyYAML": "6.0.3",
+      "Pygments": "2.19.2",
+      "accelerate": "1.11.0",
+      "aiohappyeyeballs": "2.6.1",
+      "aiohttp": "3.13.2",
+      "aiosignal": "1.4.0",
+      "annotated-types": "0.7.0",
+      "attrs": "25.4.0",
+      "av": "15.1.0",
+      "certifi": "2025.10.5",
+      "charset-normalizer": "3.4.4",
+      "click": "8.3.0",
+      "cloudpickle": "3.1.2",
+      "cmake": "4.1.2",
+      "colorama": "0.4.6",
+      "datasets": "4.1.1",
+      "deepdiff": "8.6.1",
+      "diffusers": "0.35.2",
+      "dill": "0.4.0",
+      "draccus": "0.10.0",
+      "einops": "0.8.1",
+      "feetech-servo-sdk": "1.0.0",
+      "filelock": "3.20.0",
+      "frozenlist": "1.8.0",
+      "fsspec": "2025.9.0",
+      "gitdb": "4.0.12",
+      "gymnasium": "1.2.1",
+      "hf-xet": "1.8.0",
+      "hf_transfer": "0.1.9",
+      "huggingface-hub": "0.35.3",
+      "idna": "3.11",
+      "imageio": "2.37.0",
+      "imageio-ffmpeg": "0.6.0",
+      "importlib_metadata": "8.7.0",
+      "iniconfig": "2.3.0",
+      "inquirerpy": "0.3.4",
+      "jsonlines": "4.0.0",
+      "keyboard": "0.13.5",
+      "lerobot": "0.4.0",
+      "mergedeep": "1.3.4",
+      "mpmath": "1.3.0",
+      "multidict": "6.7.0",
+      "multiprocess": "0.70.16",
+      "mypy_extensions": "1.1.0",
+      "networkx": "3.4.2",
+      "numpy": "2.2.6",
+      "opencv-python-headless": "4.12.0.88",
+      "orderly-set": "5.5.0",
+      "packaging": "25.0",
+      "pandas": "2.3.3",
+      "pfzy": "0.3.4",
+      "pillow": "12.0.0",
+      "pip": "25.2",
+      "platformdirs": "4.5.0",
+      "pluggy": "1.5.0",
+      "prompt_toolkit": "3.0.52",
+      "propcache": "0.4.1",
+      "protobuf": "6.33.0",
+      "psutil": "7.1.3",
+      "pyarrow": "22.0.0",
+      "pydantic": "2.12.3",
+      "pydantic_core": "2.41.4",
+      "pygame": "2.6.1",
+      "pynput": "1.8.1",
+      "pyserial": "3.5",
+      "pytest": "8.4.2",
+      "python-dateutil": "2.9.0.post0",
+      "pytz": "2025.2",
+      "pyyaml-include": "1.4.1",
+      "regex": "2025.11.3",
+      "requests": "2.32.5",
+      "rerun-sdk": "0.26.2",
+      "safetensors": "0.6.2",
+      "sentry-sdk": "2.43.0",
+      "setuptools": "80.9.0",
+      "six": "1.17.0",
+      "smmap": "5.0.2",
+      "sympy": "1.14.0",
+      "termcolor": "3.2.0",
+      "toml": "0.10.2",
+      "torch": "2.7.1",
+      "torchvision": "0.22.1",
+      "tqdm": "4.67.1",
+      "typing-inspect": "0.9.0",
+      "typing-inspection": "0.4.2",
+      "typing_extensions": "4.15.0",
+      "tzdata": "2025.2",
+      "urllib3": "2.5.0",
+      "wandb": "0.21.4",
+      "wcwidth": "0.2.14",
+      "wheel": "0.45.1",
+      "xxhash": "3.6.0",
+      "yarl": "1.22.0",
+      "zipp": "3.23.0"
+    }
+  },
+  "benchmarks": {},
+  "source_sha256": {
+    "scripts\\phase0_benchmark.py": "74b621c7298260dc098c53fbd8227f99274c7f6b97197e1c453ea67d96bb511c",
+    "robot_program\\phase0_feasibility.py": "45ea71774440869851c8e44c5048c8e14e00f1365180c6f0cb0177ba2dd8b461",
+    "robot_program\\lerobot_ik_controller.py": "173462c3d590bf4b4ee0d9cbf0fc842d102ad531dfbedecaac7ab53b5526d743"
+  },
+  "invocation": [
+    "C:\\Users\\rapid\\Documents\\GitHub\\LeRobot_project\\scripts\\phase0_benchmark.py",
+    "--mode",
+    "gamepad",
+    "--output",
+    "readme_files/phase0_results/windows_gamepad.json"
+  ],
+  "hardware": "NOT RUN",
+  "phase1_gate": "NOT APPROVED",
+  "model": {
+    "status": "OFFLINE VERIFIED",
+    "urdf_sha256": "3a65d2d35e68a8d2f0c2cc176d19b884506543c93ba72980145b80abe276022c",
+    "calibration_sha256": {
+      "lerobot_arm.json": "542352cd58b5ee6971d06e367caa45a200d80c5dfe9b602cb9d84190f74a67eb",
+      "lerobot_arm_with_degrees.json": "4993c867e32b433aace9c81f3b442b22155d92b44c8ea8a811e07c632b2e35ba"
+    },
+    "mesh_count": 13,
+    "collision_instances": 17,
+    "mesh_triangles": 39343,
+    "mesh_bytes": 1968242,
+    "links": [
+      "base_link",
+      "shoulder_link",
+      "upper_arm_link",
+      "lower_arm_link",
+      "wrist_link",
+      "gripper_link",
+      "gripper_frame_link",
+      "moving_jaw_so101_v1_link"
+    ],
+    "joints": [
+      {
+        "name": "gripper_frame_joint",
+        "type": "fixed",
+        "parent": "gripper_link",
+        "child": "gripper_frame_link",
+        "origin": {
+          "xyz": "-0.0079 -0.000218121 -0.0981274",
+          "rpy": "0 3.14159 0"
+        },
+        "axis": {
+          "xyz": "0 0 0"
+        },
+        "limit": {}
+      },
+      {
+        "name": "gripper",
+        "type": "revolute",
+        "parent": "gripper_link",
+        "child": "moving_jaw_so101_v1_link",
+        "origin": {
+          "xyz": "0.0202 0.0188 -0.0234",
+          "rpy": "1.5708 -5.24284e-08 -1.41553e-15"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-0.174533",
+          "upper": "1.74533"
+        }
+      },
+      {
+        "name": "wrist_roll",
+        "type": "revolute",
+        "parent": "wrist_link",
+        "child": "gripper_link",
+        "origin": {
+          "xyz": "5.55112e-17 -0.0611 0.0181",
+          "rpy": "1.5708 0.0486795 3.14159"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-2.74385",
+          "upper": "2.84121"
+        }
+      },
+      {
+        "name": "wrist_flex",
+        "type": "revolute",
+        "parent": "lower_arm_link",
+        "child": "wrist_link",
+        "origin": {
+          "xyz": "-0.1349 0.0052 3.62355e-17",
+          "rpy": "4.02456e-15 8.67362e-16 -1.5708"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.65806",
+          "upper": "1.65806"
+        }
+      },
+      {
+        "name": "elbow_flex",
+        "type": "revolute",
+        "parent": "upper_arm_link",
+        "child": "lower_arm_link",
+        "origin": {
+          "xyz": "-0.11257 -0.028 1.73763e-16",
+          "rpy": "-3.63608e-16 8.74301e-16 1.5708"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.69",
+          "upper": "1.69"
+        }
+      },
+      {
+        "name": "shoulder_lift",
+        "type": "revolute",
+        "parent": "shoulder_link",
+        "child": "upper_arm_link",
+        "origin": {
+          "xyz": "-0.0303992 -0.0182778 -0.0542",
+          "rpy": "-1.5708 -1.5708 0"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.74533",
+          "upper": "1.74533"
+        }
+      },
+      {
+        "name": "shoulder_pan",
+        "type": "revolute",
+        "parent": "base_link",
+        "child": "shoulder_link",
+        "origin": {
+          "xyz": "0.0388353 -8.97657e-09 0.0624",
+          "rpy": "3.14159 4.18253e-17 -3.14159"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.91986",
+          "upper": "1.91986"
+        }
+      }
+    ],
+    "physical_alignment": "UNVERIFIED: no new hardware measurements"
+  },
+  "error": "RuntimeError: No Windows gamepad detected; mapping/deadman UNVERIFIED"
+}

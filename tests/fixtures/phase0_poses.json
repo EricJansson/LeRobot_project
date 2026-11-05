@@ -1,0 +1,12 @@
+{
+  "status": "OFFLINE model-only poses; no claim of hardware alignment or clearance",
+  "joint_order": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"],
+  "cases": [
+    {"name": "neutral", "joints_deg": [0, 0, 0, 0, 0]},
+    {"name": "extended", "joints_deg": [0, 25, -12, 3, 0], "translation_m": [-0.0008, 0, 0]},
+    {"name": "near_singularity", "joints_deg": [0, 25, -12, 3, 0], "translation_m": [0.0008, 0, 0]},
+    {"name": "near_limit", "joints_deg": [109, 0, 0, 0, 0], "translation_m": [0, 0, 0.0008]},
+    {"name": "wrist_roll", "joints_deg": [10, -15, 20, 10, -20], "target_joints_deg": [10, -15, 20, 10, -19.25]},
+    {"name": "unreachable", "joints_deg": [0, 0, 0, 0, 0], "translation_m": [10, 0, 0]}
+  ]
+}

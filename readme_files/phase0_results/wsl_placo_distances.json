@@ -1,0 +1,1174 @@
+{
+  "status": "OFFLINE VERIFIED",
+  "timestamp_utc": "2026-11-05T15:50:52.237310+00:00",
+  "mode": "collision",
+  "environment": {
+    "status": "OFFLINE VERIFIED",
+    "python": "3.12.12 (main, Oct 28 2025, 12:10:49) [Clang 20.1.4 ]",
+    "executable": "/home/eric_wsl/.local/share/lerobot-phase0/venv/bin/python",
+    "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+    "machine": "x86_64",
+    "cpu": "Intel(R) Core(TM) i5-14400F",
+    "logical_cpus": 16,
+    "packages": {
+      "Farama-Notifications": "0.0.6",
+      "Jinja2": "3.1.6",
+      "MarkupSafe": "3.0.4",
+      "PyYAML": "6.0.3",
+      "Pygments": "2.21.0",
+      "anyio": "4.16.0",
+      "asttokens": "3.0.2",
+      "certifi": "2026.10.23",
+      "charset-normalizer": "3.5.2",
+      "click": "8.5.0",
+      "cloudpickle": "3.1.2",
+      "cmake": "4.1.3",
+      "cmeel": "0.62.0",
+      "cmeel-assimp": "5.4.3.1",
+      "cmeel-boost": "1.87.0.1",
+      "cmeel-console-bridge": "1.0.2.3",
+      "cmeel-octomap": "1.10.0",
+      "cmeel-qhull": "8.0.2.1",
+      "cmeel-tinyxml2": "10.0.0",
+      "cmeel-urdfdom": "4.0.1",
+      "cmeel-zlib": "1.3.2",
+      "coal-library": "3.0.1",
+      "deepdiff": "8.6.2",
+      "draccus": "0.11.6",
+      "eigenpy": "3.10.3",
+      "einops": "0.8.2",
+      "eiquadprog": "1.2.9",
+      "executing": "2.3.0",
+      "feetech-servo-sdk": "1.0.0",
+      "filelock": "4.2.9",
+      "fsspec": "2026.9.0",
+      "gymnasium": "1.4.0",
+      "h11": "0.16.0",
+      "hf-xet": "1.8.0",
+      "httpcore": "1.0.9",
+      "httpx": "0.28.1",
+      "huggingface_hub": "1.33.0",
+      "idna": "3.20",
+      "iniconfig": "2.3.1",
+      "ipython": "9.18.1",
+      "ipython_pygments_lexers": "1.1.1",
+      "ischedule": "1.2.7",
+      "jedi": "0.20.1",
+      "keyboard": "0.13.5",
+      "lerobot": "0.6.1",
+      "matplotlib-inline": "0.2.2",
+      "mergedeep": "1.3.4",
+      "meshcat": "0.3.2",
+      "mpmath": "1.3.0",
+      "mypy_extensions": "1.2.0",
+      "networkx": "3.7",
+      "numpy": "2.2.6",
+      "opencv-python-headless": "4.13.0.92",
+      "orderly-set": "5.5.0",
+      "packaging": "25.0",
+      "parso": "0.8.7",
+      "pexpect": "4.9.0",
+      "pillow": "12.3.0",
+      "pin": "3.4.0",
+      "placo": "0.9.15",
+      "pluggy": "1.7.0",
+      "prompt_toolkit": "3.0.53",
+      "psutil": "7.2.2",
+      "ptyprocess": "0.7.0",
+      "pure_eval": "0.2.4",
+      "pygame": "2.6.1",
+      "pyngrok": "9.1.2",
+      "pyserial": "3.5",
+      "pytest": "8.4.2",
+      "pyzmq": "27.3.0",
+      "requests": "2.34.2",
+      "rhoban-cmeel-jsoncpp": "1.9.4.9",
+      "safetensors": "0.8.0",
+      "setuptools": "81.0.0",
+      "stack-data": "0.6.3",
+      "sympy": "1.14.0",
+      "termcolor": "3.3.0",
+      "toml": "0.10.2",
+      "torch": "2.7.1+cpu",
+      "torchvision": "0.22.1+cpu",
+      "tornado": "6.6",
+      "tqdm": "4.70.1",
+      "traitlets": "5.16.1",
+      "typing-inspect": "0.9.0",
+      "typing_extensions": "4.16.0",
+      "u-msgpack-python": "2.8.0",
+      "urllib3": "2.8.0",
+      "wcwidth": "0.9.4"
+    }
+  },
+  "benchmarks": {
+    "neutral/collision": {
+      "samples": 500,
+      "median_ms": 77.077617,
+      "p95_ms": 78.59606495,
+      "p99_ms": 79.66935249,
+      "worst_ms": 85.03459,
+      "variance_ms2": 0.7087677711045135,
+      "over_20ms": 500,
+      "warmup": 20,
+      "accepted": 500,
+      "rejected": 0,
+      "accepted_ratio": 1.0,
+      "reasons": {
+        "clear": 500
+      },
+      "last_outcome": {
+        "accepted": true,
+        "reason": "clear",
+        "colliding": false,
+        "collision_count": 0,
+        "min_distance_m": 0.009647301100418728,
+        "distance_pair_count": 85
+      },
+      "raw_ms": [
+        76.596814,
+        78.051569,
+        76.303904,
+        77.183958,
+        77.110249,
+        76.599075,
+        79.671282,
+        77.367731,
+        77.171304,
+        77.153016,
+        77.425652,
+        77.184556,
+        76.973487,
+        76.224529,
+        76.857495,
+        76.427028,
+        76.757388,
+        76.990464,
+        76.538192,
+        76.753278,
+        77.420362,
+        77.809158,
+        77.05689,
+        77.963859,
+        79.603339,
+        77.614833,
+        76.684541,
+        76.850143,
+        78.334865,
+        77.249558,
+        77.441763,
+        77.598365,
+        77.268832,
+        76.416741,
+        77.796157,
+        77.100158,
+        77.721939,
+        77.914166,
+        77.576658,
+        77.94235,
+        76.257153,
+        77.979043,
+        76.812802,
+        77.625897,
+        78.148976,
+        78.042957,
+        78.80032,
+        78.432679,
+        77.647446,
+        76.161244,
+        76.834817,
+        77.511821,
+        76.613224,
+        77.489788,
+        78.382513,
+        77.461627,
+        78.276717,
+        76.647106,
+        77.032092,
+        77.352433,
+        77.00895,
+        79.675528,
+        77.926249,
+        78.414443,
+        76.233668,
+        77.159908,
+        77.706353,
+        78.165123,
+        77.455047,
+        75.974122,
+        77.443109,
+        76.55045,
+        77.428929,
+        76.385471,
+        76.664915,
+        77.731591,
+        76.486663,
+        76.930289,
+        77.858072,
+        77.881815,
+        77.113204,
+        76.947601,
+        76.880037,
+        76.996178,
+        76.619071,
+        77.680187,
+        76.044597,
+        76.680766,
+        77.453641,
+        76.077439,
+        76.86469,
+        78.634596,
+        76.751964,
+        77.998086,
+        76.158954,
+        77.209428,
+        76.4422,
+        77.464861,
+        77.702744,
+        77.671709,
+        76.739979,
+        77.176712,
+        77.269915,
+        77.722252,
+        77.056519,
+        76.790276,
+        76.99712,
+        75.877729,
+        78.434565,
+        77.850645,
+        77.366742,
+        77.501008,
+        76.214704,
+        77.734891,
+        76.812401,
+        76.780929,
+        76.396807,
+        76.738839,
+        77.731316,
+        76.842467,
+        76.80559,
+        76.603503,
+        76.398779,
+        78.636996,
+        76.896474,
+        76.174242,
+        76.768708,
+        76.183348,
+        76.794476,
+        77.599214,
+        77.001517,
+        76.77019,
+        76.786165,
+        76.70175,
+        77.356496,
+        76.120777,
+        76.884235,
+        77.823727,
+        76.172544,
+        76.054318,
+        76.39198,
+        76.308289,
+        77.040596,
+        76.680227,
+        77.160321,
+        76.058505,
+        76.242286,
+        77.371635,
+        78.184346,
+        77.253414,
+        76.362112,
+        76.613258,
+        76.735994,
+        77.07207,
+        76.658476,
+        76.847633,
+        76.79023,
+        76.523494,
+        76.999167,
+        76.1499,
+        76.836894,
+        76.187867,
+        76.387807,
+        78.176157,
+        77.121765,
+        77.151664,
+        78.544123,
+        77.096995,
+        78.372434,
+        77.235497,
+        76.700164,
+        77.442241,
+        77.444073,
+        76.650904,
+        77.176371,
+        77.027618,
+        77.253284,
+        77.791014,
+        76.419097,
+        77.959008,
+        77.376013,
+        76.70711,
+        76.0326,
+        76.194873,
+        76.843879,
+        77.426527,
+        76.988335,
+        77.718908,
+        76.312881,
+        76.398932,
+        78.076998,
+        77.12672,
+        77.497047,
+        77.655476,
+        77.006038,
+        76.584174,
+        76.592099,
+        77.255054,
+        76.406454,
+        76.90102,
+        78.030565,
+        78.000512,
+        76.376548,
+        78.84545,
+        76.272731,
+        76.974339,
+        77.04284,
+        78.485945,
+        75.840362,
+        77.848251,
+        76.408606,
+        77.064434,
+        78.051478,
+        76.960473,
+        78.67168,
+        79.106625,
+        79.562889,
+        77.563589,
+        77.615605,
+        77.195149,
+        77.637376,
+        76.929026,
+        77.399024,
+        77.023229,
+        76.541571,
+        76.673831,
+        78.395868,
+        77.914316,
+        76.110962,
+        77.176351,
+        76.673043,
+        76.335486,
+        76.316178,
+        77.235835,
+        77.769585,
+        77.194786,
+        77.120145,
+        78.722002,
+        76.878622,
+        77.857474,
+        77.419995,
+        76.568731,
+        78.348366,
+        77.742085,
+        78.067292,
+        77.371165,
+        76.360059,
+        77.131472,
+        76.296735,
+        77.449564,
+        76.742943,
+        76.367133,
+        77.884197,
+        76.826952,
+        77.812863,
+        76.620339,
+        76.746102,
+        78.159255,
+        76.952673,
+        76.506239,
+        76.444845,
+        75.533199,
+        77.651577,
+        77.492703,
+        75.90866,
+        77.253943,
+        77.740655,
+        76.734147,
+        77.879026,
+        78.393166,
+        77.9584,
+        77.118847,
+        78.922661,
+        77.19717,
+        76.644144,
+        76.027457,
+        77.589241,
+        78.229268,
+        78.611871,
+        77.330484,
+        77.506255,
+        78.476639,
+        78.506931,
+        77.594695,
+        76.866421,
+        76.16867,
+        77.623504,
+        77.199964,
+        76.902051,
+        76.712226,
+        77.343476,
+        76.636209,
+        77.684656,
+        78.651036,
+        77.516778,
+        77.123826,
+        76.8458,
+        76.150679,
+        76.435021,
+        78.32186,
+        76.648442,
+        77.288722,
+        77.679442,
+        76.815009,
+        77.293194,
+        76.584458,
+        76.817472,
+        77.380345,
+        77.346198,
+        76.488216,
+        78.078322,
+        77.037832,
+        77.950628,
+        76.751831,
+        77.819539,
+        77.020406,
+        77.602973,
+        78.102192,
+        77.725412,
+        76.179728,
+        79.236451,
+        79.669333,
+        85.03459,
+        75.915126,
+        77.227585,
+        77.576141,
+        77.151137,
+        80.396491,
+        77.547876,
+        77.156931,
+        76.546886,
+        76.378553,
+        75.997657,
+        76.787943,
+        76.908527,
+        78.513941,
+        77.088481,
+        75.932568,
+        76.518968,
+        76.123052,
+        76.844978,
+        77.306775,
+        76.323667,
+        76.445599,
+        77.847696,
+        76.875713,
+        77.847556,
+        78.602961,
+        76.380277,
+        76.462505,
+        76.769291,
+        77.53346,
+        77.402637,
+        76.566801,
+        77.427295,
+        78.315238,
+        76.859859,
+        76.823361,
+        76.485399,
+        77.11325,
+        76.323059,
+        76.460422,
+        77.078277,
+        77.020117,
+        77.141038,
+        77.019693,
+        77.077498,
+        78.648327,
+        76.762513,
+        76.640656,
+        77.120852,
+        77.559329,
+        76.625216,
+        76.63349,
+        76.831071,
+        77.082313,
+        76.627415,
+        76.769073,
+        76.163945,
+        77.284777,
+        78.348828,
+        76.269655,
+        78.534007,
+        76.71555,
+        77.266666,
+        76.568531,
+        76.255585,
+        77.125843,
+        76.18226,
+        76.568805,
+        77.201178,
+        77.32525,
+        76.074915,
+        77.407471,
+        77.219877,
+        77.237043,
+        77.151457,
+        76.215078,
+        77.2552,
+        79.320641,
+        76.759987,
+        76.158821,
+        77.979858,
+        77.519053,
+        78.270443,
+        77.848858,
+        76.467458,
+        77.237109,
+        77.35523,
+        78.062994,
+        77.108219,
+        76.270219,
+        76.279379,
+        77.279516,
+        77.01233,
+        76.124737,
+        76.757912,
+        77.705672,
+        76.476078,
+        76.934632,
+        76.643072,
+        77.87321,
+        77.101932,
+        77.15916,
+        76.979469,
+        76.653659,
+        76.358958,
+        77.342188,
+        76.330437,
+        80.049524,
+        77.106779,
+        77.672981,
+        76.451581,
+        76.529441,
+        77.099696,
+        78.004431,
+        76.810602,
+        76.994476,
+        77.675926,
+        77.651897,
+        77.430975,
+        76.245717,
+        76.427143,
+        76.143626,
+        78.595702,
+        79.313201,
+        76.636537,
+        76.106104,
+        77.604917,
+        76.40419,
+        76.951738,
+        77.167325,
+        76.93455,
+        76.864746,
+        76.812223,
+        76.715426,
+        77.262202,
+        76.453677,
+        76.238,
+        76.434507,
+        78.906305,
+        76.396317,
+        78.103291,
+        76.608426,
+        78.244744,
+        76.372992,
+        75.743071,
+        76.809237,
+        77.026562,
+        76.603032,
+        76.695326,
+        78.040016,
+        76.867146,
+        76.13639,
+        76.819516,
+        79.177938,
+        77.049278,
+        77.399335,
+        76.847311,
+        77.385908,
+        75.834633,
+        76.818672,
+        77.098817,
+        76.72056,
+        77.449446,
+        77.042782,
+        78.160171,
+        77.224316,
+        77.761073,
+        76.450799,
+        76.519204,
+        77.077736,
+        77.218387,
+        78.284064,
+        77.406422,
+        77.281757,
+        76.84402,
+        76.952522,
+        75.814527,
+        76.541956
+      ]
+    }
+  },
+  "source_sha256": {
+    "scripts/phase0_benchmark.py": "74b621c7298260dc098c53fbd8227f99274c7f6b97197e1c453ea67d96bb511c",
+    "robot_program/phase0_feasibility.py": "45ea71774440869851c8e44c5048c8e14e00f1365180c6f0cb0177ba2dd8b461",
+    "robot_program/lerobot_ik_controller.py": "173462c3d590bf4b4ee0d9cbf0fc842d102ad531dfbedecaac7ab53b5526d743"
+  },
+  "invocation": [
+    "/mnt/c/Users/rapid/Documents/GitHub/LeRobot_project/scripts/phase0_benchmark.py",
+    "--mode",
+    "collision",
+    "--backend",
+    "placo-distances",
+    "--case",
+    "neutral",
+    "--output",
+    "readme_files/phase0_results/wsl_placo_distances.json"
+  ],
+  "hardware": "NOT RUN",
+  "phase1_gate": "NOT APPROVED",
+  "model": {
+    "status": "OFFLINE VERIFIED",
+    "urdf_sha256": "3a65d2d35e68a8d2f0c2cc176d19b884506543c93ba72980145b80abe276022c",
+    "calibration_sha256": {
+      "lerobot_arm.json": "542352cd58b5ee6971d06e367caa45a200d80c5dfe9b602cb9d84190f74a67eb",
+      "lerobot_arm_with_degrees.json": "4993c867e32b433aace9c81f3b442b22155d92b44c8ea8a811e07c632b2e35ba"
+    },
+    "mesh_count": 13,
+    "collision_instances": 17,
+    "mesh_triangles": 39343,
+    "mesh_bytes": 1968242,
+    "links": [
+      "base_link",
+      "shoulder_link",
+      "upper_arm_link",
+      "lower_arm_link",
+      "wrist_link",
+      "gripper_link",
+      "gripper_frame_link",
+      "moving_jaw_so101_v1_link"
+    ],
+    "joints": [
+      {
+        "name": "gripper_frame_joint",
+        "type": "fixed",
+        "parent": "gripper_link",
+        "child": "gripper_frame_link",
+        "origin": {
+          "xyz": "-0.0079 -0.000218121 -0.0981274",
+          "rpy": "0 3.14159 0"
+        },
+        "axis": {
+          "xyz": "0 0 0"
+        },
+        "limit": {}
+      },
+      {
+        "name": "gripper",
+        "type": "revolute",
+        "parent": "gripper_link",
+        "child": "moving_jaw_so101_v1_link",
+        "origin": {
+          "xyz": "0.0202 0.0188 -0.0234",
+          "rpy": "1.5708 -5.24284e-08 -1.41553e-15"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-0.174533",
+          "upper": "1.74533"
+        }
+      },
+      {
+        "name": "wrist_roll",
+        "type": "revolute",
+        "parent": "wrist_link",
+        "child": "gripper_link",
+        "origin": {
+          "xyz": "5.55112e-17 -0.0611 0.0181",
+          "rpy": "1.5708 0.0486795 3.14159"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-2.74385",
+          "upper": "2.84121"
+        }
+      },
+      {
+        "name": "wrist_flex",
+        "type": "revolute",
+        "parent": "lower_arm_link",
+        "child": "wrist_link",
+        "origin": {
+          "xyz": "-0.1349 0.0052 3.62355e-17",
+          "rpy": "4.02456e-15 8.67362e-16 -1.5708"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.65806",
+          "upper": "1.65806"
+        }
+      },
+      {
+        "name": "elbow_flex",
+        "type": "revolute",
+        "parent": "upper_arm_link",
+        "child": "lower_arm_link",
+        "origin": {
+          "xyz": "-0.11257 -0.028 1.73763e-16",
+          "rpy": "-3.63608e-16 8.74301e-16 1.5708"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.69",
+          "upper": "1.69"
+        }
+      },
+      {
+        "name": "shoulder_lift",
+        "type": "revolute",
+        "parent": "shoulder_link",
+        "child": "upper_arm_link",
+        "origin": {
+          "xyz": "-0.0303992 -0.0182778 -0.0542",
+          "rpy": "-1.5708 -1.5708 0"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.74533",
+          "upper": "1.74533"
+        }
+      },
+      {
+        "name": "shoulder_pan",
+        "type": "revolute",
+        "parent": "base_link",
+        "child": "shoulder_link",
+        "origin": {
+          "xyz": "0.0388353 -8.97657e-09 0.0624",
+          "rpy": "3.14159 4.18253e-17 -3.14159"
+        },
+        "axis": {
+          "xyz": "0 0 1"
+        },
+        "limit": {
+          "effort": "10",
+          "velocity": "10",
+          "lower": "-1.91986",
+          "upper": "1.91986"
+        }
+      }
+    ],
+    "physical_alignment": "UNVERIFIED: no new hardware measurements"
+  },
+  "limits_deg": {
+    "shoulder_pan": [
+      -109.99987525598623,
+      109.99987525598623
+    ],
+    "shoulder_lift": [
+      -100.00004285756798,
+      100.00004285756798
+    ],
+    "elbow_flex": [
+      -96.82986737710912,
+      96.82986737710912
+    ],
+    "wrist_flex": [
+      -94.99984017946129,
+      94.99984017946129
+    ],
+    "wrist_roll": [
+      -157.21102461697095,
+      162.78934171036462
+    ]
+  },
+  "synthetic_collision_proof": [
+    {
+      "separation_m": 0.05,
+      "colliding": true,
+      "min_distance_m": -0.050000000005
+    },
+    {
+      "separation_m": 0.3,
+      "colliding": false,
+      "min_distance_m": 0.199999999995
+    }
+  ],
+  "native_margin_proof": [
+    {
+      "separation_m": 0.05,
+      "margin_m": 0.0,
+      "colliding": true
+    },
+    {
+      "separation_m": 0.3,
+      "margin_m": 0.0,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.101,
+      "margin_m": 0.0,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.101,
+      "margin_m": 0.002,
+      "colliding": true
+    },
+    {
+      "separation_m": 0.104,
+      "margin_m": 0.002,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.104,
+      "margin_m": 0.005,
+      "colliding": true
+    }
+  ],
+  "native_mesh_margin_proof": [
+    {
+      "separation_m": 0.05,
+      "margin_m": 0.0,
+      "colliding": true
+    },
+    {
+      "separation_m": 0.3,
+      "margin_m": 0.0,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.101,
+      "margin_m": 0.0,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.101,
+      "margin_m": 0.002,
+      "colliding": true
+    },
+    {
+      "separation_m": 0.104,
+      "margin_m": 0.002,
+      "colliding": false
+    },
+    {
+      "separation_m": 0.104,
+      "margin_m": 0.005,
+      "colliding": true
+    }
+  ],
+  "collision_policy": {
+    "status": "EXPERIMENTAL, not hardware validated",
+    "backend": "placo-distances",
+    "included_link_pairs": [
+      [
+        "base_link",
+        "gripper_link"
+      ],
+      [
+        "base_link",
+        "lower_arm_link"
+      ],
+      [
+        "base_link",
+        "moving_jaw_so101_v1_link"
+      ],
+      [
+        "base_link",
+        "upper_arm_link"
+      ],
+      [
+        "base_link",
+        "wrist_link"
+      ],
+      [
+        "gripper_link",
+        "lower_arm_link"
+      ],
+      [
+        "gripper_link",
+        "shoulder_link"
+      ],
+      [
+        "gripper_link",
+        "upper_arm_link"
+      ],
+      [
+        "lower_arm_link",
+        "moving_jaw_so101_v1_link"
+      ],
+      [
+        "lower_arm_link",
+        "shoulder_link"
+      ],
+      [
+        "moving_jaw_so101_v1_link",
+        "shoulder_link"
+      ],
+      [
+        "moving_jaw_so101_v1_link",
+        "upper_arm_link"
+      ],
+      [
+        "moving_jaw_so101_v1_link",
+        "wrist_link"
+      ],
+      [
+        "shoulder_link",
+        "wrist_link"
+      ],
+      [
+        "upper_arm_link",
+        "wrist_link"
+      ]
+    ],
+    "excluded_link_pairs": [
+      {
+        "links": [
+          "base_link",
+          "shoulder_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      },
+      {
+        "links": [
+          "gripper_link",
+          "moving_jaw_so101_v1_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      },
+      {
+        "links": [
+          "gripper_link",
+          "wrist_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      },
+      {
+        "links": [
+          "lower_arm_link",
+          "upper_arm_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      },
+      {
+        "links": [
+          "lower_arm_link",
+          "wrist_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      },
+      {
+        "links": [
+          "shoulder_link",
+          "upper_arm_link"
+        ],
+        "reason": "experimental directly connected/mating links; needs geometry review"
+      }
+    ],
+    "same_link": "Same-link geometry belongs to one rigid body; not self-tested",
+    "jaw": "Sixth coordinate is a URDF degree angle, not normalized motor feedback",
+    "distance_pair_count_at_zero": 85
+  },
+  "robot_fixtures": {
+    "seed": 0,
+    "search_limit": 2000,
+    "poses_searched": 1146,
+    "clear": {
+      "joints_deg": [
+        30.131537040418735,
+        -46.04267697998907,
+        -88.89494559968004,
+        -91.85959471195198,
+        103.03574985023604,
+        90.4031135005494
+      ],
+      "colliding": false,
+      "margin_m": 0.0,
+      "min_distance_m": null,
+      "distance_pair_count": 85,
+      "backend": "Pinocchio/Coal security_margin predicate, stop at first collision"
+    },
+    "colliding": {
+      "joints_deg": [
+        25.384695738671965,
+        -23.264499118217557,
+        96.2895442821005,
+        91.35856067275797,
+        62.16266154961994,
+        61.55052038945979
+      ],
+      "colliding": true,
+      "margin_m": 0.0,
+      "min_distance_m": null,
+      "distance_pair_count": 85,
+      "backend": "Pinocchio/Coal security_margin predicate, stop at first collision"
+    },
+    "near": {
+      "joints_deg": [
+        -106.28476479876878,
+        -92.60422624048607,
+        89.1881279007303,
+        -68.30224376412288,
+        -140.28384890921907,
+        96.8346311072077
+      ],
+      "colliding": false,
+      "margin_m": 0.0,
+      "min_distance_m": null,
+      "distance_pair_count": 85,
+      "backend": "Pinocchio/Coal security_margin predicate, stop at first collision"
+    },
+    "interior_collision": {
+      "start": [
+        -20.95475666293774,
+        84.40178792398471,
+        36.23978012146323,
+        32.72677402676996,
+        70.65908487285986,
+        49.60106765678082
+      ],
+      "end": [
+        91.04418364055239,
+        -4.7705876508063625,
+        70.45074695809556,
+        38.29796312216219,
+        -63.15515503262296,
+        74.4417496981821
+      ],
+      "result": {
+        "accepted": false,
+        "reason": "collision_or_margin",
+        "checked_samples": 30,
+        "total_samples": 68,
+        "min_distance_m": null,
+        "rejected_fraction": 0.43283582089552236
+      }
+    },
+    "joint_order": [
+      "shoulder_pan",
+      "shoulder_lift",
+      "elbow_flex",
+      "wrist_flex",
+      "wrist_roll",
+      "gripper"
+    ],
+    "jaw_units": "URDF degrees only; NOT a normalized motor mapping"
+  },
+  "fixture_sha256": {
+    "ik": "f58ab8a3d880cc49c0e5200e656421998e5ac617e630ff355ff1ae75dc65c0c6",
+    "robot": "f73233b6fb5a0c59b97c9005a3a58d80386e3ae6d8244c353179587126866c58"
+  },
+  "retraction_replay": {
+    "accepted": true,
+    "reason": "eight_full_commands",
+    "commands": [
+      {
+        "shoulder_pan.pos": -1.7557515154885777e-06,
+        "shoulder_lift.pos": 23.899180582788325,
+        "elbow_flex.pos": -10.293621811403021,
+        "wrist_flex.pos": 2.394445354948411,
+        "wrist_roll.pos": -5.135099735186807e-07
+      },
+      {
+        "shoulder_pan.pos": -3.5028897843669785e-06,
+        "shoulder_lift.pos": 22.788544430926205,
+        "elbow_flex.pos": -8.565424369950858,
+        "wrist_flex.pos": 1.7768923794684717,
+        "wrist_roll.pos": -1.021055150824915e-06
+      },
+      {
+        "shoulder_pan.pos": -5.22378044405839e-06,
+        "shoulder_lift.pos": 21.64819083559876,
+        "elbow_flex.pos": -6.771033038186061,
+        "wrist_flex.pos": 1.122867331462025,
+        "wrist_roll.pos": -1.5172977980898432e-06
+      },
+      {
+        "shoulder_pan.pos": -6.8998023962149255e-06,
+        "shoulder_lift.pos": 20.4562038906468,
+        "elbow_flex.pos": -4.861840122159663,
+        "wrist_flex.pos": 0.4056787464829872,
+        "wrist_roll.pos": -1.996502419788939e-06
+      },
+      {
+        "shoulder_pan.pos": -8.733473193726675e-06,
+        "shoulder_lift.pos": 19.431598923135255,
+        "elbow_flex.pos": -3.331612318894097,
+        "wrist_flex.pos": -0.09994552630315291,
+        "wrist_roll.pos": -2.5384616800212663e-06
+      },
+      {
+        "shoulder_pan.pos": -1.0585106864092302e-05,
+        "shoulder_lift.pos": 18.417672928656977,
+        "elbow_flex.pos": -1.8294648022652884,
+        "wrist_flex.pos": -0.5881690061741214,
+        "wrist_roll.pos": -3.0863260659008555e-06
+      },
+      {
+        "shoulder_pan.pos": -1.2455158160991675e-05,
+        "shoulder_lift.pos": 17.41284611360185,
+        "elbow_flex.pos": -0.35285007401399193,
+        "wrist_flex.pos": -1.0599594597735909,
+        "wrist_roll.pos": -3.640284756699064e-06
+      },
+      {
+        "shoulder_pan.pos": -1.4344167829824731e-05,
+        "shoulder_lift.pos": 16.41550640911322,
+        "elbow_flex.pos": 1.1007505815649352,
+        "wrist_flex.pos": -1.5162235912399629,
+        "wrist_roll.pos": -4.20054896488492e-06
+      }
+    ],
+    "max_command_lead_deg": 13.100750581564935,
+    "measured_joints_deg": [
+      0.0,
+      25.0,
+      -12.0,
+      3.0,
+      0.0
+    ],
+    "physical_retraction": "UNVERIFIED"
+  }
+}

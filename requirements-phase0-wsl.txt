@@ -1,0 +1,15 @@
+# Separate Linux x86-64 / Python 3.12 OFFLINE environment; never install on Pi.
+# CPU wheels: use the setup script's explicit PyTorch CPU index.
+lerobot[placo-dep,feetech]==0.6.1
+placo==0.9.15
+numpy==2.2.6
+torch==2.7.1+cpu
+torchvision==0.22.1+cpu
+pygame==2.6.1
+keyboard==0.13.5
+pyserial==3.5
+feetech-servo-sdk==1.0.0
+pytest==8.4.2
+# Preserve the native ABI required by this PlaCo generation.
+cmeel-urdfdom>=4,<5
+cmeel-tinyxml2<11
