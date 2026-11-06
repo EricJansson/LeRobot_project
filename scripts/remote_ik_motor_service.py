@@ -96,7 +96,7 @@ class PiMotorBus:
     def arm(self, measured):
         applied = self.write(measured)
         if not self.torque_enabled:
-            self.bus.enable_torque()
+            self.bus.enable_torque(num_retry=1)
             self.torque_enabled = True
         return applied
 

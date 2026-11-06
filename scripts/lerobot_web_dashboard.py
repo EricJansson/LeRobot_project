@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import socket
 import sys
-from threading import Thread
+from threading import Event, Thread
 from time import monotonic
 
 
@@ -19,11 +19,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/telemetry":
             payload = json.dumps(self.server.telemetry()).encode()
             self.respond(HTTPStatus.OK, "application/json", payload)
+        elif self.path == "/api/exit":
+            self.watch_exit()
         else:
             self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
 
     def do_POST(self):
         self.respond(HTTPStatus.METHOD_NOT_ALLOWED, "text/plain", b"Read-only dashboard")
+
+    def watch_exit(self):
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            # An open stream can deliver the final message even when the
+            # browser has slowed its telemetry polling in a background tab.
+            while not self.server.closing.is_set():
+                self.wfile.write(b": waiting for exit\n\n")
+                self.server.closing.wait(5)
+            if self.server.exit_reason is not None:
+                reason = json.dumps(self.server.exit_reason).encode()
+                self.wfile.write(b"event: stopped\ndata: " + reason + b"\n\n")
+        except OSError:
+            pass  # Browser closed the stream.
 
     def respond(self, status, content_type, body):
         self.send_response(status)
@@ -41,10 +60,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 class WebDashboard(ThreadingHTTPServer):
     allow_reuse_address = sys.platform != "win32"
+    daemon_threads = False  # Flush the exit event before the process ends.
 
     def __init__(self, host, port):
         self.page = Path(__file__).with_suffix(".html").read_bytes()
         self._sample = None
+        self.exit_reason = None
+        self.closing = Event()
         super().__init__((host, port), DashboardHandler)
 
     @property
@@ -91,7 +113,12 @@ class WebDashboard(ThreadingHTTPServer):
             raise
         return self
 
-    def __exit__(self, *_):
+    def __exit__(self, exc_type, *_):
+        if exc_type is KeyboardInterrupt and self.exit_reason is None:
+            self.exit_reason = "Ctrl+C pressed"
+        elif exc_type is None and self.exit_reason is None:
+            self.exit_reason = "Session ended"
+        self.closing.set()
         self.shutdown()
         self.server_close()
         self._thread.join()

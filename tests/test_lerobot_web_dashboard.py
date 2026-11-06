@@ -1,4 +1,5 @@
 from http.client import HTTPConnection
+from contextlib import nullcontext
 import json
 import socket
 
@@ -72,3 +73,35 @@ def test_dashboard_http_and_shutdown():
     with pytest.raises(ConnectionRefusedError):
         with socket.create_connection(("127.0.0.1", dashboard.port), timeout=4):
             pytest.fail("Dashboard is still accepting connections")
+
+
+@pytest.mark.parametrize(("error", "reason"), [
+    (None, "Esc pressed"),
+    (KeyboardInterrupt, "Ctrl+C pressed"),
+    (RuntimeError, None),
+])
+def test_dashboard_exit_event_distinguishes_stops_from_unexpected_errors(error, reason):
+    try:
+        dashboard = WebDashboard("127.0.0.1", 0)
+    except PermissionError:
+        pytest.skip("Local sockets are disabled in this environment")
+
+    connection = HTTPConnection("127.0.0.1", dashboard.port, timeout=2)
+    try:
+        with (pytest.raises(error) if error else nullcontext()), dashboard:
+            connection.request("GET", "/api/exit")
+            response = connection.getresponse()
+            assert response.status == 200
+            assert response.getheader("Content-Type") == "text/event-stream"
+            assert response.readline() == b": waiting for exit\n"
+            assert response.readline() == b"\n"
+            if error:
+                raise error()
+            dashboard.exit_reason = reason
+        if reason is None:
+            assert response.read() == b""
+        else:
+            assert response.readline() == b"event: stopped\n"
+            assert json.loads(response.readline().removeprefix(b"data: ")) == reason
+    finally:
+        connection.close()

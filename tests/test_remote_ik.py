@@ -21,6 +21,7 @@ from robot_program.lerobot_ik_controller import DEFAULT_URDF, LeRobotPoseSolver
 from robot_program.remote_ik_protocol import (
     CHANNELS, PROTOCOL_VERSION, calibrated_follower, channel_limits, kinematic_urdf,
 )
+from scripts import main_teleop_remote_ik as remote_teleop
 from scripts.install_remote_ik_pi import bundle
 from scripts.main_teleop_remote_ik import ControlLoop, LatestInput, MotorLink, PiTunnel
 from scripts.remote_ik_motor_service import MotorSession, PiMotorBus, ProtocolError, serve
@@ -150,11 +151,31 @@ def test_pi_motor_bus_uses_normalized_channels_and_goals_before_torque():
     calls = []
     bus = SimpleNamespace(sync_read=lambda register: positions if register == "Present_Position" else {},
                           sync_write=lambda register, targets: calls.append((register, targets)),
-                          enable_torque=lambda: calls.append("torque"))
+                          enable_torque=lambda *, num_retry: calls.append(("torque", num_retry)))
     adapter = PiMotorBus(SimpleNamespace(bus=bus), __file__)
     assert adapter.read() == values
     assert adapter.arm(values) == values
-    assert calls == [("Goal_Position", positions), "torque"]
+    assert calls == [("Goal_Position", positions), ("torque", 1)]
+
+
+def test_failed_torque_enable_leaves_real_arm_disarmed():
+    writes = []
+
+    def enable_torque(*, num_retry):
+        raise ConnectionError("Incorrect status packet")
+
+    bus = SimpleNamespace(sync_read=lambda register: dict.fromkeys(CHANNELS, 0.),
+                          sync_write=lambda register, targets: writes.append(targets),
+                          enable_torque=enable_torque)
+    adapter = PiMotorBus(SimpleNamespace(bus=bus), __file__)
+    motor = MotorSession(adapter, limits=LIMITS, model="fixture", token=TOKEN, watchdog=.15,
+                         hz=50, arm_rate=100, gripper_rate=50, simulated=False, allow_motion=True)
+    feedback = command(motor, hello(motor), "arm")
+    assert feedback["fault"] and "Incorrect status packet" in feedback["reason"]
+    assert not feedback["armed"] and not adapter.torque_enabled
+    feedback = command(motor, feedback, "move", target=[1.] * 6)
+    assert feedback["fault"] and not feedback["moving"]
+    assert writes == [dict.fromkeys(CHANNELS, 0.)]
 
 
 def test_pi_motor_bus_attempts_to_relax_every_motor():
@@ -302,9 +323,14 @@ def test_pi_tunnel_stops_only_its_own_service(monkeypatch, started_here):
     commands = []
     tunnel = PiTunnel("eric@rpi", simulated=not started_here)
 
-    def service_command(command, *, timeout):
+    if started_here:
+        tunnel.hardware_config = 'REMOTE_IK_HARDWARE_ARGS="--serial-port /dev/serial/by-id/test"\n'
+
+    def service_command(command, *, timeout, config=None):
         commands.append(command)
         if len(commands) == 1:
+            assert config == tunnel.hardware_config
+            assert ('cmp -s "$tmp" "$config"' in command) is started_here
             return SimpleNamespace(stdout=f"{invocation if started_here else ''}\n{'b' * 64}\n",
                                    stderr="", returncode=0)
         return SimpleNamespace(stdout="", stderr="", returncode=0)
@@ -318,6 +344,40 @@ def test_pi_tunnel_stops_only_its_own_service(monkeypatch, started_here):
         assert invocation in commands[1] and f"systemctl --user stop {tunnel.unit}" in commands[1]
     else:
         assert len(commands) == 1
+
+
+def test_hardware_config_imports_once_then_uses_local_edits(tmp_path, monkeypatch):
+    path = tmp_path / "remote_ik.hardware.conf"
+    monkeypatch.setattr(remote_teleop, "HARDWARE_CONFIG", path)
+    tunnel = PiTunnel("eric@rpi", simulated=False)
+    original = 'REMOTE_IK_HARDWARE_ARGS="--serial-port /dev/serial/by-id/test --arm-rate 20"\n'
+    reads = []
+
+    def service_command(command, *, timeout):
+        reads.append(command)
+        return SimpleNamespace(stdout=original, stderr="", returncode=0)
+
+    monkeypatch.setattr(tunnel, "service_command", service_command)
+    assert tunnel.load_hardware_config() == original
+    assert path.read_text(encoding="utf-8") == original
+
+    edited = original.replace("--arm-rate 20", "--arm-rate 40")
+    path.write_bytes(("# Saved on Windows\n" + edited).replace("\n", "\r\n").encode("utf-8-sig"))
+    assert tunnel.load_hardware_config() == edited
+    assert len(reads) == 1
+
+    path.write_text(edited + "UNEXPECTED_SETTING=1\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="one REMOTE_IK_HARDWARE_ARGS"):
+        tunnel.load_hardware_config()
+
+
+def test_dashboard_hardware_settings_only_exposes_supported_fields():
+    config = ('REMOTE_IK_HARDWARE_ARGS="--serial-port /dev/serial/by-id/test --allow-motion '
+              '--hz 50 --watchdog-ms 200 --arm-rate=40 --gripper-rate 10 --token-file /private/token"\n')
+    assert remote_teleop.dashboard_hardware_settings(config) == {
+        "serial-port": "/dev/serial/by-id/test", "allow-motion": True, "hz": "50",
+        "watchdog-ms": "200", "arm-rate": "40", "gripper-rate": "10",
+    }
 
 
 def test_auth_and_reconnect(rig):

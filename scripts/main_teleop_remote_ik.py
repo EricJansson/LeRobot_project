@@ -8,6 +8,7 @@ from pathlib import Path
 from queue import Empty, Queue
 import re
 import secrets
+import shlex
 import socket
 import subprocess
 import sys
@@ -25,11 +26,13 @@ from scripts.remote_ik_motor_service import MotorSession, SimulatedBus, serve
 
 
 ROOT = Path(__file__).resolve().parents[1]
+HARDWARE_CONFIG = ROOT / "remote_ik.hardware.conf"
 PI_UNIT = "lerobot-remote-ik"
 PI_SIM_PORT = PI_PORT + 1
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5"]
 DEFAULT_WSL_PYTHON = ".local/share/lerobot-phase0/venv/bin/python"
 VK_ESCAPE = 0x1B
+TELEOP_ERRORS = (OSError, RuntimeError, ValueError, subprocess.SubprocessError)
 
 
 def load_key_state():
@@ -37,6 +40,26 @@ def load_key_state():
     get_key_state.argtypes = (ctypes.c_int,)
     get_key_state.restype = ctypes.c_short
     return get_key_state
+
+
+def dashboard_hardware_settings(config):
+    """Select the public settings from the snapshot sent to the Pi."""
+    try:
+        args = shlex.split(config.partition("=")[2])
+        if len(args) == 1:
+            args = shlex.split(args[0])
+    except ValueError:
+        return None
+    fields = ("serial-port", "hz", "watchdog-ms", "arm-rate", "gripper-rate")
+    settings = {"allow-motion": "--allow-motion" in args}
+    for index, arg in enumerate(args):
+        name, equals, value = arg.partition("=")
+        if name.startswith("--") and name[2:] in fields:
+            if equals:
+                settings[name[2:]] = value
+            elif index + 1 < len(args):
+                settings[name[2:]] = args[index + 1]
+    return settings
 
 
 class Worker:
@@ -129,7 +152,7 @@ class MotorLink:
             self.socket.settimeout(min(0.5, self.feedback["watchdog_s"] * 2))
             if self.relax_on_exit:
                 if not self.feedback["motion_enabled"]:
-                    raise RuntimeError("--relax-on-exit requires --allow-motion in the Pi hardware.env")
+                    raise RuntimeError("--relax-on-exit requires --allow-motion in remote_ik.hardware.conf")
                 if self.request("relax_on_exit").get("relax_on_exit") is not True:
                     raise RuntimeError("Pi service needs an update for --relax-on-exit. Run scripts.install_remote_ik_pi.")
             return self
@@ -164,6 +187,8 @@ class PiTunnel:
         self.relax_on_exit = relax_on_exit
         self.unit = PI_UNIT + ("-sim.service" if simulated else ".service")
         self.mode = "sim" if simulated else "live"
+        self.hardware_config = None
+        self.hardware_settings = None
         self.invocation = ""
         self.process = None
         self.closed = False
@@ -197,31 +222,75 @@ class PiTunnel:
                 print(f"Could not confirm clean shutdown of {self.unit} on {self.host}. {exc}",
                       file=sys.stderr)
 
-    def service_command(self, command, *, timeout):
+    def service_command(self, command, *, timeout, config=None):
         # Serialize startup and shutdown with other Windows launchers. Keep the
         # lock off the motor loop and release it before opening the SSH tunnel.
         remote = (f'set -e; umask 077; config_dir="$HOME/.config/lerobot-remote-ik"; '
                   f'exec 9>"$config_dir/{self.mode}.lock"; flock -x 9; {command}')
-        return subprocess.run([*SSH, self.host, remote], capture_output=True, text=True, timeout=timeout)
+        return subprocess.run([*SSH, self.host, remote], input=config, capture_output=True,
+                              encoding="utf-8", timeout=timeout)
+
+    def load_hardware_config(self):
+        try:
+            contents = HARDWARE_CONFIG.read_text(encoding="utf-8-sig")
+            imported = False
+        except FileNotFoundError:
+            result = self.service_command(
+                'config="$config_dir/hardware.env"; '
+                'if test -s "$config" && test "$(stat -c %a "$config")" = 600; then cat "$config"; '
+                "else echo 'Create remote_ik.hardware.conf in the Windows checkout. "
+                "See readme_files/REMOTE_IK_SETUP.md.' >&2; exit 1; fi",
+                timeout=10,
+            )
+            if result.returncode:
+                error = OSError if result.returncode == 255 else RuntimeError
+                raise error(result.stderr.strip() or "Could not import hardware settings from the Pi.")
+            contents = result.stdout
+            imported = True
+        except (OSError, UnicodeError) as exc:
+            raise RuntimeError(f"Could not read {HARDWARE_CONFIG}: {exc}") from exc
+
+        lines = [line.strip() for line in contents.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+        if len(lines) != 1 or not re.fullmatch(r'REMOTE_IK_HARDWARE_ARGS=[^\x00-\x1f]+', lines[0]):
+            raise RuntimeError(f"{HARDWARE_CONFIG.name} must contain one REMOTE_IK_HARDWARE_ARGS setting. "
+                               "See readme_files/REMOTE_IK_SETUP.md.")
+        config = lines[0] + "\n"
+        if imported:
+            try:
+                with HARDWARE_CONFIG.open("x", encoding="utf-8") as file:
+                    file.write(config)
+            except FileExistsError:
+                return self.load_hardware_config()
+            print(f"Copied Pi hardware settings to {HARDWARE_CONFIG}", flush=True)
+        return config
 
     def start_service(self):
-        preflight = ('config="$config_dir/hardware.env"; '
-                     'test -s "$config" && test "$(stat -c %a "$config")" = 600 || '
-                     "{ echo 'Real arm mode requires a private Pi hardware.env (mode 0600). "
-                     "See readme_files/REMOTE_IK_SETUP.md.' >&2; exit 1; }; "
-                     if not self.simulated else "")
+        sync = ""
+        if not self.simulated:
+            if self.hardware_config is None:
+                self.hardware_config = self.load_hardware_config()
+            size = len(self.hardware_config.encode("utf-8"))
+            # Receive the settings as data. Only replace the private file once
+            # the upload has finished, and before systemd reads it.
+            sync = ('config="$config_dir/hardware.env"; '
+                    'tmp=$(mktemp "$config.XXXXXXXX"); trap \'rm -f -- "$tmp"\' EXIT; '
+                    'tr -d \'\\r\' > "$tmp"; '
+                    f'if test "$(wc -c < "$tmp")" -ne {size}; then '
+                    "echo 'Incomplete hardware settings upload.' >&2; exit 1; fi; "
+                    'if ! cmp -s "$tmp" "$config" || test "$(stat -c %a "$config")" != 600; then '
+                    'mv -fT -- "$tmp" "$config"; fi; ')
         active = (f'test "$invocation" = "{self.invocation}" || '
                   "{ echo 'Real arm service is already running on the Pi. Close its launcher or stop the "
                   "service with the arm supported before starting a new session.' >&2; exit 1; }; "
                   if not self.simulated else "")
-        command = (f"{preflight}if systemctl --user is-active --quiet {self.unit}; then "
+        command = (f"if systemctl --user is-active --quiet {self.unit}; then "
                    f'invocation=$(systemctl --user show -p InvocationID --value {self.unit}); {active}'
                    f'if test "$invocation" != "{self.invocation}"; then invocation=; fi; '
-                   f"else systemctl --user start {self.unit}; "
+                   f"else {sync}systemctl --user start {self.unit}; "
                    f"systemctl --user is-active --quiet {self.unit}; "
                    f"invocation=$(systemctl --user show -p InvocationID --value {self.unit}); fi; "
                    f'printf "%s\\n" "$invocation"; cat "$config_dir/{self.mode}.token"')
-        result = self.service_command(command, timeout=27)
+        result = self.service_command(command, timeout=27, config=self.hardware_config)
         invocation, _, token = result.stdout.partition("\n")
         if re.fullmatch(r"[a-f0-9]{32}", invocation):
             self.invocation = invocation
@@ -231,6 +300,8 @@ class PiTunnel:
                 raise OSError(detail)
             raise RuntimeError(detail)
         self.token = token.strip()
+        if self.hardware_config is not None:
+            self.hardware_settings = dashboard_hardware_settings(self.hardware_config)
 
     def connect(self, metadata):
         with self.lock:
@@ -459,6 +530,7 @@ def main():
                 while not stop.is_set():
                     # Windows reports a held key as a negative signed SHORT.
                     if get_key_state(VK_ESCAPE) < 0:
+                        dashboard.exit_reason = "Esc pressed"
                         stop.set()
                         print("Esc pressed. Stopping teleop.", flush=True)
                         break
@@ -466,7 +538,9 @@ def main():
                     now = monotonic()
                     if now >= next_dashboard:
                         sample = latest.sample
-                        status = control.status
+                        status = dict(control.status)
+                        if args.real_arm:
+                            status["hardware_settings"] = tunnel.hardware_settings
                         measured = status.get("measured")
                         xyz = status.get("xyz_m")
                         dashboard.publish(dict(zip(CHANNELS[:5], measured[:5])) if measured else {},
@@ -479,10 +553,12 @@ def main():
                 stop.set()
                 thread.join(timeout=2)
             if control.error:
+                if isinstance(control.error, TELEOP_ERRORS):
+                    dashboard.exit_reason = str(control.error) or "Control loop stopped"
                 raise control.error
     except KeyboardInterrupt:
         pass
-    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+    except TELEOP_ERRORS as exc:
         parser.exit(1, f"Remote IK: {exc}\n")
 
 

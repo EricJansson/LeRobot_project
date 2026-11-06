@@ -181,6 +181,8 @@ def main():
                     print(f"Dashboard available at http://{host}:{dashboard.port}/")
             print("LeRobot IK ready. Hold the left shoulder button to move. Ctrl+C exits.")
             run_loop(robot, gp, state, dashboard)
+            if dashboard is not None:
+                dashboard.exit_reason = "Controller disconnected"
     except KeyboardInterrupt:
         pass
     except (ImportError, RuntimeError, ValueError, KeyError, OSError) as exc:

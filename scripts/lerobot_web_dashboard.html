@@ -13,7 +13,6 @@
       --muted: #8c8c96;
       --accent: #5aaaff;
       --ok: #5ac88c;
-      --warn: #ffb400;
     }
     * { box-sizing: border-box; }
     body { margin: 0; }
@@ -22,6 +21,23 @@
     h1 { margin: 0 0 4px; font-size: 22px; line-height: 26px; }
     p { margin: 0; }
     header p { color: var(--muted); line-height: 22px; overflow-wrap: anywhere; }
+    .status-card {
+      --status-color: #b9b9c6;
+      background: #24242b;
+      border: 1px solid var(--status-color);
+      border-left-width: 5px;
+      border-radius: 10px;
+      margin: 8px 0 16px;
+      min-height: 86px;
+      padding: 10px 14px;
+      overflow-wrap: anywhere;
+    }
+    .status-card[data-tone="green"] { --status-color: #79e3ac; background: #173629; }
+    .status-card[data-tone="red"] { --status-color: #ffa7ad; background: #3b2025; }
+    .status-card[data-tone="stopped"] { --status-color: #6d788b; background: #151a24; }
+    .status-card .eyebrow { color: #d0d0da; font-size: 12px; }
+    #status { color: var(--status-color); font-size: 22px; font-weight: bold; }
+    #status-detail { color: #e6e6eb; font-size: 13px; margin-top: 4px; }
     .dashboard {
       display: grid;
       grid-template-columns: minmax(170px, 1fr) 400px;
@@ -91,9 +107,9 @@
     .badge[data-held="true"] { background: #276745; }
     .connection { grid-area: 2 / 1; font-size: 13px; }
     .connection .mode { margin-top: 4px; color: var(--muted); }
-    #status { color: var(--ok); }
-    #status[data-state="waiting"] { color: var(--muted); }
-    #status[data-state="stale"] { color: var(--warn); }
+    .settings { grid-column: 1 / -1; }
+    .settings .rows div { grid-template-columns: 145px minmax(0, 1fr); }
+    .settings dd { text-align: left; white-space: normal; overflow-wrap: anywhere; }
     #age { margin-top: 4px; color: var(--muted); font-size: 13px; }
     @media (max-width: 639px) {
       .dashboard { display: flex; flex-direction: column; min-height: 0; }
@@ -107,6 +123,11 @@
     <p id="device">Device: —</p>
     <p id="device-details">SO-101 · LeRobot IK</p>
   </header>
+  <div id="status-card" class="status-card" data-tone="neutral" role="status" aria-atomic="true">
+    <p class="eyebrow">Control status</p>
+    <p id="status">Waiting for telemetry</p>
+    <p id="status-detail" hidden></p>
+  </div>
   <div class="dashboard">
     <section class="controller" aria-label="Gamepad">
       <svg id="gamepad" viewBox="0 0 170 200" role="img" aria-labelledby="gamepad-title" data-live="false">
@@ -204,18 +225,31 @@
     </div>
 
     <footer class="connection">
-      <p id="status" role="status" data-state="waiting">Waiting for telemetry</p>
       <p id="remote-status" hidden></p>
       <p id="remote-target" hidden></p>
       <p id="remote-timing" hidden></p>
       <p id="age" hidden></p>
       <p class="mode">SO-101 · LeRobot IK · Read-only</p>
     </footer>
+    <section id="hardware-settings" class="panel settings" aria-labelledby="settings-heading" hidden>
+      <h2 id="settings-heading">Pi hardware settings</h2>
+      <p>From remote_ik.hardware.conf for this run</p>
+      <dl class="rows">
+        <div><dt>Serial adapter</dt><dd data-setting="serial-port">—</dd></div>
+        <div><dt>Motion allowed</dt><dd data-setting="allow-motion">—</dd></div>
+        <div><dt>Motor cycle</dt><dd data-setting="hz" data-unit=" Hz">—</dd></div>
+        <div><dt>Watchdog</dt><dd data-setting="watchdog-ms" data-unit=" ms">—</dd></div>
+        <div><dt>Arm rate limit</dt><dd data-setting="arm-rate" data-unit=" °/s">—</dd></div>
+        <div><dt>Gripper rate limit</dt><dd data-setting="gripper-rate" data-unit=" units/s">—</dd></div>
+      </dl>
+    </section>
   </div>
 </main>
 <script>
   const byId = id => document.getElementById(id);
+  const statusCard = byId('status-card');
   const statusLabel = byId('status');
+  const statusDetail = byId('status-detail');
   const ageLabel = byId('age');
   const lbLabel = byId('lb-status');
   const graphic = byId('gamepad');
@@ -227,6 +261,7 @@
   let sample = null;
   let sampleTime = null;
   let requestFailed = false;
+  let exitReason = null;
   let displayedGamepad;
 
   function setText(element, value) {
@@ -274,13 +309,39 @@
     byId('controller-status').hidden = gamepad !== null;
   }
 
+  function controlStatus(fresh, stale) {
+    if (exitReason !== null) return ['stopped', 'Program stopped', exitReason];
+    if (stale) return ['red', 'Telemetry unavailable', 'Readings may be stale'];
+
+    const remote = fresh?.remote;
+    if (remote?.connection === 'Disconnected') {
+      return ['red', 'Pi connection lost', ['Readings may be stale', remote.reason].filter(Boolean).join(' · ')];
+    }
+    if (remote?.connection === 'Connecting') return ['neutral', 'Connecting to Pi', remote.reason];
+    switch (remote?.state) {
+      case 'Fault': return ['red', 'Motor fault', remote.reason];
+      case 'Moving': return ['green', 'Active - moving', remote.reason || 'Sending movement commands'];
+      case 'Armed': return ['green', 'Active', remote.reason || 'Ready for movement input'];
+      case 'Disarmed':
+        return ['neutral', 'Disarmed', remote.reason ||
+          (remote.mode === 'Observe only' ? 'Observe only · motion disabled' : 'Movement disabled')];
+      default:
+        if (!fresh) return ['neutral', 'Waiting for telemetry', ''];
+        return fresh.gamepad_enabled
+          ? ['green', 'Control enabled', 'LB held']
+          : ['neutral', 'Standing by', 'LB released'];
+    }
+  }
+
   function updateStatus() {
     const age = sampleTime === null ? null : (performance.now() - sampleTime) / 1000;
     const stale = requestFailed || age > 3 || (age !== null && sample === null);
-    const fresh = stale ? null : sample;
-    statusLabel.dataset.state = stale ? 'stale' : fresh ? 'live' : 'waiting';
-    setText(statusLabel, stale ? 'Telemetry unavailable · readings may be stale'
-      : fresh ? 'Live telemetry' : 'Waiting for telemetry');
+    const fresh = stale || exitReason !== null ? null : sample;
+    const [tone, label, detail] = controlStatus(fresh, stale);
+    statusCard.dataset.tone = tone;
+    setText(statusLabel, label);
+    setText(statusDetail, detail ?? '');
+    statusDetail.hidden = !detail;
     ageLabel.hidden = age === null;
     if (age !== null) setText(ageLabel, `Last sample ${age.toFixed(1)} s ago`);
 
@@ -301,8 +362,7 @@
     remoteTarget.hidden = !remote;
     remoteTiming.hidden = !remote || remote.feedback_hz == null;
     if (remote) {
-      const reason = remote.reason ? ` · ${remote.reason}` : '';
-      setText(remoteStatus, `${remote.mode} · ${remote.connection} · ${remote.state}${reason}`);
+      setText(remoteStatus, `${remote.mode} · ${remote.connection}`);
       const xyz = remote.requested_xyz_m?.map(m => (m * 1000).toFixed(1)).join(', ');
       const candidate = remote.candidate?.map(v => v.toFixed(1)).join(', ');
       const sent = remote.sent?.map(v => v.toFixed(1)).join(', ');
@@ -315,6 +375,7 @@
   }
 
   async function poll() {
+    if (exitReason !== null) return;
     const started = performance.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 2000);
@@ -324,6 +385,16 @@
       sample = await response.json();
       if (sample) {
         renderReadings(sample);
+        const settings = sample.remote?.hardware_settings;
+        const settingsPanel = byId('hardware-settings');
+        settingsPanel.hidden = !settings;
+        if (settings) {
+          for (const field of settingsPanel.querySelectorAll('[data-setting]')) {
+            const value = settings[field.dataset.setting];
+            setText(field, typeof value === 'boolean' ? (value ? 'Yes' : 'No')
+              : value == null ? 'Default' : value + (field.dataset.unit ?? ''));
+          }
+        }
         const gamepad = sample.gamepad;
         setText(byId('device'), `Device: ${gamepad?.name ?? '—'}`);
         setText(byId('device-details'), gamepad
@@ -342,6 +413,12 @@
   }
 
   setInterval(updateStatus, 250);
+  const exitStream = new EventSource('/api/exit');
+  exitStream.addEventListener('stopped', event => {
+    exitReason = JSON.parse(event.data);
+    exitStream.close();
+    updateStatus();
+  });
   poll();
 </script>
 </body>
