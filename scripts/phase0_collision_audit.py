@@ -286,7 +286,7 @@ def study_sampling(checker, corpus, margin):
     return {"timing": report, "disagreements": disagreements}
 
 
-def study_timing(checker, controller, replay_requests, start, targets, fixtures, margin):
+def study_timing(checker, controller, replay_requests, start, targets, fixtures, margin, *, path_check=f.check_path):
     cases = json.loads(f.FIXTURES.read_text(encoding="utf-8"))["cases"]
     cases += [{"name": "collision_near", "joints_deg": fixtures["near"]["joints_deg"][:5]},
               {"name": "retraction_16mm", "joints_deg": start[:5], "translation_m": [-0.016, 0., 0.]}]
@@ -312,15 +312,15 @@ def study_timing(checker, controller, replay_requests, start, targets, fixtures,
             result = controller.solve_pose(target, measured)
             if not result.accepted:
                 return {"accepted": False, "reason": f"ik: {result.reason}"}
-            return f.check_path(checker, path_start, [*result.joints_deg, jaw], resolution, margin)
+            return path_check(checker, path_start, [*result.joints_deg, jaw], resolution, margin)
 
         timings[name] = {"start_deg": list(map(float, path_start)), "target_pose": target.tolist(),
                          "candidate_deg": path_end, "combined": f.measure(combined)}
         if path_end is not None:
-            timings[name]["path_only"] = f.measure(lambda: f.check_path(checker, path_start, path_end, resolution, margin))
+            timings[name]["path_only"] = f.measure(lambda: path_check(checker, path_start, path_end, resolution, margin))
         print(f"Completed timing for {name}", flush=True)
     transition = fixtures["interior_collision"]
-    timings["interior_collision"] = {"path_only": f.measure(lambda: f.check_path(
+    timings["interior_collision"] = {"path_only": f.measure(lambda: path_check(
         checker, transition["start"], transition["end"], resolution, margin))}
     return {"resolution_deg": resolution, "cases": timings}
 

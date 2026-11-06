@@ -242,9 +242,19 @@ legacy dashboard code was deliberately unchanged. A first Linux run occurred
 before fixture generation completed and failed the new missing-fixture test;
 the complete final run above passes with the saved fixtures.
 
-No Windows gamepad was detected. The CLI writes a blocked report; actual polling,
-button/trigger mapping, neutral behavior and deadman verification are **not
-verified**. No Pi serial timing was collected. The historical ~2.78 ms six-motor
+The initial Windows session detected no gamepad. On November 6 the connected
+controller appeared to SDL as `Controller (XBOX 360 For Windows)`. A 500-sample
+polling benchmark measured 0.0057 ms median, 0.0236 ms p99 and 0.0456 ms worst.
+The last raw sample showed centered sticks and D-pad, released buttons and
+triggers at their idle value. This measures the input read cost. [Polling data](phase0_results/windows_gamepad_connected.json)
+
+**HARDWARE VERIFIED (gamepad input only, owner observation).** The owner ran
+the standalone `python.exe -B -m scripts.controller_dashboard`
+in the activated VS Code environment and saw the controls match their bindings.
+The dashboard confirms visible input mapping. The hold-to-move command gate
+is checked separately with a fake arm, and physical stopping remains unverified.
+
+No Pi serial timing was collected. The historical ~2.78 ms six-motor
 read figure remains reported background, not a reproduced result or a write/read
 cycle measurement. There is no end-to-end 50 Hz or motion-latency claim.
 
@@ -394,6 +404,57 @@ The [raw study data](phase0_results/wsl_pair_margins.json) records the profile
 thresholds, triggering mesh instances, hinge angles, sampled disagreement
 witnesses, individual timing samples, environment and source hashes.
 
+## Faster collision checking and late requests
+
+**OFFLINE VERIFIED.** A follow-up kept the same focused 115 pairs, clearances
+and sampled paths. A per-pair probe found that the two close-fitting gripper
+pairs accounted for about 26 ms of the final retraction's 45 ms of native pair
+queries. The new checker shortens the search for extra distance information on
+adjacent pairs. It also reuses a clear result if a stricter query established
+extra clearance and the calculated maximum mesh displacement fits within that
+clearance. It queries the configured margin directly if the stricter query
+cannot prove clearance. The cache starts empty for each timed path.
+
+The new checker matched the full list of triggering pairs at 2,019 sampled
+poses. It matched the reference's path outcome and first rejection sample for
+all 1,295 paths at each of 0.5° and 0.125°. This includes the known elbow and
+wrist interference and the saved collision between clear endpoints. All eight
+full retraction paths still passed.
+
+| Workload | Reference median / p99 | Faster checker median / p99 | Faster checker over 20 ms |
+|---|---:|---:|---:|
+| Short paths, 0.5° | 11.679 / 24.387 ms | 5.821 / 12.873 ms | 0/1,295 |
+| Short paths, 0.125° | 39.165 / 82.779 ms | 18.517 / 41.475 ms | 629/1,295 |
+| Eight retractions, IK + 0.5° path | 27.979 / 48.979 ms | 3.674 / 5.673 ms | 0/4,000 |
+| Long interior-collision path, 0.5° | 160.015 / 174.711 ms | 82.199 / 90.881 ms | 500/500 |
+
+The two short-path rows timed both checkers on the same run. The other rows use
+the earlier reference timings above. The slowest combined retraction took
+7.323 ms, and the slowest short 0.5° path took 18.071 ms. These are WSL2 worker
+times. Windows input, IPC, Wi-Fi, Pi serial and physical response have separate
+timing costs. The finer grid remains a comparison and the long transition
+remains a stress case.
+
+A 20 ms worker deadline was exercised with simulated feedback that followed
+immediately, lagged or stayed fixed. Each scenario issued all eight valid fake
+targets. Injected late, stale and superseded requests issued none. A separate
+fresh request could pass after those faults. The experiment checks time before
+sampling another pose and again before returning a clear target. It cannot
+interrupt a native call already in progress. The Pi loop should run
+independently and discard late targets. The worker's share of the 20 ms period
+and the Pi's stop/hold policy still need end-to-end measurements and hardware
+review. These experiments establish sampled model behavior only.
+
+The focused WSL2 regression run passed all 59 feasibility, gamepad mapping
+and LeRobot IK tests.
+
+Rerun the [timing study](phase0_results/wsl_hinge_collision_timing.json) in WSL2.
+
+```bash
+"$HOME/.local/share/lerobot-phase0/venv/bin/python" -B -m scripts.phase0_collision_timing \
+  --output .runtime/phase0_collision_timing.json
+```
+
 ## Decisions, remaining gates and rollback
 
 Retain WSL2/PlaCo provisionally for IK. Reject exact all-pair distances as the
@@ -404,24 +465,33 @@ offline work, not a motion release or Phase 1 implementation in this pass.
 
 Unresolved decisions and next steps:
 
-1. Verify the actual Windows gamepad, mapping, neutral inputs and hold-to-move
-   behavior; measure polling when the device is available.
-2. Review every collision exclusion, mesh alignment/scale, physical FK and elbow
-   offset before selecting a margin or path subdivision. Replay existing measured
-   references if supplied; collecting new measurements remains outside this pass.
-3. Establish normalized jaw ↔ URDF geometry conversion; do not reuse the custom
+1. Review the collision exclusions, mesh alignment/scale, physical FK and elbow
+   offset before selecting a margin or path subdivision. The [seven historical
+   poses](helper_files/robot_orientations.md) contain images and legacy readings.
+   Four have body angles outside current URDF limits, including +100.20° elbow
+   flex versus the modeled +96.83° limit. They contain no measured tool XYZ or
+   paired jaw geometry and normalized readings. Current pose measurements are
+   needed to resolve the discrepancies, subject to owner approval.
+2. Establish normalized jaw ↔ URDF geometry conversion; do not reuse the custom
    degree-bound mismatch or infer that normalized values are angles.
-4. Establish a conservative path/timeout policy for longer movements and native
+3. Establish a conservative path/timeout policy for longer movements and native
    query outliers. Sampled clear paths are not continuous guarantees.
-5. Choose Windows/WSL and PC/Pi transports after representative payload/load,
+4. Choose Windows/WSL and PC/Pi transports after representative payload/load,
    fault and jitter tests. The echo protocol is not a selected control protocol.
-6. Leave watchdog timeout, bounded loaded stop/hold, torque policy, Pi rate limits,
+5. Leave watchdog timeout, bounded loaded stop/hold, torque policy, Pi rate limits,
    remote supervision and actual end-to-end criteria unsettled. No 5° limiter,
    stale-command resume or repeated sagging-pose capture policy was introduced.
-7. Measure Pi bus read/write and physical response only in separately authorized
+6. Measure Pi bus read/write and physical response only in separately authorized
    hardware work. Establish its current owner, port and calibration match then.
+
+Start the manual follow-up with the arm stationary. With owner approval, identify
+the Pi's current motor owner, adapter and calibration, then pair the reported
+joint positions and jaw reading with a measured tool position and jaw opening.
+Record the physical reference point and measurement uncertainty. Time position
+reads separately. Benchmark writes and physical stopping in later approved
+steps with the owner at the arm.
 
 Rollback requires no legacy command change: continue using the existing modes
 and interpreters. The new benchmark is opt-in, has no service or automatic startup,
 and uses an isolated WSL environment. Reports and fixtures are development
-artifacts. No Git staging, commits, hardware operations or branch deletion occurred.
+artifacts. No Git staging, commits, robot hardware operations or branch deletion occurred.

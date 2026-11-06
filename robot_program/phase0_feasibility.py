@@ -136,12 +136,15 @@ def path_samples(start, end, resolution_deg):
     return np.linspace(start, end, steps + 1)
 
 
-def check_path(checker, start, end, resolution_deg, margin_m):
+def check_path(checker, start, end, resolution_deg, margin_m, *, deadline_ns=None, clock_ns=perf_counter_ns):
     if not math.isfinite(margin_m) or margin_m < 0:
         raise ValueError("Margin must be finite and nonnegative")
     samples = path_samples(start, end, resolution_deg)
     minimum = None
     for index, q in enumerate(samples):
+        if deadline_ns is not None and clock_ns() >= deadline_ns:
+            return {"accepted": False, "reason": "deadline", "checked_samples": index,
+                    "total_samples": len(samples), "min_distance_m": minimum}
         if callable(getattr(checker, "query_with_margin", None)):
             result = checker.query_with_margin(q, margin_m)
             if result.get("margin_m") != margin_m:
@@ -158,6 +161,9 @@ def check_path(checker, start, end, resolution_deg, margin_m):
             return {"accepted": False, "reason": "collision_or_margin",
                     "checked_samples": index + 1, "total_samples": len(samples),
                     "min_distance_m": minimum, "rejected_fraction": index / (len(samples) - 1)}
+    if deadline_ns is not None and clock_ns() >= deadline_ns:
+        return {"accepted": False, "reason": "deadline", "checked_samples": len(samples),
+                "total_samples": len(samples), "min_distance_m": minimum}
     return {"accepted": True, "reason": "sampled_clear", "checked_samples": len(samples),
             "total_samples": len(samples), "min_distance_m": minimum}
 

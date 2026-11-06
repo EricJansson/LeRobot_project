@@ -28,6 +28,15 @@ def test_path_checks_endpoints_and_interior():
     assert np.max(np.abs(np.diff(samples, axis=0))) <= 0.5
 
 
+@pytest.mark.parametrize("completed", [0, 1, 2])
+def test_path_cannot_accept_after_deadline(completed):
+    times = iter([0] * completed + [20])
+    clear = SimpleNamespace(query=lambda q: {"colliding": False, "min_distance_m": 0.1})
+    outcome = f.check_path(clear, np.zeros(6), np.zeros(6), 0.5, 0., deadline_ns=20, clock_ns=lambda: next(times))
+    assert not outcome["accepted"] and outcome["reason"] == "deadline"
+    assert outcome["checked_samples"] == completed
+
+
 @pytest.mark.parametrize("bad", [np.full(6, np.nan), np.full(6, np.inf), np.zeros(5)])
 def test_path_rejects_malformed_and_nonfinite(bad):
     with pytest.raises(ValueError):
