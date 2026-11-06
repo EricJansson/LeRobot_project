@@ -36,7 +36,7 @@ Plan playback interpolates recorded joint targets and pauses; it is not collisio
 
 **2026-11-06 · OFFLINE VERIFIED.** The Windows launcher, WSL2 LeRobot IK worker, Pi user service, and read-only Windows dashboard run together with a simulated bus. The remote launcher uses a mesh-free URDF. Self-collision checks are outside this implementation’s scope. See [remote IK setup and verification](REMOTE_IK_SETUP.md).
 
-**HARDWARE VERIFICATION PENDING.** The owner verified the GAM-139 through XInput in local simulation. Live commissioning still needs approval and checks for motor directions, normalized gripper range, bus timing, and stop/hold behavior under load.
+**HARDWARE VERIFIED, initial supervised trial.** The owner confirmed a small sideways move from the Windows gamepad and observed that releasing LB stopped advancement. Other axes, gripper, extended-arm retraction, controller loss, and SSH interruption are pending. See the [commissioning settings and results](REMOTE_IK_SETUP.md#verification-status).
 
 ## Previous planned direction (historical snapshot; superseded where conflicting)
 

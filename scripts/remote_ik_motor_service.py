@@ -90,8 +90,8 @@ class PiMotorBus:
             self.bus.disconnect(disable_torque=False)
 
     def read(self):
-        positions = self.follower.get_observation()
-        return [float(positions[f"{channel}.pos"]) for channel in CHANNELS]
+        positions = self.bus.sync_read("Present_Position")
+        return [float(positions[channel]) for channel in CHANNELS]
 
     def arm(self, measured):
         applied = self.write(measured)
@@ -101,15 +101,25 @@ class PiMotorBus:
         return applied
 
     def write(self, target):
-        sent = self.follower.send_action({f"{name}.pos": value for name, value in zip(CHANNELS, target)})
-        return [float(sent[f"{name}.pos"]) for name in CHANNELS]
+        self.bus.sync_write("Goal_Position", dict(zip(CHANNELS, target)))
+        return target.copy()
+
+    def relax(self):
+        failures = []
+        for channel in CHANNELS:
+            try:
+                self.bus.disable_torque(channel, num_retry=1)
+            except Exception as exc:
+                failures.append(f"{channel}: {exc}")
+        if failures:
+            raise RuntimeError("Could not release motor torque: " + ", ".join(failures))
 
 
 class MotorSession:
     """Called only by the motor loop. Feedback timestamps are Pi-local."""
 
     def __init__(self, bus, *, limits, model, token, watchdog, hz, arm_rate, gripper_rate,
-                 simulated=True, clock=monotonic):
+                 simulated=True, allow_motion=False, clock=monotonic):
         self.bus = bus
         self.limits = limits
         self.model = model
@@ -118,7 +128,10 @@ class MotorSession:
         self.period = 1 / hz
         self.rates = [arm_rate] * 5 + [gripper_rate]
         self.simulated = simulated
+        self.motion_enabled = simulated or allow_motion
+        self.relax_on_exit = False
         self.clock = clock
+        self.read_max_ms = self.write_max_ms = None
         self.measured = self.sent = None
         self.sampled_at = self.feedback_at = self.last_move_at = float("-inf")
         self.feedback_seq = 0
@@ -131,6 +144,12 @@ class MotorSession:
         return (finite_vector(values, len(CHANNELS))
                 and all(lo <= value <= hi for value, (lo, hi) in zip(values, self.limits)))
 
+    def send_target(self, target):
+        started = self.clock()
+        sent = self.bus.write(target)
+        self.write_max_ms = max(self.write_max_ms or 0., (self.clock() - started) * 1000)
+        return sent
+
     def hold(self, reason="", *, disarm=False):
         if disarm:
             self.armed = False
@@ -139,11 +158,16 @@ class MotorSession:
         if self.advancing and self.measured is not None:
             # One measured stop target. Avoid repeatedly chasing drift or sag.
             self.advancing = False
-            self.sent = self.bus.write(self.measured)
+            self.sent = self.send_target(self.measured)
 
     def disconnect(self):
         self.session = None
         self.hold("controller disconnected", disarm=True)
+
+    def shutdown(self, *, requested):
+        self.tick(lost=True)
+        if requested and self.relax_on_exit:
+            self.bus.relax()
 
     def handle(self, request):
         if type(request.get("v")) is not int or request["v"] != PROTOCOL_VERSION:
@@ -166,11 +190,19 @@ class MotorSession:
         self.sequence = seq
         if op == "poll":
             return None
+        if op == "relax_on_exit":
+            self.relax_on_exit = self.motion_enabled and not self.simulated
+            if not self.relax_on_exit:
+                self.reason = "Torque release requires real arm motion mode"
+            return None
         if op in ("hold", "disarm"):
             self.hold(disarm=(op == "disarm"))
             return None
         if op not in ("arm", "move"):
             self.hold("unknown operation", disarm=True)
+            return None
+        if not self.motion_enabled:
+            self.reason = "Observe only: motion is disabled on the Pi"
             return None
         age = self.clock() - self.feedback_at
         feedback_seq = request.get("feedback_seq")
@@ -178,10 +210,11 @@ class MotorSession:
                 or age >= self.watchdog or self.measured is None or self.fault):
             self.hold("stale or unavailable motor feedback", disarm=True)
             return None
+        if not self.in_bounds(self.measured):
+            self.hold("measured pose is outside operating bounds", disarm=True)
+            return None
         if op == "arm":
-            if not self.in_bounds(self.measured):
-                self.hold("measured pose is outside operating bounds", disarm=True)
-            elif not self.armed:
+            if not self.armed:
                 self.sent = self.bus.arm(self.measured)
                 self.armed = True
                 self.reason = ""
@@ -198,18 +231,21 @@ class MotorSession:
         bounded = [last + step / fraction for last, step in zip(self.sent, delta)]
         self.advancing = True
         self.last_move_at = self.clock()
-        self.sent = self.bus.write(bounded)
+        self.sent = self.send_target(bounded)
         self.reason = ""
 
     def tick(self, request=None, *, lost=False):
         try:
+            started = self.clock()
             measured = self.bus.read()
             if not finite_vector(measured, len(CHANNELS)):
                 raise ValueError("Motor bus returned incomplete or nonfinite feedback")
             self.measured, self.sampled_at = measured, self.clock()
+            self.read_max_ms = max(self.read_max_ms or 0., (self.sampled_at - started) * 1000)
         except Exception as exc:
             self.measured, self.armed = None, False
-            self.fault = f"Motor read failed: {exc}"
+            if not self.fault:
+                self.fault = f"Motor read failed: {exc}"
 
         try:
             if lost:
@@ -236,7 +272,10 @@ class MotorSession:
                 "measured": self.measured, "sent": self.sent, "armed": self.armed,
                 "moving": self.advancing, "reason": self.fault or self.reason,
                 "fault": bool(self.fault),
-                "simulated": self.simulated, "watchdog_s": self.watchdog, "hz": 1 / self.period}
+                "simulated": self.simulated, "motion_enabled": self.motion_enabled,
+                "relax_on_exit": self.relax_on_exit,
+                "read_max_ms": self.read_max_ms, "write_max_ms": self.write_max_ms,
+                "watchdog_s": self.watchdog, "hz": 1 / self.period}
 
 
 def serve(listener, motor, stop):
@@ -302,7 +341,7 @@ def serve(listener, motor, stop):
                     connection.close()
     finally:
         drop()
-        motor.tick(lost=True)
+        motor.shutdown(requested=stop.is_set())
 
 
 def notify_ready():
@@ -319,6 +358,7 @@ def main():
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--listen-port", type=int, default=PI_PORT)
     parser.add_argument("--serial-port", help="Opt in to physical hardware using an explicit device path")
+    parser.add_argument("--allow-motion", action="store_true", help="Enable supervised hardware commissioning motion")
     parser.add_argument("--calibration-dir", type=Path, default=DEFAULT_URDF.parent / "calibration")
     parser.add_argument("--hz", type=float)
     parser.add_argument("--watchdog-ms", type=float)
@@ -326,7 +366,11 @@ def main():
     parser.add_argument("--gripper-rate", type=float, help="Maximum commanded gripper units per second")
     args = parser.parse_args()
     values = (args.hz, args.watchdog_ms, args.arm_rate, args.gripper_rate)
-    if args.serial_port and any(value is None for value in values):
+    if args.serial_port and Path(args.serial_port).parent != Path("/dev/serial/by-id"):
+        parser.error("Hardware requires a stable /dev/serial/by-id/ device path")
+    if args.allow_motion and not args.serial_port:
+        parser.error("--allow-motion requires --serial-port")
+    if args.allow_motion and any(value is None for value in values):
         parser.error("Hardware requires commissioned --hz, --watchdog-ms, --arm-rate and --gripper-rate")
     hz, watchdog_ms, arm_rate, gripper_rate = (
         default if value is None else value
@@ -355,7 +399,8 @@ def main():
         bus = (stack.enter_context(PiMotorBus(follower, args.serial_port))
                if args.serial_port else SimulatedBus(limits))
         motor = MotorSession(bus, limits=limits, model=fingerprint, token=token, watchdog=watchdog_ms / 1000,
-                             hz=hz, arm_rate=arm_rate, gripper_rate=gripper_rate, simulated=not args.serial_port)
+                             hz=hz, arm_rate=arm_rate, gripper_rate=gripper_rate, simulated=not args.serial_port,
+                             allow_motion=args.allow_motion)
         notify_ready()
         serve(listener, motor, stop)
 

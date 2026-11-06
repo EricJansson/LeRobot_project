@@ -10,6 +10,7 @@ import re
 import secrets
 import socket
 import subprocess
+import sys
 from threading import Event, Lock, Thread
 from time import perf_counter as monotonic, sleep
 import webbrowser
@@ -90,9 +91,9 @@ class Worker:
             raise reply
         return reply
 
-    def solve(self, measured, delta):
+    def solve(self, measured, delta, *, sent=None):
         try:
-            self.process.stdin.write(encode_frame({"measured": measured, "delta": delta}))
+            self.process.stdin.write(encode_frame({"measured": measured, "delta": delta, "sent": sent}))
             self.process.stdin.flush()
         except OSError as exc:
             raise RuntimeError(f"WSL2 IK worker input failed: {exc}") from exc
@@ -100,11 +101,12 @@ class Worker:
 
 
 class MotorLink:
-    def __init__(self, port, token, metadata, simulated):
+    def __init__(self, port, token, metadata, simulated, *, relax_on_exit=False):
         self.port = port
         self.token = token
         self.metadata = metadata
         self.simulated = simulated
+        self.relax_on_exit = relax_on_exit
 
     def __enter__(self):
         self.resources = ExitStack()
@@ -119,10 +121,17 @@ class MotorLink:
                 raise RuntimeError("Pi and WSL2 URDF or calibration differ")
             if self.feedback.get("simulated") is not self.simulated:
                 raise RuntimeError("Unexpected Pi motor service mode")
+            if not self.simulated and type(self.feedback.get("motion_enabled")) is not bool:
+                raise RuntimeError("Pi service needs an update for real arm mode. Run scripts.install_remote_ik_pi first.")
             if not isinstance(self.feedback.get("session"), str):
                 raise ValueError("Motor service returned no session")
             self.session = self.feedback["session"]
             self.socket.settimeout(min(0.5, self.feedback["watchdog_s"] * 2))
+            if self.relax_on_exit:
+                if not self.feedback["motion_enabled"]:
+                    raise RuntimeError("--relax-on-exit requires --allow-motion in the Pi hardware.env")
+                if self.request("relax_on_exit").get("relax_on_exit") is not True:
+                    raise RuntimeError("Pi service needs an update for --relax-on-exit. Run scripts.install_remote_ik_pi.")
             return self
         except BaseException:
             self.resources.close()
@@ -149,9 +158,13 @@ class MotorLink:
 
 
 class PiTunnel:
-    def __init__(self, host, simulated):
+    def __init__(self, host, simulated, *, relax_on_exit=False):
         self.host = host
         self.simulated = simulated
+        self.relax_on_exit = relax_on_exit
+        self.unit = PI_UNIT + ("-sim.service" if simulated else ".service")
+        self.mode = "sim" if simulated else "live"
+        self.invocation = ""
         self.process = None
         self.closed = False
         self.lock = Lock()
@@ -170,36 +183,70 @@ class PiTunnel:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=2)
+        if self.invocation:
+            try:
+                stopped = self.service_command(
+                    f'invocation=$(systemctl --user show -p InvocationID --value {self.unit}); '
+                    f'if test "$invocation" = "{self.invocation}"; then systemctl --user stop {self.unit}; '
+                    f'test "$(systemctl --user show -p Result --value {self.unit})" = success; fi',
+                    timeout=10,
+                )
+                if stopped.returncode:
+                    raise RuntimeError(stopped.stderr.strip() or "The Pi reported a shutdown error.")
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                print(f"Could not confirm clean shutdown of {self.unit} on {self.host}. {exc}",
+                      file=sys.stderr)
+
+    def service_command(self, command, *, timeout):
+        # Serialize startup and shutdown with other Windows launchers. Keep the
+        # lock off the motor loop and release it before opening the SSH tunnel.
+        remote = (f'set -e; umask 077; config_dir="$HOME/.config/lerobot-remote-ik"; '
+                  f'exec 9>"$config_dir/{self.mode}.lock"; flock -x 9; {command}')
+        return subprocess.run([*SSH, self.host, remote], capture_output=True, text=True, timeout=timeout)
+
+    def start_service(self):
+        preflight = ('config="$config_dir/hardware.env"; '
+                     'test -s "$config" && test "$(stat -c %a "$config")" = 600 || '
+                     "{ echo 'Real arm mode requires a private Pi hardware.env (mode 0600). "
+                     "See readme_files/REMOTE_IK_SETUP.md.' >&2; exit 1; }; "
+                     if not self.simulated else "")
+        active = (f'test "$invocation" = "{self.invocation}" || '
+                  "{ echo 'Real arm service is already running on the Pi. Close its launcher or stop the "
+                  "service with the arm supported before starting a new session.' >&2; exit 1; }; "
+                  if not self.simulated else "")
+        command = (f"{preflight}if systemctl --user is-active --quiet {self.unit}; then "
+                   f'invocation=$(systemctl --user show -p InvocationID --value {self.unit}); {active}'
+                   f'if test "$invocation" != "{self.invocation}"; then invocation=; fi; '
+                   f"else systemctl --user start {self.unit}; "
+                   f"systemctl --user is-active --quiet {self.unit}; "
+                   f"invocation=$(systemctl --user show -p InvocationID --value {self.unit}); fi; "
+                   f'printf "%s\\n" "$invocation"; cat "$config_dir/{self.mode}.token"')
+        result = self.service_command(command, timeout=27)
+        invocation, _, token = result.stdout.partition("\n")
+        if re.fullmatch(r"[a-f0-9]{32}", invocation):
+            self.invocation = invocation
+        if result.returncode or len(token.strip()) < 32:
+            detail = result.stderr.strip() or f"Check journalctl --user -u {self.unit} on the Pi"
+            if result.returncode == 255:
+                raise OSError(detail)
+            raise RuntimeError(detail)
+        self.token = token.strip()
 
     def connect(self, metadata):
-        if self.process is None or self.process.poll() is not None:
-            unit = PI_UNIT + ("-sim.service" if self.simulated else ".service")
-            mode = "sim" if self.simulated else "live"
-            preflight = ("test -s ~/.config/lerobot-remote-ik/hardware.env || "
-                         "{ echo 'Pi hardware is not commissioned. Use --pi-sim.' >&2; exit 1; }; "
-                         if not self.simulated else "")
-            remote = (f"{preflight}systemctl --user start {unit} && "
-                      f"systemctl --user is-active --quiet {unit} && "
-                      f"cat ~/.config/lerobot-remote-ik/{mode}.token")
-            result = subprocess.run([*SSH, self.host, remote], capture_output=True, text=True, timeout=27)
-            if result.returncode or len(result.stdout.strip()) < 32:
-                detail = result.stderr.strip() or f"Check journalctl --user -u {unit} on the Pi"
-                if result.returncode == 255:
-                    raise OSError(detail)
-                raise RuntimeError(detail)
-            self.token = result.stdout.strip()
-            with socket.socket() as candidate:
-                candidate.bind(("127.0.0.1", 0))
-                self.local_port = candidate.getsockname()[1]
-            remote_port = PI_SIM_PORT if self.simulated else PI_PORT
-            forward = f"127.0.0.1:{self.local_port}:127.0.0.1:{remote_port}"
-            with self.lock:
-                if self.closed:
-                    raise OSError("SSH tunnel is closing")
+        with self.lock:
+            if self.closed:
+                raise OSError("SSH tunnel is closing")
+            if self.process is None or self.process.poll() is not None:
+                self.start_service()
+                with socket.socket() as candidate:
+                    candidate.bind(("127.0.0.1", 0))
+                    self.local_port = candidate.getsockname()[1]
+                remote_port = PI_SIM_PORT if self.simulated else PI_PORT
+                forward = f"127.0.0.1:{self.local_port}:127.0.0.1:{remote_port}"
                 self.process = subprocess.Popen([*SSH, "-N", "-o", "ExitOnForwardFailure=yes",
                                                  "-o", "ServerAliveInterval=1", "-o", "ServerAliveCountMax=2",
                                                  "-L", forward, self.host], stdin=subprocess.DEVNULL)
-        return MotorLink(self.local_port, self.token, metadata, self.simulated)
+        return MotorLink(self.local_port, self.token, metadata, self.simulated, relax_on_exit=self.relax_on_exit)
 
 
 @dataclass(frozen=True)
@@ -209,6 +256,7 @@ class GamepadSample:
     start: int = 0
     stop: int = 0
     release: int = 0
+    disconnect: int = 0
 
     @property
     def lb(self):
@@ -241,6 +289,7 @@ class LatestInput:
             previous.start + start,
             previous.stop + (not before.get("Back", False) and after.get("Back", False)),
             previous.release + (previous.lb and not after.get("LB", False)),
+            previous.disconnect + (previous.gamepad is not None and gamepad is None),
         )
 
 
@@ -271,21 +320,36 @@ class ControlLoop:
     def session(self, link):
         seen = self.latest_input.sample
         feedback = link.feedback
+        mode = self.mode
+        if not feedback.get("simulated", True):
+            mode = "Real arm enabled" if feedback["motion_enabled"] else "Observe only"
         period = 1 / feedback["hz"]
         freshness = min(.1, feedback["watchdog_s"] / 2)
+        connected_at = last_feedback = monotonic()
+        previous_tick = connected_at
+        feedback_count = 0
+        max_gap_ms = 0.
         while not self.stop.is_set():
             started = monotonic()
+            # Use the command cadence, with at most two Pi cycles of input per
+            # step so a slow round trip cannot turn into a large catch-up move.
+            elapsed = min(2 * period, max(period, started - previous_tick))
+            previous_tick = started
             sample = self.latest_input.sample
             measured = feedback.get("measured")
             fresh = sample.gamepad is not None and started - sample.sampled_at < freshness
             delta = [0.] * 6
+            sent = None
             op = "poll"
-            if not fresh or sample.stop != seen.stop or sample.gamepad["buttons"]["Back"]:
+            if (not fresh or sample.disconnect != seen.disconnect or sample.stop != seen.stop
+                    or sample.gamepad["buttons"]["Back"]):
                 op = "disarm" if feedback["armed"] else "poll"
             elif feedback["armed"] and (not sample.lb or sample.release != seen.release):
                 op = "hold" if feedback["moving"] else "poll"
             elif feedback["armed"] and sample.lb:
-                delta = sample.delta(self.speed * RATE_HZ * period)
+                if feedback["moving"] and finite_vector(feedback["sent"], 6):
+                    sent = feedback["sent"]
+                delta = sample.delta(self.speed * RATE_HZ * (elapsed if sent is not None else period))
                 op = "hold" if feedback["moving"] else "poll"
             elif sample.start != seen.start and sample.neutral and not sample.lb:
                 op = "arm"
@@ -293,11 +357,12 @@ class ControlLoop:
 
             result = {}
             if finite_vector(measured, 6) and (op == "poll" or any(delta)):
-                result = self.worker.solve(measured, delta)
+                result = self.worker.solve(measured, delta, sent=sent if any(delta) else None)
             # Recheck input after IK. A release and re-press while solving also
             # invalidates this candidate, even when LB is held again now.
             current = self.latest_input.sample
             if (self.stop.is_set() or current.gamepad is None or current.stop != sample.stop
+                    or current.disconnect != sample.disconnect
                     or monotonic() - current.sampled_at >= freshness):
                 op = "disarm"
             elif (result.get("target") is not None and current.lb and current.release == sample.release
@@ -308,14 +373,22 @@ class ControlLoop:
 
             values = {"target": result["target"]} if op == "move" else {}
             feedback = link.request(op, **values)
+            received = monotonic()
+            feedback_count += 1
+            max_gap_ms = max(max_gap_ms, (received - last_feedback) * 1000)
+            last_feedback = received
             reason = feedback["reason"] or result.get("reason", "")
             if not fresh and not reason:
                 reason = "Connect a gamepad" if sample.gamepad is None else "Gamepad sample expired"
             state = ("Fault" if feedback["fault"] else "Moving" if feedback["moving"]
                      else "Armed" if feedback["armed"] else "Disarmed")
-            self.status = {"connection": "Connected", "mode": self.mode, "state": state,
+            self.status = {"connection": "Connected", "mode": mode, "state": state,
                            "reason": reason, "measured": measured, "sent": feedback["sent"],
-                           "xyz_m": result.get("xyz_m"), "requested_xyz_m": result.get("requested_xyz_m")}
+                           "xyz_m": result.get("xyz_m"), "requested_xyz_m": result.get("requested_xyz_m"),
+                           "candidate": result.get("target"),
+                           "read_max_ms": feedback.get("read_max_ms"), "write_max_ms": feedback.get("write_max_ms"),
+                           "feedback_hz": feedback_count / max(received - connected_at, 1e-6),
+                           "feedback_max_gap_ms": max_gap_ms}
 
 
 def main():
@@ -323,6 +396,9 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--dry-run", action="store_true", help="Use a local simulated arm with real WSL2 IK")
     modes.add_argument("--pi-sim", action="store_true", help="Use the Pi’s simulated bus over SSH")
+    modes.add_argument("--real-arm", action="store_true", help="Connect to the real robot arm on the Pi")
+    modes.add_argument("--commission-ik", dest="real_arm", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--relax-on-exit", action="store_true", help="Release motor torque when the real arm service stops")
     parser.add_argument("--pi", default="eric@rpi", help="SSH destination")
     parser.add_argument("--index", type=int, choices=range(4), default=0, metavar="SLOT", help="XInput slot (0–3)")
     parser.add_argument("--wsl-distro", default="Ubuntu")
@@ -331,6 +407,10 @@ def main():
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--speed", type=float, default=.25, help="Fraction of nominal Cartesian input speed")
     args = parser.parse_args()
+    if not (args.dry_run or args.pi_sim or args.real_arm):
+        parser.error("Choose --dry-run, --pi-sim, or --real-arm. See readme_files/REMOTE_IK_SETUP.md.")
+    if args.relax_on_exit and not args.real_arm:
+        parser.error("--relax-on-exit requires --real-arm")
     if not re.fullmatch(r"[a-zA-Z0-9_][a-zA-Z0-9_.-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*", args.pi):
         parser.error("--pi must be user@host")
     if not 0 < args.speed <= 1 or not 0 <= args.dashboard_port <= 65535:
@@ -359,15 +439,17 @@ def main():
                 def connect(metadata):
                     return MotorLink(listener.getsockname()[1], token, metadata, True)
             else:
-                tunnel = stack.enter_context(PiTunnel(args.pi, args.pi_sim))
+                tunnel = stack.enter_context(PiTunnel(args.pi, args.pi_sim, relax_on_exit=args.relax_on_exit))
                 connect = tunnel.connect
 
-            mode = "Local simulation" if args.dry_run else "Pi simulation" if args.pi_sim else "SO-101 hardware"
+            mode = "Local simulation" if args.dry_run else "Pi simulation" if args.pi_sim else "Real arm"
             url = f"http://127.0.0.1:{dashboard.port}/"
             print(f"{mode} · Controller dashboard {url}", flush=True)
             if not args.no_browser:
                 webbrowser.open(url)
             print("Start arms with neutral controls. Hold LB to move. Back disarms. Esc stops and exits.", flush=True)
+            if args.relax_on_exit:
+                print("Support the arm before exiting. The motors will release their hold.", flush=True)
             latest = LatestInput()
             control = ControlLoop(worker, connect, latest, stop, args.speed, mode)
             thread = Thread(target=control.run, daemon=True)

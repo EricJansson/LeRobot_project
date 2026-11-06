@@ -207,6 +207,7 @@
       <p id="status" role="status" data-state="waiting">Waiting for telemetry</p>
       <p id="remote-status" hidden></p>
       <p id="remote-target" hidden></p>
+      <p id="remote-timing" hidden></p>
       <p id="age" hidden></p>
       <p class="mode">SO-101 · LeRobot IK · Read-only</p>
     </footer>
@@ -295,14 +296,21 @@
     const remote = fresh?.remote;
     const remoteStatus = byId('remote-status');
     const remoteTarget = byId('remote-target');
+    const remoteTiming = byId('remote-timing');
     remoteStatus.hidden = !remote;
     remoteTarget.hidden = !remote;
+    remoteTiming.hidden = !remote || remote.feedback_hz == null;
     if (remote) {
       const reason = remote.reason ? ` · ${remote.reason}` : '';
       setText(remoteStatus, `${remote.mode} · ${remote.connection} · ${remote.state}${reason}`);
       const xyz = remote.requested_xyz_m?.map(m => (m * 1000).toFixed(1)).join(', ');
+      const candidate = remote.candidate?.map(v => v.toFixed(1)).join(', ');
       const sent = remote.sent?.map(v => v.toFixed(1)).join(', ');
-      setText(remoteTarget, `Requested XYZ: ${xyz ? xyz + ' mm' : '—'} · Last motor target: ${sent ?? '—'}`);
+      setText(remoteTarget, `Requested XYZ: ${xyz ? xyz + ' mm' : '—'} · IK candidate: ${candidate ?? '—'} · Last motor target: ${sent ?? '—'}`);
+      if (!remoteTiming.hidden) {
+        const ms = value => value == null ? '—' : value.toFixed(1) + ' ms';
+        setText(remoteTiming, `Feedback: ${remote.feedback_hz.toFixed(1)} Hz · Longest feedback gap: ${ms(remote.feedback_max_gap_ms)} · Longest Pi read: ${ms(remote.read_max_ms)} · Longest Pi write: ${ms(remote.write_max_ms)}`);
+      }
     }
   }
 

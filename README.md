@@ -36,7 +36,7 @@ The PC and Pi simulations are **OFFLINE VERIFIED**. Live control requires commis
 | Offline tests | 159-test historical baseline; venv validation below |
 | web_sim | Outdated standalone browser experiment; retained for historical reference |
 | LeRobot URDF FK/IK integration | Separate headless Pi mode; owner confirms working fine movement |
-| PC-led distributed control | Windows/WSL2 and Pi simulation verified offline; hardware commissioning pending |
+| PC-led distributed control | Simulation verified offline; initial Windows gamepad motion and LB release verified on hardware |
 | Collision avoidance / phone control | Outside the remote IK implementation scope |
 
 Hardware use of the prior setup is confirmed by the owner. The venv migration did not connect to or move the arm; physical validation of the new environment remains pending. Passing offline tests does not validate physical accuracy or collision safety.

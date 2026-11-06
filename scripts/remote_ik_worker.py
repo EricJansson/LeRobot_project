@@ -14,11 +14,16 @@ from robot_program.remote_ik_protocol import (
 )
 
 
-def solve_intent(solver, measured, delta, gripper_limits):
+def solve_intent(solver, measured, delta, gripper_limits, *, sent=None):
     """Apply base-frame XYZ, local pitch/roll and normalized jaw increments."""
     joints = np.asarray(measured[:5], dtype=float)
     pose = solver.kinematics.forward_kinematics(joints)
-    target = pose.copy()
+    # Continue from the target the Pi actually issued. Motor feedback rounds to
+    # encoder ticks, so restarting each increment from it can erase small moves.
+    reference = measured if sent is None else sent
+    if sent is not None:
+        joints = np.asarray(sent[:5], dtype=float)
+    target = (solver.kinematics.forward_kinematics(joints) if sent is not None else pose).copy()
     target[:3, 3] += delta[:3]
     pitch, roll = np.deg2rad(delta[3:5])
     cp, sp = np.cos(pitch), np.sin(pitch)
@@ -36,8 +41,8 @@ def solve_intent(solver, measured, delta, gripper_limits):
         if not result.accepted:
             return {**response, "reason": result.reason}
         joints = result.joints_deg
-    jaw = float(np.clip(measured[5] + delta[5], *gripper_limits))
-    if any(delta[:5]) or jaw != measured[5]:
+    jaw = float(np.clip(reference[5] + delta[5], *gripper_limits))
+    if any(delta[:5]) or jaw != reference[5]:
         response["target"] = [*joints.tolist(), jaw]
     return response
 
@@ -61,9 +66,12 @@ def main():
         while frame := sys.stdin.buffer.readline(MAX_FRAME + 1):
             request = decode_frame(frame)
             measured, delta = request.get("measured"), request.get("delta")
+            sent = request.get("sent")
             if not finite_vector(measured, 6) or not finite_vector(delta, 6):
                 raise ValueError("Expected six finite measured channels and six finite increments")
-            reply(solve_intent(solver, measured, delta, limits[5]))
+            if sent is not None and not finite_vector(sent, 6):
+                raise ValueError("Expected six finite sent channels")
+            reply(solve_intent(solver, measured, delta, limits[5], sent=sent))
 
 
 if __name__ == "__main__":
