@@ -5,6 +5,13 @@
 - End every implementation summary by stating that no Git commit was created and that committing is left to the user.
 - For changes to LeRobot IK or arm motion, read the [IK teleop hardware lessons](readme_files/context/IK_TELEOP_LESSONS.md).
 
+## Manual testing and pre-commit cleanup
+
+- Run targeted offline checks for logic and regressions. Use manual tests when the result depends on the real controller, network, motor bus, or arm behavior under load. Get owner approval before physical motor tests and report OFFLINE and HARDWARE results separately.
+- When manual testing is needed, give the owner numbered steps with prerequisites, where to run each command, the exact inputs to try, the expected behavior, how to stop, and what observations or errors to report back.
+- If recording helps, keep temporary results and benchmark data in a local scratch file, preferably outside the checkout, and share its path. Identify any temporary instrumentation added to the code and keep it available for the manual test and follow-up.
+- When the owner asks for pre-commit refinement, remove temporary test data, logs, scratch files, and one-off recording code from the proposed changes. Check both the diff and untracked files before summarizing what is ready to commit.
+
 ## Approved PC–Pi architectural refactor (2026-11-05)
 
 - Resume development in the Windows PC checkout. WSL2 is the provisional PC-side IK/collision runtime; the Raspberry Pi is the future motor-service host, not the primary development machine. Preserve its existing environment as the hardware/legacy reference.
