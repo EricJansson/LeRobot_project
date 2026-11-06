@@ -264,7 +264,8 @@ def test_control_loop_drops_stale_intent_and_reports_pi_mode(scenario, expected,
                 "armed": armed, "moving": moving, "measured": [0.] * 6, "hz": 50,
                 "watchdog_s": .15, "sent": [2.] * 6 if armed else None, "reason": "", "fault": False}
 
-    def solve(measured, delta, *, sent):
+    def solve(measured, delta, *, sent, desired_xyz_m):
+        assert desired_xyz_m is None
         if moving:
             assert any(delta)
             assert sent == [2.] * 6
@@ -289,6 +290,127 @@ def test_control_loop_drops_stale_intent_and_reports_pi_mode(scenario, expected,
     assert control.status["mode"] == mode
 
 
+@pytest.mark.parametrize("delta", [
+    [.001, 0., 0., 0., 0., 0.],
+    [.001, -.002, 0., 0., 0., 0.],
+    [.001, -.002, .003, 0., 0., 0.],
+    [0., 0., 0., 1., -2., 0.],
+])
+@pytest.mark.parametrize("desired", [None, [.3, .2, .1]])
+def test_worker_uses_cartesian_reference_independently_of_joint_seed(delta, desired):
+    measured = [.1, .2, .3, 0., 0., 10.]
+    issued = [.2, .3, .4, 0., 0., 12.]
+
+    def forward(joints):
+        pose = np.eye(4)
+        pose[:3, 3] = joints[:3]
+        return pose
+
+    baseline = measured[:3] if desired is None else desired
+    requested = np.add(baseline, delta[:3])
+
+    def solve_pose(target, seed):
+        np.testing.assert_allclose(seed, issued[:5])
+        np.testing.assert_allclose(target[:3, 3], requested)
+        if any(delta[3:5]):
+            assert not np.allclose(target[:3, :3], np.eye(3))
+        return SimpleNamespace(accepted=True, joints_deg=seed)
+
+    solver = SimpleNamespace(kinematics=SimpleNamespace(forward_kinematics=forward), solve_pose=solve_pose)
+    result = solve_intent(solver, measured, delta, LIMITS[5], sent=issued, desired_xyz_m=desired)
+    assert result["baseline_xyz_m"] == baseline
+    assert result["requested_xyz_m"] == pytest.approx(requested)
+    assert result["target"] == issued
+    jaw_only = solve_intent(solver, measured, [0., 0., 0., 0., 0., 1.], LIMITS[5],
+                            sent=issued, desired_xyz_m=desired)
+    assert jaw_only["target"] == [*issued[:5], 13.]
+
+
+def test_control_loop_preserves_xyz_through_rejection_slew_and_brief_idle(monkeypatch):
+    now = [0.]
+    monkeypatch.setattr(remote_teleop, "monotonic", lambda: now[0])
+    latest = LatestInput()
+    stop = Event()
+    measured = [.1, .2, .3, 0., 0., 10.]
+    target = [1., 2., 3., 0., 0., 10.]
+    start, advanced, retracted = ([.1, .2, .3], [.101, .2, .3], [.1005, .2, .3])
+    feedback = {"simulated": True, "motion_enabled": True, "armed": True, "moving": False,
+                "measured": measured, "hz": 50, "watchdog_s": .15, "sent": measured,
+                "reason": "", "fault": False}
+    # Time, X input, LB, desired seen by the arm solver, solve outcome, Pi operation.
+    steps = [
+        (0., 1., True, None, "full", "move"),
+        (.02, 1., True, advanced, "reject", "hold"),
+        (.04, 1., True, advanced, "reject", "poll"),
+        (.06, -1., True, advanced, "reject", "poll"),
+        (.08, -1., True, None, "slew", "move"),
+        (.10, -1., True, start, "full", "move"),
+        (.12, 0., True, None, None, "hold"),
+        (.25, -1., True, retracted, "reject", "poll"),
+        (2.249, 0., True, None, None, "poll"),
+        (2.25, 0., True, None, None, "poll"),
+        (2.26, 1., True, None, "full", "move"),
+        (2.28, 0., False, None, None, "hold"),
+        (2.30, 1., True, None, "full", "move"),
+        (2.32, 0., True, None, None, "hold"),
+        (2.34, 1., True, advanced, "reject", "poll"),
+        (2.36, 1., True, None, "full", "move"),
+    ]
+    index = 0
+    statuses = []
+
+    def publish():
+        at, x, lb, *_ = steps[index]
+        now[0] = at
+        gamepad = gamepad_input(lb=lb)
+        gamepad["axes"]["LY"] = np.float64(-x)
+        latest.publish(gamepad)
+
+    def solve(measured, delta, *, sent, desired_xyz_m):
+        _, x, _, expected_desired, outcome, _ = steps[index]
+        assert desired_xyz_m == expected_desired
+        if outcome is None:
+            assert not any(delta)
+            return {}
+        assert np.sign(delta[0]) == np.sign(x)
+        assert not any(delta[1:])
+        baseline = measured[:3] if desired_xyz_m is None else desired_xyz_m
+        return {"xyz_m": measured[:3], "baseline_xyz_m": baseline,
+                "requested_xyz_m": advanced if x > 0 else retracted,
+                "target": None if outcome == "reject" else target,
+                "reason": remote_teleop.POSITION_TOLERANCE_REASON if outcome == "reject" else ""}
+
+    def request(op, **values):
+        nonlocal index
+        _, _, _, _, outcome, expected_op = steps[index]
+        assert op == expected_op
+        statuses.append(control.status.get("desired_xyz_m"))
+        if op == "move":
+            assert values["target"] == target
+            issued = [*target[:5], 9.]
+            issued[0] += -.5 if outcome == "slew" else 1e-10
+            feedback.update(moving=True, sent=issued)
+        elif op == "hold":
+            feedback.update(moving=False, sent=measured)
+            if now[0] == 2.32:
+                feedback["measured"] = [.1, .2, .295, 0., 0., 10.]
+        index += 1
+        if index == len(steps):
+            stop.set()
+        else:
+            publish()
+        return feedback
+
+    publish()
+    control = ControlLoop(SimpleNamespace(solve=solve), None, latest, stop, .25, "Sim")
+    control.session(SimpleNamespace(feedback=feedback, request=request))
+    assert statuses[1:] == [
+        advanced, advanced, advanced, None, start, retracted, retracted, retracted,
+        retracted, None, advanced, None, advanced, advanced, None,
+    ]
+    assert control.status["desired_xyz_m"] == advanced
+
+
 @pytest.mark.skipif(version("lerobot") != "0.6.1", reason="Remote IK targets LeRobot 0.6.1")
 def test_small_sustained_ik_input_survives_encoder_quantization(tmp_path):
     follower = calibrated_follower("unused", DEFAULT_URDF.parent / "calibration")
@@ -309,10 +431,13 @@ def test_small_sustained_ik_input_survives_encoder_quantization(tmp_path):
     measured = quantize([-4.7, -65.7, 53.8, 68.4, -20.1, 3.4])
     start_y = y_position(measured)
     sent = None
+    desired = None
     for _ in range(25):
-        result = solve_intent(solver, measured, [0., .00005, 0., 0., 0., 0.], limits[5], sent=sent)
+        result = solve_intent(solver, measured, [0., .00005, 0., 0., 0., 0.], limits[5],
+                              sent=sent, desired_xyz_m=desired)
         sent = result["target"]
         assert sent is not None, result["reason"]
+        desired = result["requested_xyz_m"]
         measured = quantize(sent)
     assert y_position(measured) - start_y == pytest.approx(25 * .00005, abs=.00025)
 

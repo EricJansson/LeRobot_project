@@ -4,6 +4,7 @@ import argparse
 from contextlib import ExitStack, suppress
 import ctypes
 from dataclasses import dataclass
+from math import dist, isclose
 from pathlib import Path
 from queue import Empty, Queue
 import re
@@ -17,6 +18,7 @@ from time import perf_counter as monotonic, sleep
 import webbrowser
 
 from controller.input.xinput import XInputGamepad
+from robot_program.lerobot_ik_controller import POSITION_TOLERANCE_M, POSITION_TOLERANCE_REASON
 from robot_program.remote_ik_protocol import (
     CHANNELS, MAX_FRAME, OFFLINE_WATCHDOG, PI_PORT, PROTOCOL_VERSION, RATE_HZ,
     decode_frame, encode_frame, finite_vector,
@@ -31,6 +33,7 @@ PI_UNIT = "lerobot-remote-ik"
 PI_SIM_PORT = PI_PORT + 1
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5"]
 DEFAULT_WSL_PYTHON = ".local/share/lerobot-phase0/venv/bin/python"
+XYZ_IDLE_RESET_S = 2.0
 VK_ESCAPE = 0x1B
 TELEOP_ERRORS = (OSError, RuntimeError, ValueError, subprocess.SubprocessError)
 
@@ -114,9 +117,11 @@ class Worker:
             raise reply
         return reply
 
-    def solve(self, measured, delta, *, sent=None):
+    def solve(self, measured, delta, *, sent=None, desired_xyz_m=None):
         try:
-            self.process.stdin.write(encode_frame({"measured": measured, "delta": delta, "sent": sent}))
+            self.process.stdin.write(encode_frame({
+                "measured": measured, "delta": delta, "sent": sent, "desired_xyz_m": desired_xyz_m,
+            }))
             self.process.stdin.flush()
         except OSError as exc:
             raise RuntimeError(f"WSL2 IK worker input failed: {exc}") from exc
@@ -400,6 +405,7 @@ class ControlLoop:
         previous_tick = connected_at
         feedback_count = 0
         max_gap_ms = 0.
+        desired_xyz_m = last_motion_at = blocked_direction = None
         while not self.stop.is_set():
             started = monotonic()
             # Use the command cadence, with at most two Pi cycles of input per
@@ -412,6 +418,8 @@ class ControlLoop:
             delta = [0.] * 6
             sent = None
             op = "poll"
+            if last_motion_at is not None and started - last_motion_at >= XYZ_IDLE_RESET_S:
+                desired_xyz_m = last_motion_at = blocked_direction = None
             if (not fresh or sample.disconnect != seen.disconnect or sample.stop != seen.stop
                     or sample.gamepad["buttons"]["Back"]):
                 op = "disarm" if feedback["armed"] else "poll"
@@ -421,14 +429,18 @@ class ControlLoop:
                 if feedback["moving"] and finite_vector(feedback["sent"], 6):
                     sent = feedback["sent"]
                 delta = sample.delta(self.speed * RATE_HZ * (elapsed if sent is not None else period))
+                if any(delta):
+                    last_motion_at = sample.sampled_at
                 op = "hold" if feedback["moving"] else "poll"
             elif sample.start != seen.start and sample.neutral and not sample.lb:
                 op = "arm"
             seen = sample
 
             result = {}
+            arm_input = any(delta[:5])
             if finite_vector(measured, 6) and (op == "poll" or any(delta)):
-                result = self.worker.solve(measured, delta, sent=sent if any(delta) else None)
+                result = self.worker.solve(measured, delta, sent=sent if any(delta) else None,
+                                           desired_xyz_m=desired_xyz_m if arm_input else None)
             # Recheck input after IK. A release and re-press while solving also
             # invalidates this candidate, even when LB is held again now.
             current = self.latest_input.sample
@@ -444,6 +456,31 @@ class ControlLoop:
 
             values = {"target": result["target"]} if op == "move" else {}
             feedback = link.request(op, **values)
+            if (not feedback["armed"] or feedback["fault"] or op == "disarm"
+                    or not current.lb or current.release != sample.release):
+                desired_xyz_m = last_motion_at = blocked_direction = None
+            elif arm_input:
+                had_reference = desired_xyz_m is not None
+                if not had_reference:
+                    desired_xyz_m = result.get("baseline_xyz_m")
+                if result.get("reason") == POSITION_TOLERANCE_REASON:
+                    direction = tuple(int(value > 0) - int(value < 0) for value in delta[:5])
+                    if had_reference and (
+                        (blocked_direction is not None and direction != blocked_direction)
+                        or (blocked_direction is None and sent is None
+                            and dist(desired_xyz_m, result["xyz_m"]) > 2 * POSITION_TOLERANCE_M)
+                    ):
+                        desired_xyz_m = None
+                        result["reason"] = "XYZ reference reset after IK position tolerance miss"
+                    # Keep repeated pushes in the same blocked direction from recapturing sag.
+                    blocked_direction = direction
+                issued = feedback["sent"]
+                # The Pi can shorten a move. Only advance XYZ for a fully issued arm target.
+                if (op == "move" and feedback["moving"] and finite_vector(issued, 6)
+                        and all(isclose(actual, goal, rel_tol=0., abs_tol=1e-8)
+                                for actual, goal in zip(issued[:5], result["target"][:5]))):
+                    desired_xyz_m = result["requested_xyz_m"]
+                    blocked_direction = None
             received = monotonic()
             feedback_count += 1
             max_gap_ms = max(max_gap_ms, (received - last_feedback) * 1000)
@@ -455,7 +492,8 @@ class ControlLoop:
                      else "Armed" if feedback["armed"] else "Disarmed")
             self.status = {"connection": "Connected", "mode": mode, "state": state,
                            "reason": reason, "measured": measured, "sent": feedback["sent"],
-                           "xyz_m": result.get("xyz_m"), "requested_xyz_m": result.get("requested_xyz_m"),
+                           "xyz_m": result.get("xyz_m"), "desired_xyz_m": desired_xyz_m,
+                           "requested_xyz_m": result.get("requested_xyz_m"),
                            "candidate": result.get("target"),
                            "read_max_ms": feedback.get("read_max_ms"), "write_max_ms": feedback.get("write_max_ms"),
                            "feedback_hz": feedback_count / max(received - connected_at, 1e-6),
@@ -476,7 +514,7 @@ def main():
     parser.add_argument("--wsl-python", default=DEFAULT_WSL_PYTHON, help="Linux path, absolute or relative to WSL home")
     parser.add_argument("--dashboard-port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--speed", type=float, default=.25, help="Fraction of nominal Cartesian input speed")
+    parser.add_argument("--speed", type=float, default=1.0, help="Gamepad motion scale (default %(default)g)")
     args = parser.parse_args()
     if not (args.dry_run or args.pi_sim or args.real_arm):
         parser.error("Choose --dry-run, --pi-sim, or --real-arm. See readme_files/REMOTE_IK_SETUP.md.")

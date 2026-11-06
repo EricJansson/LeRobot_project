@@ -21,7 +21,7 @@ python.exe -m scripts.main_teleop_remote_ik --dry-run
 
 Connect an XInput gamepad to Windows. The launcher uses slot 0 by default. Use `--index` to select another slot. The dashboard shows sticks, triggers, D-pad and buttons before arming.
 
-Press **Start** with the sticks, triggers, and D-pad neutral and LB released. Hold **LB** to drive. The left stick controls XY, right-stick vertical controls Z, right-stick horizontal controls roll, the triggers control pitch, and D-pad up/down operates the gripper. **Back** disarms. **Esc** stops teleop and exits the Windows launcher, including while the dashboard has focus on the active Windows desktop. Use `--speed` to reduce the motion scale below the default 0.25. Reconnect requires another neutral Start press.
+Press **Start** with the sticks, triggers, and D-pad neutral and LB released. Hold **LB** to drive. The left stick controls XY, right-stick vertical controls Z, right-stick horizontal controls roll, the triggers control pitch, and D-pad up/down operates the gripper. **Back** disarms. **Esc** stops teleop and exits the Windows launcher, including while the dashboard has focus on the active Windows desktop. The motion scale defaults to 1. Use `--speed` to reduce it. Reconnect requires another neutral Start press.
 
 To test the real SSH link with the Pi’s simulated bus:
 

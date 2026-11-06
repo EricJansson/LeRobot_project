@@ -18,6 +18,7 @@ ARM_JOINTS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wris
 TARGET_FRAME = "gripper_frame_link"
 DEFAULT_URDF = Path(__file__).resolve().parents[1] / "so101_new_calib.urdf"
 POSITION_TOLERANCE_M = 0.0005
+POSITION_TOLERANCE_REASON = "position tolerance not reached"
 MAX_ITERATIONS = 20
 JOINT_ROUNDOFF_DEG = 1e-8
 GRIPPER_RANGE = (0.0, 50.0)
@@ -108,7 +109,7 @@ class LeRobotPoseSolver:
         q = measured.copy()
         measured_pose = _pose(self.kinematics.forward_kinematics(measured))
         achieved = measured_pose.copy()
-        reason = "position tolerance not reached"
+        reason = POSITION_TOLERANCE_REASON
         accepted = False
         try:
             for _ in range(MAX_ITERATIONS):

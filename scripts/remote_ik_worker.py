@@ -14,17 +14,22 @@ from robot_program.remote_ik_protocol import (
 )
 
 
-def solve_intent(solver, measured, delta, gripper_limits, *, sent=None):
+def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_xyz_m=None):
     """Apply base-frame XYZ, local pitch/roll and normalized jaw increments."""
     joints = np.asarray(measured[:5], dtype=float)
     pose = solver.kinematics.forward_kinematics(joints)
+    measured_xyz_m = pose[:3, 3].tolist()
     # Continue from the target the Pi actually issued. Motor feedback rounds to
     # encoder ticks, so restarting each increment from it can erase small moves.
     reference = measured if sent is None else sent
     if sent is not None:
         joints = np.asarray(sent[:5], dtype=float)
     target = (solver.kinematics.forward_kinematics(joints) if sent is not None else pose).copy()
-    target[:3, 3] += delta[:3]
+    arm_input = any(delta[:5])
+    baseline_xyz_m = measured_xyz_m if desired_xyz_m is None else desired_xyz_m
+    if arm_input:
+        target[:3, 3] = baseline_xyz_m
+        target[:3, 3] += delta[:3]
     pitch, roll = np.deg2rad(delta[3:5])
     cp, sp = np.cos(pitch), np.sin(pitch)
     cr, sr = np.cos(roll), np.sin(roll)
@@ -32,17 +37,17 @@ def solve_intent(solver, measured, delta, gripper_limits, *, sent=None):
         [cp, 0, sp], [0, 1, 0], [-sp, 0, cp],
     ]) @ np.array([[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]])
 
-    response = {"xyz_m": pose[:3, 3].tolist(), "requested_xyz_m": target[:3, 3].tolist(),
-                "target": None, "reason": ""}
+    response = {"xyz_m": measured_xyz_m, "baseline_xyz_m": baseline_xyz_m,
+                "requested_xyz_m": target[:3, 3].tolist(), "target": None, "reason": ""}
     if not any(delta):
         return response
-    if any(delta[:5]):
+    if arm_input:
         result = solver.solve_pose(target, joints)
         if not result.accepted:
             return {**response, "reason": result.reason}
         joints = result.joints_deg
     jaw = float(np.clip(reference[5] + delta[5], *gripper_limits))
-    if any(delta[:5]) or jaw != reference[5]:
+    if arm_input or jaw != reference[5]:
         response["target"] = [*joints.tolist(), jaw]
     return response
 
@@ -67,11 +72,14 @@ def main():
             request = decode_frame(frame)
             measured, delta = request.get("measured"), request.get("delta")
             sent = request.get("sent")
+            desired_xyz_m = request.get("desired_xyz_m")
             if not finite_vector(measured, 6) or not finite_vector(delta, 6):
                 raise ValueError("Expected six finite measured channels and six finite increments")
             if sent is not None and not finite_vector(sent, 6):
                 raise ValueError("Expected six finite sent channels")
-            reply(solve_intent(solver, measured, delta, limits[5], sent=sent))
+            if desired_xyz_m is not None and not finite_vector(desired_xyz_m, 3):
+                raise ValueError("Expected three finite desired XYZ values")
+            reply(solve_intent(solver, measured, delta, limits[5], sent=sent, desired_xyz_m=desired_xyz_m))
 
 
 if __name__ == "__main__":
