@@ -4,6 +4,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import socket
+import sys
 from threading import Thread
 from time import monotonic
 
@@ -38,6 +40,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 class WebDashboard(ThreadingHTTPServer):
+    allow_reuse_address = sys.platform != "win32"
+
     def __init__(self, host, port):
         self.page = Path(__file__).with_suffix(".html").read_bytes()
         self._sample = None
@@ -47,7 +51,12 @@ class WebDashboard(ThreadingHTTPServer):
     def port(self):
         return self.server_port
 
-    def publish(self, joints, gripper, xyz_m, gamepad_enabled, *, gamepad=None):
+    def server_bind(self):
+        if sys.platform == "win32":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+    def publish(self, joints, gripper, xyz_m, gamepad_enabled, *, gamepad=None, remote=None):
         # Replace the entire snapshot. HTTP handlers never mutate it.
         readings = {
             "joints_deg": dict(joints),
@@ -62,6 +71,8 @@ class WebDashboard(ThreadingHTTPServer):
                 "buttons": dict(gamepad["buttons"]),
                 "dpad": list(gamepad["dpad"]),
             }
+        if remote is not None:
+            readings["remote"] = dict(remote)
         self._sample = (monotonic(), readings)
 
     def telemetry(self):

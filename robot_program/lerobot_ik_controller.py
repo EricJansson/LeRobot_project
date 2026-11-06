@@ -75,12 +75,14 @@ def _joint_limits(bus, urdf_path: Path) -> np.ndarray:
     return np.asarray(endpoints)
 
 
-class LeRobotIKController:
-    """One hardware owner with preflighted LeRobot FK/IK and bounded commands."""
+class LeRobotPoseSolver:
+    """Official LeRobot FK/IK with explicit joint bounds and no motor access."""
 
-    def __init__(self, follower, *, urdf_path: Path = DEFAULT_URDF, kinematics=None):
-        self.follower = follower
-        self.limits_deg = _joint_limits(follower.bus, Path(urdf_path).resolve())
+    def __init__(self, limits_deg, *, urdf_path: Path = DEFAULT_URDF, kinematics=None):
+        self.limits_deg = np.asarray(limits_deg, dtype=float)
+        if (self.limits_deg.shape != (5, 2) or not np.isfinite(self.limits_deg).all()
+                or np.any(self.limits_deg[:, 0] >= self.limits_deg[:, 1])):
+            raise ValueError("Expected five finite, nonempty arm joint ranges")
         if kinematics is None:
             from lerobot.model.kinematics import RobotKinematics
 
@@ -96,6 +98,52 @@ class LeRobotIKController:
         # A separate jaw joint must never become an unconstrained IK variable.
         self.kinematics.solver.mask_dof("gripper")
         self.kinematics.solver.enable_joint_limits(True)
+
+    def solve_pose(self, target: np.ndarray, measured_deg: np.ndarray) -> IKResult:
+        """Solve and validate without reading or writing hardware."""
+        target = _pose(target)
+        measured = np.asarray(measured_deg, dtype=float)
+        if measured.shape != (5,) or not np.isfinite(measured).all():
+            raise ValueError("Expected five finite measured arm joint degrees")
+        q = measured.copy()
+        measured_pose = _pose(self.kinematics.forward_kinematics(measured))
+        achieved = measured_pose.copy()
+        reason = "position tolerance not reached"
+        accepted = False
+        try:
+            for _ in range(MAX_ITERATIONS):
+                q = np.asarray(self.kinematics.inverse_kinematics(
+                    q, target, position_weight=1.0, orientation_weight=0.01,
+                ), dtype=float)
+                if q.shape != (5,) or not np.isfinite(q).all():
+                    reason = "nonfinite or malformed IK solution"
+                    break
+                if (np.any(q < self.limits_deg[:, 0] - JOINT_ROUNDOFF_DEG)
+                        or np.any(q > self.limits_deg[:, 1] + JOINT_ROUNDOFF_DEG)):
+                    reason = "joint limit exceeded"
+                    break
+                # Snap solver roundoff, then verify FK of the exact bounded command.
+                q = np.clip(q, self.limits_deg[:, 0], self.limits_deg[:, 1])
+                achieved = _pose(self.kinematics.forward_kinematics(q))
+                error = float(np.linalg.norm(achieved[:3, 3] - target[:3, 3]))
+                if error <= POSITION_TOLERANCE_M:
+                    accepted, reason = True, "accepted"
+                    break
+        except (RuntimeError, ValueError) as exc:
+            reason = f"IK solver failed: {exc}"
+        if not accepted:
+            q, achieved = measured.copy(), measured_pose
+            self.kinematics.forward_kinematics(measured)
+        return IKResult(accepted, reason, q.copy(), achieved.copy())
+
+
+class LeRobotIKController(LeRobotPoseSolver):
+    """Legacy local controller with one hardware owner."""
+
+    def __init__(self, follower, *, urdf_path: Path = DEFAULT_URDF, kinematics=None):
+        self.follower = follower
+        super().__init__(_joint_limits(follower.bus, Path(urdf_path).resolve()),
+                         urdf_path=urdf_path, kinematics=kinematics)
         self.target_pose: np.ndarray | None = None
         self._gripper = 0.0
         self._connected = False
@@ -164,45 +212,6 @@ class LeRobotIKController:
         pose = _pose(self.kinematics.forward_kinematics(joints))
         xyz_m = dict(zip(("x", "y", "z"), pose[:3, 3].tolist()))
         return dict(zip(ARM_JOINTS, joints.tolist())), self._gripper, xyz_m
-
-    def solve_pose(self, target: np.ndarray, measured_deg: np.ndarray) -> IKResult:
-        """Solve and validate without reading or writing hardware."""
-        target = _pose(target)
-        measured = np.asarray(measured_deg, dtype=float)
-        if measured.shape != (5,) or not np.isfinite(measured).all():
-            raise ValueError("Expected five finite measured arm joint degrees")
-        q = measured.copy()
-        measured_pose = _pose(self.kinematics.forward_kinematics(measured))
-        achieved = measured_pose.copy()
-        reason = "position tolerance not reached"
-        accepted = False
-        try:
-            for _ in range(MAX_ITERATIONS):
-                q = np.asarray(self.kinematics.inverse_kinematics(
-                    q, target, position_weight=1.0, orientation_weight=0.01,
-                ), dtype=float)
-                if q.shape != (5,) or not np.isfinite(q).all():
-                    reason = "nonfinite or malformed IK solution"
-                    break
-                if (np.any(q < self.limits_deg[:, 0] - JOINT_ROUNDOFF_DEG)
-                        or np.any(q > self.limits_deg[:, 1] + JOINT_ROUNDOFF_DEG)):
-                    reason = "joint limit exceeded"
-                    break
-                # Placo can exceed an active bound by ~1e-14 degrees. Snap only
-                # numerical roundoff, then verify FK of the exact bounded command.
-                q = np.clip(q, self.limits_deg[:, 0], self.limits_deg[:, 1])
-                achieved = _pose(self.kinematics.forward_kinematics(q))
-                error = float(np.linalg.norm(achieved[:3, 3] - target[:3, 3]))
-                if error <= POSITION_TOLERANCE_M:
-                    accepted, reason = True, "accepted"
-                    break
-        except (RuntimeError, ValueError) as exc:
-            reason = f"IK solver failed: {exc}"
-        if not accepted:
-            q, achieved = measured.copy(), measured_pose
-            # Restore the solver model as well as the caller's target reference.
-            self.kinematics.forward_kinematics(measured)
-        return IKResult(accepted, reason, q.copy(), achieved.copy())
 
     def move_to_pose(self, target: np.ndarray, *, gripper_delta: float = 0.0) -> IKResult:
         result = self.solve_pose(target, self._read_joints())

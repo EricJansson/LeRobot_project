@@ -1,6 +1,6 @@
 # Project status and history
 
-> **New approved direction (2026-11-05): PC-led architectural refactor, not yet implemented.** Existing modes documented here remain the factual legacy baseline. See [target architecture](PC_PI_ARCHITECTURAL_REFACTOR.md) and [phased plan](PC_PI_IMPLEMENTATION_PLAN.md). The new priorities supersede prior phone-through-Pi-dashboard and Pi-only-compute plans; they do not retroactively change implementation status.
+> The current PC-led remote IK path is verified in simulation. See [remote IK setup](REMOTE_IK_SETUP.md) for commands and commissioning status.
 
 
 [Home](../README.md) | [Architecture](ARCHITECTURE.md) | [TODO](../TODO.md)
@@ -32,23 +32,19 @@ Original implementation review: 2026-10-30. Documentation reconciled with local 
 
 Plan playback interpolates recorded joint targets and pauses; it is not collision-aware planning. The guardrail/workspace helper files are not wired into active teleop. The offline suite covers custom mathematics/model behavior, mocked integration, input mapping and web telemetry, with conditional LeRobot/PlaCo solver regressions. These checks do not establish hardware or end-to-end safety; see [test scope and dependency skips](../README.md#tests-and-diagnostics).
 
-## Approved architectural refactor — priority over older future work
+## PC-led remote IK
 
-**Current status: NOT STARTED. Development will resume on the Windows PC, not the Raspberry Pi.** No distributed supervisor, Windows-to-WSL motion worker, Pi network motor service or separate PC monitoring dashboard is implemented. This documentation reconciliation does not complete the Phase 0 runtime audit, benchmarks or safety gates. Preserve current modes as legacy.
+**2026-11-06 · OFFLINE VERIFIED.** The Windows launcher, WSL2 LeRobot IK worker, Pi user service, and read-only Windows dashboard run together with a simulated bus. The remote launcher uses a mesh-free URDF. Self-collision checks are outside this implementation’s scope. See [remote IK setup and verification](REMOTE_IK_SETUP.md).
 
-1. **First, on Windows:** Audit the legacy baseline, verify Windows gamepad mapping and a separate WSL2 PlaCo/LeRobot IK environment, self-collision/path checker and timing. Reconcile model/units against reference measurements, with approval for new physical checks. Benchmark before committing to integration.
-2. **Then:** Implement separate Windows gamepad gateway + PC startup orchestration + Pi sole motor service with validated joint targets, feedback, watchdog, short disconnect recovery and modular offline tests.
-3. **Then:** Hardware-validate low-speed 50 Hz control and build the PC-hosted monitoring web dashboard.
-4. **Later:** tabletop avoidance, presets/plan migration, native Android (including ArUco), secure remote phone access, Pi camera streaming and optional event-driven motor updates.
-
-Preserve exact calibration/tuning, validate physical model and gripper unit conversion, and collect latency/rejection measurements across component boundaries. Physical safety and legacy compatibility are release gates.
+**HARDWARE VERIFICATION PENDING.** The owner verified the GAM-139 through XInput in local simulation. Live commissioning still needs approval and checks for motor directions, normalized gripper range, bus timing, and stop/hold behavior under load.
 
 ## Previous planned direction (historical snapshot; superseded where conflicting)
 
-Earlier plans centered on Pi-local LeRobot IK, combined self/table/environment collision work, presets/recording and phone commands through a Pi-hosted web dashboard. Standalone Pi IK and read-only browser telemetry were subsequently implemented; phone motion control and collision checking were not. The approved PC-led target now takes priority: self-collision/path validation first, PC-hosted monitoring, and a deferred Android input source through the PC gateway. Presets/recording migration and table collision are deferred. The Pi remains the motor host rather than the development or IK host for the new path.
+Earlier plans centered on Pi-local LeRobot IK, collision checking, presets and phone commands through a Pi dashboard. Standalone Pi IK and read-only browser telemetry were implemented. The [November 5 design](PC_PI_ARCHITECTURAL_REFACTOR.md) records the broader PC-led proposal and deferred work.
 
 ## Preserved validation and hardware history
 
+- **2026-11-06 · OFFLINE:** A six-second local simulation sustained 50 updates/s. A 20-second SSH simulation delivered 29.2 updates/s with a 50 Hz Pi cycle and 150 ms watchdog. IK p95 was 1.25 ms, Pi tick wait p95 was 19.0 ms, round trip p95 including that wait was 59.0 ms, and command age p99 was 60.0 ms.
 - **2026-10-30 — OFFLINE:** 159 tests passed under Python 3.12.9 and the robot environment's Python 3.10.19; a historical custom-model baseline.
 - **2026-10-31 — OFFLINE:** 168 tests passed in the Python 3.11.14 Windows venv; `pip check` passed. This migration verification did not connect to hardware.
 - **2026-11-02 — OFFLINE:** 204 tests passed on the Pi with Python 3.13.5 / LeRobot 0.6.1; `pip check` and calibration arithmetic passed. Serial connections were blocked and no physical gamepad was exposed. These results do not validate the future PC-led runtime.

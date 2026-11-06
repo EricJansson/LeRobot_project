@@ -1,18 +1,10 @@
 # Connection and run guide
 
-> **Development resumes on the Windows PC, not on the Raspberry Pi.** Current commands here run existing legacy modes and diagnostics. The approved PC-started Windows→WSL2 IK/self-collision→Pi motor service is **not yet implemented**. Do not interpret `usbipd` WSL USB-forwarding or Pi-connected gamepad steps below as instructions for the new design. See [target architecture](PC_PI_ARCHITECTURAL_REFACTOR.md) and [implementation phases](PC_PI_IMPLEMENTATION_PLAN.md). New-path commands will be documented when implemented and verified; Phase 5 consolidates rollout instructions.
+> This guide covers the legacy modes and diagnostics. For the Windows gamepad, WSL2 IK, and Pi motor service, use the [remote IK setup guide](REMOTE_IK_SETUP.md).
 
 [Home](../README.md) | [Architecture and controls](ARCHITECTURE.md) | [Sources](SOURCES.md)
 
-## Resuming development on Windows
-
-Use the Windows checkout for source review, editing and offline verification. Start with [Phase 0](PC_PI_IMPLEMENTATION_PLAN.md#phase-0--baseline-and-feasibility-gates-start-here), not a Pi-local feature implementation. The Windows venv below preserves the legacy baseline. Provision and verify a **separate WSL2 Linux solver environment** during Phase 0; neither Windows LeRobot 0.4.0 requirements nor the Pi's ARM64 CPU package pins establish a compatible WSL2 stack.
-
-For the new path, connect the gamepad to Windows and leave the motor adapter on the Pi. WSL2 will compute motion and self-collision/path checks without owning USB serial. The future Windows supervisor will start a supervised Pi motor service over the LAN; that launcher/service does not exist yet. Keep the existing Pi environment/calibration as the hardware reference, and defer hardware operations until owner-approved tests.
-
 ## Windows setup
-
-**Existing Windows baseline; this does not install the proposed distributed runtime.**
 
 Use Python 3.11 and a normal project venv. From the repository root:
 
@@ -22,7 +14,7 @@ py -3.11 -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-If the Python launcher is unavailable, use the path to your installed Python 3.11 executable in place of `py -3.11`. Create the environment once; activate it when opening a new terminal. Dependencies are listed in `requirements.txt`. Optional test and development tools are in `requirements-dev.txt`. Use the [offline diagnostics](#motor-reading-and-offline-diagnostics) for the legacy baseline; a passing baseline does not verify the proposed distributed runtime.
+If the Python launcher is unavailable, use the path to your installed Python 3.11 executable in place of `py -3.11`. Activate the environment when opening a new terminal. Optional test and development tools are in `requirements-dev.txt`. Use the [offline diagnostics](#motor-reading-and-offline-diagnostics) to verify the local setup.
 
 ## Raspberry Pi (Debian 13 ARM64)
 

@@ -1,8 +1,8 @@
 # Architecture and control reference
 
-> **This document primarily records the existing/legacy implementation, not the agreed target architecture.** Approved next design: [PC–Pi architectural refactor](PC_PI_ARCHITECTURAL_REFACTOR.md). Implement incrementally using [PC–Pi implementation plan](PC_PI_IMPLEMENTATION_PLAN.md). The 2026-11-05 architectural decisions override **older future-work proposals** but do not change the truth of existing-code observations below. Current legacy modes must be preserved.
+> This document records the legacy implementation and the November 5 design. The separate PC-to-Pi launcher is available for offline simulation with mesh-free LeRobot IK. See [remote IK setup and verification](REMOTE_IK_SETUP.md) for the implementation and its current scope.
 
-## Approved next architecture (not implemented)
+## November 5 architecture target
 
 - **PC mothership:** Windows physical gamepad and startup/orchestration; WSL2 LeRobot/URDF/PlaCo IK, separate self-collision/path checking; PC-hosted read-only dashboard.
 - **Development host:** resume in the Windows PC checkout. WSL2 is a provisional solver runtime to validate; the Pi hosts hardware execution and retains its legacy environment.
@@ -159,10 +159,10 @@ LeRobot `RobotKinematics` loads the URDF with an explicit five-joint order and `
 
 The repository URDF uses meter/radian geometry and includes six revolute joints plus a fixed gripper frame. All 13 referenced assets/*.stl meshes are included with their [license and provenance](../assets/README.md). On 2026-11-05 the full-resolution meshes were replaced by the reduced `IK-collision` asset set; the URDF's parsed geometry and paths are unchanged, and its bytes now match the pinned upstream model after line-ending normalization. Its limits differ from the exported hardware limits; an elbow comment mentions a five-degree calibration offset. Verify joint ordering, frames, zero conventions, gripper treatment, measured FK and reduced-mesh clearance margins before treating it as authoritative. Mesh resolution alone does not prove physical accuracy or collision safety.
 
-The upstream wrapper does not configure collision avoidance. The first PC-led release requires separate **self-collision and transition validation**, including robot base/gripper geometry, with explicit margins and failure behavior. **Table/environment checks are deferred**; the older combined collision backlog does not define the initial scope. The approved future **native Android app** will be a mutually exclusive input source connecting to the **PC gateway**, never directly to the Pi motor service; it is **not part of the first release**. The target transport/API and the separate PC-hosted dashboard are specified as design constraints in [PC–Pi architectural refactor](PC_PI_ARCHITECTURAL_REFACTOR.md), with actual transport choice pending benchmarks. All new commands must pass the same validated motion path. See [TODO](../TODO.md).
+The PC-led implementation uses mesh-free LeRobot IK in WSL2, a read-only Windows dashboard, and a Pi motor service reached over SSH. Collision checking and Android input are outside this implementation. See [remote IK setup and verification](REMOTE_IK_SETUP.md) for current behavior and [the November 5 design](PC_PI_ARCHITECTURAL_REFACTOR.md) for broader proposals.
 
 ### Standalone Pi IK feedback and dashboard
 
 The current LeRobot launcher runs input, FK/IK and serial ownership together on the Pi, targeting 50 Hz. `LeRobotIKController` reads measured joints for motion candidates; jaw-only input uses a separate normalized 0–50 command path. Neither route checks collisions. Accepted arm solutions are sent in full; the old `--no-joint-step-limit` flag remains accepted for compatibility, with no active 5° step filter. See [hardware lessons](context/IK_TELEOP_LESSONS.md).
 
-`scripts.lerobot_web_dashboard` serves read-only HTTP telemetry from the same legacy launcher, with measured joints, FK XYZ, gripper and gamepad state sampled at about 10 Hz. It is distinct from the Pygame dashboard/file IPC described above. HTTP handlers serve snapshots, while motor telemetry reads remain in the teleop loop. It is not the planned independent PC dashboard or network motor service. Controller loss exits teleop and normal cleanup disables torque; the new architecture's persistent Pi watchdog/hold/reconnect behavior does not exist in this path.
+`scripts.lerobot_web_dashboard` serves read-only snapshots with measured joints, FK, gripper and gamepad state. The standalone Pi launcher samples these in its teleop loop at about 10 Hz. In that mode, controller loss exits teleop and normal cleanup disables torque.

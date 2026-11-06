@@ -1,24 +1,24 @@
 # SO-101 robot arm workspace
 
-> **New architectural refactor approved (2026-11-05) — design, not implemented.** The PC will orchestrate Windows gamepad input, WSL2 LeRobot/PlaCo IK + self-collision and a PC-hosted monitoring dashboard; the Raspberry Pi will exclusively execute motor commands over Wi-Fi. **Existing scripts below remain legacy and should not be removed or broken.** The authoritative target is [PC–Pi architectural refactor](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md); implementation priorities and gates are in [PC–Pi implementation plan](readme_files/PC_PI_IMPLEMENTATION_PLAN.md). Where older plans conflict with these target documents, follow the new decisions, but retain accurate descriptions of existing behavior.
-
 This personal project controls a physical **SO-101 follower arm** using Python, a PlayStation-style gamepad, and LeRobot's Feetech hardware interface. It includes direct joint control, custom Cartesian inverse kinematics (IK), recorded motion playback, a desktop dashboard, calibration data, and offline tests.
 
 A separate Pi mode uses **LeRobot's URDF-based FK/IK with fine movement** and starts a LAN dashboard by default. Existing IK and plan modes retain their custom solver. See [LeRobot IK setup and controls](#lerobot-ik-raspberry-pi). Collision checking and phone control remain planned.
 
-## Architectural refactor: next implementation (not yet available)
+## Windows gamepad through the Raspberry Pi
 
-**Development resumes on the Windows PC, not on the Raspberry Pi.** Start with the [Phase 0 source audit and offline feasibility work](readme_files/PC_PI_IMPLEMENTATION_PLAN.md#phase-0--baseline-and-feasibility-gates-start-here). The existing Windows venv is a legacy baseline; the WSL2 solver environment still needs verification. The Pi remains the hardware runtime/reference, not the primary development host.
+The Windows launcher reads an XInput gamepad, opens a local dashboard, and uses official LeRobot IK in WSL2 with a mesh-free model. The Pi service owns the serial connection. Self-collision checking is outside this implementation’s scope.
 
-The new path is an **addition**, initially gamepad-only: `Windows gamepad → PC gateway → WSL2 URDF/PlaCo IK + separate self-collision/path checks → LAN → Pi motor service → SO-101`, with measured joint feedback returning and a **PC-hosted read-only dashboard**. The PC launches/supervises the Pi service; brief Wi-Fi loss pauses safely without terminating it. Target 50 Hz; benchmark latency and safeguard execution before hardware use. The exact commands, transport and WSL environment are **not decided/implemented**; do not try the legacy commands below expecting this topology.
+```powershell
+python.exe -m scripts.main_teleop_remote_ik --dry-run
+python.exe -m scripts.install_remote_ik_pi
+python.exe -m scripts.main_teleop_remote_ik --pi-sim
+```
 
-**First release:** gamepad, gripper, collision-aware motion, motor-side limits/watchdog and reconnect, telemetry/dashboard, modular tests and latency instrumentation. **Later:** table collision, plan/presets migration, Android app/ArUco, remote phone authentication, robot camera and event-driven writes. The current independent direct-joint/custom IK/plan/LeRobot-Pi launchers stay available as legacy, subject to their existing safety limitations.
-
-See [approved architectural refactor](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md) and [phased tasks + acceptance tests](readme_files/PC_PI_IMPLEMENTATION_PLAN.md).
+The PC and Pi simulations are **OFFLINE VERIFIED**. Live control requires commissioning and owner-approved hardware tests. See the [remote IK setup and verification guide](readme_files/REMOTE_IK_SETUP.md).
 
 ## Start here
 
-- [PC–Pi architectural refactor](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md) and [implementation plan](readme_files/PC_PI_IMPLEMENTATION_PLAN.md): **authoritative new direction**, scope, safety/performance gates and phased work.
+- [PC–Pi architectural refactor](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md) and [implementation plan](readme_files/PC_PI_IMPLEMENTATION_PLAN.md) describe the broader November 5 design and phase gates.
 - [Connection and run guide](readme_files/CONNECT_SETUP.md): **existing/legacy** Raspberry Pi headless setup, Windows venv setup, alternate WSL instructions, and commands.
 - [Architecture and control reference](readme_files/ARCHITECTURE.md): code ownership, controls, units, state, dashboard communication, and extension boundaries.
 - [Joint limits and calibration](readme_files/JOINT_LIMITS_IMPLEMENTATION.md): current limits and enforcement.
@@ -36,8 +36,8 @@ See [approved architectural refactor](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.
 | Offline tests | 159-test historical baseline; venv validation below |
 | web_sim | Outdated standalone browser experiment; retained for historical reference |
 | LeRobot URDF FK/IK integration | Separate headless Pi mode; owner confirms working fine movement |
-| PC-led distributed control | Approved target; not implemented; development resumes on Windows |
-| Collision avoidance / phone control | Neither implemented; self-collision/path validation is first-release scope, phone control deferred |
+| PC-led distributed control | Windows/WSL2 and Pi simulation verified offline; hardware commissioning pending |
+| Collision avoidance / phone control | Outside the remote IK implementation scope |
 
 Hardware use of the prior setup is confirmed by the owner. The venv migration did not connect to or move the arm; physical validation of the new environment remains pending. Passing offline tests does not validate physical accuracy or collision safety.
 
@@ -93,7 +93,7 @@ RobotArm is a hardware-independent model: solving IK changes internal state. Rob
 
 ## Setup
 
-**Existing environments only.** Resume development on Windows using the [setup guide](readme_files/CONNECT_SETUP.md#windows-setup). The Pi instructions below preserve the legacy environment; they are not a direction to resume development there. No distributed launcher or new-path setup commands exist yet.
+The steps below set up the legacy modes. For distributed teleop, see the [remote IK setup guide](readme_files/REMOTE_IK_SETUP.md).
 
 On the Raspberry Pi (Debian 13 ARM64), reuse `~/lerobot-env`. Install only the
 supplement with `~/lerobot-env/bin/python -m pip install -r requirements-pi.txt`.

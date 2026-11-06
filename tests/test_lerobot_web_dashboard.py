@@ -70,5 +70,5 @@ def test_dashboard_http_and_shutdown():
         assert request("GET", "/README.md")[0] == 404
 
     with pytest.raises(ConnectionRefusedError):
-        with socket.create_connection(("127.0.0.1", dashboard.port), timeout=2):
+        with socket.create_connection(("127.0.0.1", dashboard.port), timeout=4):
             pytest.fail("Dashboard is still accepting connections")

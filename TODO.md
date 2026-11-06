@@ -1,15 +1,7 @@
 # TODO — approved PC-led architectural refactor
 
-**Updated 2026-11-05; design approved, implementation not yet started.** This is a **separate new control path**, not a rewrite of the existing direct-axis/custom IK/plan/standalone Pi LeRobot IK modes. Preserve those existing modes as legacy. The [architecture decision document](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md) has priority over older planned approaches; the [phased implementation plan](readme_files/PC_PI_IMPLEMENTATION_PLAN.md) specifies benchmarks, safety gates, tests and acceptance evidence. No physical motion without owner approval.
+The mesh-free Windows-to-Pi path is verified in simulation and awaits owner-approved hardware commissioning. See the [current remote IK setup](readme_files/REMOTE_IK_SETUP.md). The checklist below follows the broader [November 5 design](readme_files/PC_PI_ARCHITECTURAL_REFACTOR.md) and its [phase gates](readme_files/PC_PI_IMPLEMENTATION_PLAN.md).
 
-## Priority 0 — feasibility and baseline (FIRST)
-
-- [ ] Resume in the **Windows PC checkout**; audit source and actual runtime, preserve legacy and record existing tests/mappings and regression cases (especially extended-arm retraction). The documentation review is not a completed runtime/feasibility audit.
-- [ ] Check WSL2 LeRobot/PlaCo/URDF environment and model fit; benchmark IK speed on representative poses.
-- [ ] Verify Windows gamepad mapping, neutral triggers and deadman without motors; the existing Windows fallback is not a newly verified device profile.
-- [ ] Reconcile frames, zero conventions, motor directions, hardware/URDF limits, gripper normalization and the historical elbow/height discrepancy against recorded reference poses. Obtain owner approval for any new physical measurements; establish model alignment before live integration.
-- [ ] Find and validate a **separate self-collision + path checker**, not assumed to exist in LeRobot/PlaCo wrapper; establish geometry, margins and exclusions.
-- [ ] Measure Windows gamepad+WSL2 IPC offline; measure Pi motor read/write budget only with owner approval. Decide whether WSL2/PlaCo meets initial 50 Hz goals.
 
 ## Priority 1 — new offline modular runtime
 
