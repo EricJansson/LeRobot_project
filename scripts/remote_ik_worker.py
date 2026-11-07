@@ -1,6 +1,7 @@
 """WSL2 stdio worker for official LeRobot IK. This process never opens serial."""
 
 import argparse
+import json
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -55,9 +56,12 @@ def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--calibration-dir", type=Path, default=DEFAULT_URDF.parent / "calibration")
+    parser.add_argument("--analyze-trace", type=Path, metavar="PATH",
+                        help="Write the saved trace with issued and measured XYZ to stdout")
     args = parser.parse_args()
     urdf = kinematic_urdf()
     limits = channel_limits(calibrated_follower("unused", args.calibration_dir))
+    model = model_id(urdf, args.calibration_dir)
 
     def reply(data):
         sys.stdout.buffer.write(encode_frame(data))
@@ -67,7 +71,20 @@ def main():
         path = Path(directory) / "kinematic.urdf"
         path.write_text(urdf, encoding="utf-8")
         solver = LeRobotPoseSolver(limits[:5], urdf_path=path)
-        reply({"model": model_id(urdf, args.calibration_dir), "limits": limits})
+        if args.analyze_trace is not None:
+            trace = json.loads(args.analyze_trace.read_text(encoding="utf-8"))
+            if trace["model"] != model:
+                parser.error("Trace model differs from this URDF or calibration")
+            for tick in trace["ticks"]:
+                for channel in ("issued_before", "issued", "measured"):
+                    joints = tick[channel]
+                    pose = (solver.kinematics.forward_kinematics(np.asarray(joints[:5], dtype=float))
+                            if finite_vector(joints, 6) else None)
+                    tick[f"{channel}_xyz_m"] = pose[:3, 3].tolist() if pose is not None else None
+            json.dump(trace, sys.stdout, indent=2)
+            print()
+            return
+        reply({"model": model, "limits": limits})
         while frame := sys.stdin.buffer.readline(MAX_FRAME + 1):
             request = decode_frame(frame)
             measured, delta = request.get("measured"), request.get("delta")

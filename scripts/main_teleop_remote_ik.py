@@ -1,9 +1,11 @@
 """Windows gamepad, WSL2 LeRobot IK, and a Pi-owned SO-101 motor bus."""
 
 import argparse
+from collections import deque
 from contextlib import ExitStack, suppress
 import ctypes
 from dataclasses import dataclass
+import json
 from math import dist, isclose
 from pathlib import Path
 from queue import Empty, Queue
@@ -33,7 +35,9 @@ PI_UNIT = "lerobot-remote-ik"
 PI_SIM_PORT = PI_PORT + 1
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5"]
 DEFAULT_WSL_PYTHON = ".local/share/lerobot-phase0/venv/bin/python"
-XYZ_IDLE_RESET_S = 2.0
+ARM_START_RAMP_S = 0.3
+GAMEPAD_POLL_S = 1 / 250
+TRACE_MAX_TICKS = 3000
 VK_ESCAPE = 0x1B
 TELEOP_ERRORS = (OSError, RuntimeError, ValueError, subprocess.SubprocessError)
 
@@ -333,6 +337,7 @@ class GamepadSample:
     stop: int = 0
     release: int = 0
     disconnect: int = 0
+    arm_idle: int = 0
 
     @property
     def lb(self):
@@ -342,11 +347,12 @@ class GamepadSample:
     def neutral(self):
         return self.gamepad is not None and not any(self.gamepad["axes"].values()) and self.gamepad["dpad"] == (0, 0)
 
-    def delta(self, scale):
-        axes = self.gamepad["axes"]
-        return [scale * value for value in (-.002 * axes["LY"], -.002 * axes["LX"], -.002 * axes["RY"],
-                                            .4 * (axes["RT"] - axes["LT"]), .75 * axes["RX"],
-                                            self.gamepad["dpad"][1])]
+
+def motion_delta(gamepad, scale=1.):
+    axes = gamepad["axes"]
+    return [scale * value for value in (-.002 * axes["LY"], -.002 * axes["LX"], -.002 * axes["RY"],
+                                        .4 * (axes["RT"] - axes["LT"]), .75 * axes["RX"],
+                                        gamepad["dpad"][1])]
 
 
 class LatestInput:
@@ -360,19 +366,25 @@ class LatestInput:
         start = (bool(before) and not before["Start"] and after.get("Start", False)
                  and not after["LB"] and not after["Back"]
                  and not any(gamepad["axes"].values()) and gamepad["dpad"] == (0, 0))
+        # Retain a neutral edge even if another tap arrives before the next IK tick.
+        arm_centered = (previous.gamepad is not None and gamepad is not None
+                        and any(motion_delta(previous.gamepad)[:5])
+                        and not any(motion_delta(gamepad)[:5]))
         self.sample = GamepadSample(
             monotonic(), gamepad,
             previous.start + start,
             previous.stop + (not before.get("Back", False) and after.get("Back", False)),
             previous.release + (previous.lb and not after.get("LB", False)),
             previous.disconnect + (previous.gamepad is not None and gamepad is None),
+            previous.arm_idle + arm_centered,
         )
 
 
 class ControlLoop:
-    def __init__(self, worker, connect, latest_input, stop, speed, mode):
+    def __init__(self, worker, connect, latest_input, stop, speed, mode, *, trace=None):
         self.worker, self.connect, self.latest_input, self.stop = worker, connect, latest_input, stop
         self.speed, self.mode = speed, mode
+        self.trace = trace
         self.status = {"connection": "Connecting", "state": "Disarmed", "reason": "", "mode": mode}
         self.error = None
 
@@ -405,7 +417,8 @@ class ControlLoop:
         previous_tick = connected_at
         feedback_count = 0
         max_gap_ms = 0.
-        desired_xyz_m = last_motion_at = blocked_direction = None
+        desired_xyz_m = blocked_direction = None
+        arm_started = None
         while not self.stop.is_set():
             started = monotonic()
             # Use the command cadence, with at most two Pi cycles of input per
@@ -413,52 +426,78 @@ class ControlLoop:
             elapsed = min(2 * period, max(period, started - previous_tick))
             previous_tick = started
             sample = self.latest_input.sample
+            arm_interrupted = sample.arm_idle != seen.arm_idle
             measured = feedback.get("measured")
             fresh = sample.gamepad is not None and started - sample.sampled_at < freshness
             delta = [0.] * 6
             sent = None
             op = "poll"
-            if last_motion_at is not None and started - last_motion_at >= XYZ_IDLE_RESET_S:
-                desired_xyz_m = last_motion_at = blocked_direction = None
+            ramp_scale = None
+            reset_reason = None
+            desired_before = desired_xyz_m
+            issued_before = feedback["sent"]
             if (not fresh or sample.disconnect != seen.disconnect or sample.stop != seen.stop
                     or sample.gamepad["buttons"]["Back"]):
                 op = "disarm" if feedback["armed"] else "poll"
-            elif feedback["armed"] and (not sample.lb or sample.release != seen.release):
+            elif feedback["armed"] and (not sample.lb or sample.release != seen.release
+                    or (arm_started is not None and arm_interrupted)):
                 op = "hold" if feedback["moving"] else "poll"
             elif feedback["armed"] and sample.lb:
                 if feedback["moving"] and finite_vector(feedback["sent"], 6):
                     sent = feedback["sent"]
-                delta = sample.delta(self.speed * RATE_HZ * (elapsed if sent is not None else period))
-                if any(delta):
-                    last_motion_at = sample.sampled_at
+                delta = motion_delta(sample.gamepad, self.speed * RATE_HZ * (elapsed if sent is not None else period))
                 op = "hold" if feedback["moving"] else "poll"
             elif sample.start != seen.start and sample.neutral and not sample.lb:
                 op = "arm"
+            if arm_interrupted:
+                if desired_xyz_m is not None:
+                    reset_reason = "arm input neutral"
+                desired_xyz_m = blocked_direction = None
+                arm_started = None
             seen = sample
 
             result = {}
             arm_input = any(delta[:5])
+            if arm_input:
+                progress = 0. if arm_started is None else min(1., (started - arm_started) / ARM_START_RAMP_S)
+                ramp_scale = .1 + .9 * progress * progress * (3. - 2. * progress)
+                delta[:5] = [value * ramp_scale for value in delta[:5]]
             if finite_vector(measured, 6) and (op == "poll" or any(delta)):
                 result = self.worker.solve(measured, delta, sent=sent if any(delta) else None,
                                            desired_xyz_m=desired_xyz_m if arm_input else None)
             # Recheck input after IK. A release and re-press while solving also
             # invalidates this candidate, even when LB is held again now.
             current = self.latest_input.sample
+            current_delta = motion_delta(current.gamepad) if current.gamepad is not None else [0.] * 6
             if (self.stop.is_set() or current.gamepad is None or current.stop != sample.stop
                     or current.disconnect != sample.disconnect
                     or monotonic() - current.sampled_at >= freshness):
                 op = "disarm"
             elif (result.get("target") is not None and current.lb and current.release == sample.release
-                  and monotonic() - sample.sampled_at < freshness and any(current.delta(1.))):
+                  and monotonic() - sample.sampled_at < freshness
+                  and (not arm_input or current.arm_idle == sample.arm_idle)
+                  and (any(current_delta[:5]) if arm_input else current_delta[5])):
                 op = "move"
             elif op == "arm" and (current.lb or not current.neutral or current.gamepad["buttons"]["Back"]):
                 op = "poll"
 
             values = {"target": result["target"]} if op == "move" else {}
+            ik_reason = result.get("reason")
             feedback = link.request(op, **values)
+            if arm_input and op == "move" and feedback["moving"] and feedback["armed"] and not feedback["fault"]:
+                if arm_started is None:
+                    arm_started = started
+            else:
+                arm_started = None
             if (not feedback["armed"] or feedback["fault"] or op == "disarm"
                     or not current.lb or current.release != sample.release):
-                desired_xyz_m = last_motion_at = blocked_direction = None
+                if desired_xyz_m is not None:
+                    reset_reason = "motion disabled" if feedback["fault"] or not feedback["armed"] else "input released"
+                desired_xyz_m = blocked_direction = None
+            elif current.arm_idle != sample.arm_idle:
+                if desired_xyz_m is not None:
+                    reset_reason = "arm input neutral"
+                desired_xyz_m = blocked_direction = None
             elif arm_input:
                 had_reference = desired_xyz_m is not None
                 if not had_reference:
@@ -471,6 +510,7 @@ class ControlLoop:
                             and dist(desired_xyz_m, result["xyz_m"]) > 2 * POSITION_TOLERANCE_M)
                     ):
                         desired_xyz_m = None
+                        reset_reason = "IK position tolerance"
                         result["reason"] = "XYZ reference reset after IK position tolerance miss"
                     # Keep repeated pushes in the same blocked direction from recapturing sag.
                     blocked_direction = direction
@@ -482,6 +522,15 @@ class ControlLoop:
                     desired_xyz_m = result["requested_xyz_m"]
                     blocked_direction = None
             received = monotonic()
+            if self.trace is not None:
+                self.trace.append({
+                    "tick_s": started, "ack_s": received, "ack": feedback.get("ack"), "op": op,
+                    "input": sample.gamepad, "arm_idle": sample.arm_idle, "arm_scale": ramp_scale, "delta": delta,
+                    "desired_before_m": desired_before, "desired_xyz_m": desired_xyz_m, "xyz_reset": reset_reason,
+                    "requested_xyz_m": result.get("requested_xyz_m"), "ik_reason": ik_reason,
+                    "candidate": result.get("target"), "issued_before": issued_before, "issued": feedback["sent"],
+                    "measured": feedback["measured"], "pi_reason": feedback["reason"],
+                })
             feedback_count += 1
             max_gap_ms = max(max_gap_ms, (received - last_feedback) * 1000)
             last_feedback = received
@@ -514,6 +563,7 @@ def main():
     parser.add_argument("--wsl-python", default=DEFAULT_WSL_PYTHON, help="Linux path, absolute or relative to WSL home")
     parser.add_argument("--dashboard-port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--trace", type=Path, metavar="PATH", help="Save the last 3000 control ticks after stopping")
     parser.add_argument("--speed", type=float, default=1.0, help="Gamepad motion scale (default %(default)g)")
     args = parser.parse_args()
     if not (args.dry_run or args.pi_sim or args.real_arm):
@@ -524,13 +574,18 @@ def main():
         parser.error("--pi must be user@host")
     if not 0 < args.speed <= 1 or not 0 <= args.dashboard_port <= 65535:
         parser.error("Invalid speed or dashboard port")
+    if args.trace is not None and args.trace.exists():
+        parser.error("--trace requires a new output path")
 
     stop = Event()
+    trace = deque(maxlen=TRACE_MAX_TICKS) if args.trace is not None else None
+    trace_model = None
     try:
         gamepad = XInputGamepad(args.index)
         get_key_state = load_key_state()
         with ExitStack() as stack:
             worker = stack.enter_context(Worker(args.wsl_distro, args.wsl_python))
+            trace_model = worker.metadata["model"]
             dashboard = stack.enter_context(WebDashboard("127.0.0.1", args.dashboard_port))
             if args.dry_run:
                 listener = stack.enter_context(socket.socket())
@@ -560,11 +615,12 @@ def main():
             if args.relax_on_exit:
                 print("Support the arm before exiting. The motors will release their hold.", flush=True)
             latest = LatestInput()
-            control = ControlLoop(worker, connect, latest, stop, args.speed, mode)
+            control = ControlLoop(worker, connect, latest, stop, args.speed, mode, trace=trace)
             thread = Thread(target=control.run, daemon=True)
             thread.start()
             try:
                 next_dashboard = monotonic()
+                next_gamepad = next_dashboard
                 while not stop.is_set():
                     # Windows reports a held key as a negative signed SHORT.
                     if get_key_state(VK_ESCAPE) < 0:
@@ -586,7 +642,9 @@ def main():
                                           dict(zip("xyz", xyz)) if xyz else {}, sample.lb,
                                           gamepad=sample.gamepad, remote=status)
                         next_dashboard = now + .1
-                    sleep(1 / 120)
+                    # Sample faster than the motor loop to catch short gaps between taps.
+                    next_gamepad = max(now, next_gamepad + GAMEPAD_POLL_S)
+                    sleep(max(0., next_gamepad - monotonic()))
             finally:
                 stop.set()
                 thread.join(timeout=2)
@@ -598,6 +656,15 @@ def main():
         pass
     except TELEOP_ERRORS as exc:
         parser.exit(1, f"Remote IK: {exc}\n")
+    finally:
+        if trace:
+            try:
+                args.trace.parent.mkdir(parents=True, exist_ok=True)
+                with args.trace.open("x", encoding="utf-8") as output:
+                    json.dump({"model": trace_model, "ticks": list(trace.copy())}, output, indent=2)
+                print(f"Remote IK trace saved to {args.trace.resolve()}", flush=True)
+            except OSError as exc:
+                parser.exit(1, f"Could not save remote IK trace: {exc}\n")
 
 
 if __name__ == "__main__":

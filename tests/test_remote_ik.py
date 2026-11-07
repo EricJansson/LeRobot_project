@@ -248,6 +248,8 @@ def gamepad_input(*, lx=0., start=False, lb=False):
 
 @pytest.mark.parametrize(("scenario", "expected", "mode"), [
     ("release during IK", "hold", "Real arm enabled"),
+    ("brief neutral during IK", "hold", "Real arm enabled"),
+    ("jaw replaces arm during IK", "hold", "Real arm enabled"),
     ("disconnect during IK", "disarm", "Real arm enabled"),
     ("reconnect while holding LB", "poll", "Real arm enabled"),
     ("resume after hold", "move", "Real arm enabled"),
@@ -269,8 +271,14 @@ def test_control_loop_drops_stale_intent_and_reports_pi_mode(scenario, expected,
         if moving:
             assert any(delta)
             assert sent == [2.] * 6
-            latest.publish(None if scenario == "disconnect during IK" else gamepad_input())
-            latest.publish(gamepad_input(lx=.5, lb=True))
+            if scenario == "jaw replaces arm during IK":
+                jaw = gamepad_input(lb=True)
+                jaw["dpad"] = (0, 1)
+                latest.publish(jaw)
+            else:
+                latest.publish(None if scenario == "disconnect during IK"
+                               else gamepad_input(lb=scenario == "brief neutral during IK"))
+                latest.publish(gamepad_input(lx=.5, lb=True))
             return {"target": [1.] * 6}
         assert sent is None
         if armed:
@@ -288,6 +296,95 @@ def test_control_loop_drops_stale_intent_and_reports_pi_mode(scenario, expected,
     control.session(SimpleNamespace(feedback=feedback, request=request))
     assert operations == [expected]
     assert control.status["mode"] == mode
+
+
+def test_arm_start_ramp_restarts_and_traces_issued_steps(monkeypatch):
+    now = [0.]
+    monkeypatch.setattr(remote_teleop, "monotonic", lambda: now[0])
+    latest, stop, trace = LatestInput(), Event(), []
+    measured = [0.] * 6
+    feedback = {"armed": True, "moving": False, "measured": measured, "sent": measured,
+                "hz": 50, "watchdog_s": .2, "fault": False, "reason": ""}
+    # Time, arm input, jaw input, expected ramp, expected operation.
+    steps = [
+        (0., True, True, .1, "move"),
+        (.15, True, True, .55, "move"),
+        (.30, True, False, 1., "move"),
+        (.32, False, True, None, "hold"),
+        (.34, False, True, None, "move"),
+        (.36, True, True, .1, "move"),
+        (.38, True, False, None, "hold"),  # Neutral and re-press between control ticks.
+        (.40, True, False, .1, "move"),
+        (.42, True, False, .1 + .9 * (1 / 15) ** 2 * (3 - 2 / 15), "hold"),  # IK rejects.
+        (.44, True, False, .1, "move"),
+        (.46, True, False, .1 + .9 * (1 / 15) ** 2 * (3 - 2 / 15), "hold"),
+        (.48, True, False, .1, "move"),
+    ]
+    index = 0
+
+    def publish():
+        at, arm, jaw, *_ = steps[index]
+        now[0] = at
+        if index == 6:
+            # The input poller sees neutral, but the control loop only sees the next tap.
+            now[0] -= remote_teleop.GAMEPAD_POLL_S
+            latest.publish(gamepad_input(lb=True))
+            now[0] = at
+        sample = gamepad_input(lx=.5 if arm else 0., lb=True)
+        sample["axes"]["LY"] = -1. if arm else 0.
+        sample["dpad"] = (0, int(jaw))
+        latest.publish(sample)
+
+    def solve(measured, delta, *, sent, desired_xyz_m):
+        if index == 8:
+            return {"reason": "joint limit exceeded"}
+        if not any(delta):
+            return {}
+        if index == 10:
+            latest.publish(gamepad_input(lb=True))
+            publish()
+        if index in (7, 11):
+            assert desired_xyz_m is None
+        baseline = desired_xyz_m if desired_xyz_m is not None else [0.] * 3
+        target = [prior + step * 1000 for prior, step in zip(feedback["sent"], delta)]
+        return {"baseline_xyz_m": baseline, "requested_xyz_m": np.add(baseline, delta[:3]).tolist(),
+                "target": target}
+
+    def request(op, **values):
+        nonlocal index
+        assert op == steps[index][4]
+        if op == "move":
+            feedback.update(moving=True, sent=values["target"])
+        elif op == "hold":
+            feedback.update(moving=False, sent=measured)
+        index += 1
+        if index == len(steps):
+            stop.set()
+        else:
+            publish()
+        return feedback
+
+    publish()
+    control = ControlLoop(SimpleNamespace(solve=solve), None, latest, stop, 1., "Sim", trace=trace)
+    control.session(SimpleNamespace(feedback=feedback, request=request))
+    for tick, (_, _, _, scale, op) in zip(trace, steps, strict=True):
+        assert tick["op"] == op
+        if scale is None:
+            assert tick["arm_scale"] is None
+        else:
+            assert tick["arm_scale"] == pytest.approx(scale)
+            assert tick["delta"][0] == pytest.approx(-2 * tick["delta"][1])
+    assert trace[0]["delta"][5] == trace[4]["delta"][5] == 1.
+    assert trace[0]["issued"][0] - trace[0]["issued_before"][0] == pytest.approx(.2)
+    assert trace[2]["issued"][0] - trace[2]["issued_before"][0] == pytest.approx(4.)
+    assert trace[7]["issued"][0] - trace[7]["issued_before"][0] == pytest.approx(.2)
+    assert trace[8]["ik_reason"] == "joint limit exceeded"
+    for hold_index in (6, 10):
+        hold, restart = trace[hold_index:hold_index + 2]
+        assert hold["xyz_reset"] == "arm input neutral"
+        assert hold["desired_before_m"] is not None
+        assert hold["desired_xyz_m"] is restart["desired_before_m"] is None
+        assert restart["arm_scale"] == pytest.approx(.1)
 
 
 @pytest.mark.parametrize("delta", [
@@ -326,7 +423,7 @@ def test_worker_uses_cartesian_reference_independently_of_joint_seed(delta, desi
     assert jaw_only["target"] == [*issued[:5], 13.]
 
 
-def test_control_loop_preserves_xyz_through_rejection_slew_and_brief_idle(monkeypatch):
+def test_control_loop_preserves_xyz_through_rejection_and_slew_until_input_stops(monkeypatch):
     now = [0.]
     monkeypatch.setattr(remote_teleop, "monotonic", lambda: now[0])
     latest = LatestInput()
@@ -334,6 +431,7 @@ def test_control_loop_preserves_xyz_through_rejection_slew_and_brief_idle(monkey
     measured = [.1, .2, .3, 0., 0., 10.]
     target = [1., 2., 3., 0., 0., 10.]
     start, advanced, retracted = ([.1, .2, .3], [.101, .2, .3], [.1005, .2, .3])
+    settled = [.1, .2, .295]
     feedback = {"simulated": True, "motion_enabled": True, "armed": True, "moving": False,
                 "measured": measured, "hz": 50, "watchdog_s": .15, "sent": measured,
                 "reason": "", "fault": False}
@@ -346,15 +444,10 @@ def test_control_loop_preserves_xyz_through_rejection_slew_and_brief_idle(monkey
         (.08, -1., True, None, "slew", "move"),
         (.10, -1., True, start, "full", "move"),
         (.12, 0., True, None, None, "hold"),
-        (.25, -1., True, retracted, "reject", "poll"),
-        (2.249, 0., True, None, None, "poll"),
-        (2.25, 0., True, None, None, "poll"),
-        (2.26, 1., True, None, "full", "move"),
-        (2.28, 0., False, None, None, "hold"),
-        (2.30, 1., True, None, "full", "move"),
-        (2.32, 0., True, None, None, "hold"),
-        (2.34, 1., True, advanced, "reject", "poll"),
-        (2.36, 1., True, None, "full", "move"),
+        (.14, -1., True, None, "slew", "move"),
+        (.16, -1., True, settled, "full", "move"),
+        (.18, -1., False, None, None, "hold"),
+        (.20, 1., True, None, "full", "move"),
     ]
     index = 0
     statuses = []
@@ -367,7 +460,7 @@ def test_control_loop_preserves_xyz_through_rejection_slew_and_brief_idle(monkey
         latest.publish(gamepad)
 
     def solve(measured, delta, *, sent, desired_xyz_m):
-        _, x, _, expected_desired, outcome, _ = steps[index]
+        at, x, _, expected_desired, outcome, _ = steps[index]
         assert desired_xyz_m == expected_desired
         if outcome is None:
             assert not any(delta)
@@ -375,6 +468,8 @@ def test_control_loop_preserves_xyz_through_rejection_slew_and_brief_idle(monkey
         assert np.sign(delta[0]) == np.sign(x)
         assert not any(delta[1:])
         baseline = measured[:3] if desired_xyz_m is None else desired_xyz_m
+        if at == .14:
+            assert baseline == settled and sent is None
         return {"xyz_m": measured[:3], "baseline_xyz_m": baseline,
                 "requested_xyz_m": advanced if x > 0 else retracted,
                 "target": None if outcome == "reject" else target,
@@ -392,8 +487,8 @@ def test_control_loop_preserves_xyz_through_rejection_slew_and_brief_idle(monkey
             feedback.update(moving=True, sent=issued)
         elif op == "hold":
             feedback.update(moving=False, sent=measured)
-            if now[0] == 2.32:
-                feedback["measured"] = [.1, .2, .295, 0., 0., 10.]
+            if now[0] == .12:
+                feedback["measured"] = [*settled, 0., 0., 10.]
         index += 1
         if index == len(steps):
             stop.set()
@@ -405,8 +500,7 @@ def test_control_loop_preserves_xyz_through_rejection_slew_and_brief_idle(monkey
     control = ControlLoop(SimpleNamespace(solve=solve), None, latest, stop, .25, "Sim")
     control.session(SimpleNamespace(feedback=feedback, request=request))
     assert statuses[1:] == [
-        advanced, advanced, advanced, None, start, retracted, retracted, retracted,
-        retracted, None, advanced, None, advanced, advanced, None,
+        advanced, advanced, advanced, None, start, retracted, None, settled, retracted, None,
     ]
     assert control.status["desired_xyz_m"] == advanced
 
@@ -519,19 +613,16 @@ def test_auth_and_reconnect(rig):
 
 
 def test_start_edge_requires_neutral_input():
-    def gamepad(*, lx=0., start=False, lb=False):
-        return {"axes": {"LX": lx}, "buttons": {"Start": start, "LB": lb, "Back": False}, "dpad": (0, 0)}
-
     latest = LatestInput()
-    latest.publish(gamepad())
-    latest.publish(gamepad(lx=.5, start=True))
+    latest.publish(gamepad_input())
+    latest.publish(gamepad_input(lx=.5, start=True))
     assert latest.sample.start == 0
-    latest.publish(gamepad(start=True))
+    latest.publish(gamepad_input(start=True))
     assert latest.sample.start == 0
-    latest.publish(gamepad())
-    latest.publish(gamepad(start=True))
+    latest.publish(gamepad_input())
+    latest.publish(gamepad_input(start=True))
     assert latest.sample.start == 1
-    latest.publish(gamepad(lb=True))
+    latest.publish(gamepad_input(lb=True))
     latest.publish(None)
     assert latest.sample.release == 1
 

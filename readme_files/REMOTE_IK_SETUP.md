@@ -23,6 +23,17 @@ Connect an XInput gamepad to Windows. The launcher uses slot 0 by default. Use `
 
 Press **Start** with the sticks, triggers, and D-pad neutral and LB released. Hold **LB** to drive. The left stick controls XY, right-stick vertical controls Z, right-stick horizontal controls roll, the triggers control pitch, and D-pad up/down operates the gripper. **Back** disarms. **Esc** stops teleop and exits the Windows launcher, including while the dashboard has focus on the active Windows desktop. The motion scale defaults to 1. Use `--speed` to reduce it. Reconnect requires another neutral Start press.
 
+Arm motion starts at 10% of the selected scale and eases to full scale over 300 ms. Centering the arm controls or releasing LB stops advancement immediately and clears the saved XYZ target. The next arm input starts from measured XYZ. The jaw uses its usual scale.
+
+For a short diagnostic run, add `--trace .runtime/remote-ik-test.json` to the launcher command. Choose a new filename for each run. After you press **Esc**, the launcher saves up to the last 3,000 completed control ticks. From the Windows checkout, add modeled issued and measured XYZ to a copy using the default WSL environment.
+
+```powershell
+wsl.exe -d Ubuntu --exec sh -lc '~/.local/share/lerobot-phase0/venv/bin/python -m scripts.remote_ik_worker --analyze-trace .runtime/remote-ik-test.json' |
+    Set-Content -Encoding utf8 .runtime/remote-ik-test-xyz.json
+```
+
+Compare `desired_xyz_m`, `issued_xyz_m`, and `measured_xyz_m` around a drop. The `xyz_reset` and `op` fields identify reference resets and holds. The difference between `issued_before` and `issued` shows the joint target step.
+
 To test the real SSH link with the Pi’s simulated bus:
 
 ```powershell
