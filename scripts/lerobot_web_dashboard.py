@@ -8,6 +8,7 @@ import socket
 import sys
 from threading import Event, Thread
 from time import monotonic
+from uuid import uuid4
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -49,6 +50,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Dashboard-Session", self.server.session_id)
         if status == HTTPStatus.METHOD_NOT_ALLOWED:
             self.send_header("Allow", "GET")
         self.end_headers()
@@ -65,6 +67,7 @@ class WebDashboard(ThreadingHTTPServer):
     def __init__(self, host, port):
         self.page = Path(__file__).with_suffix(".html").read_bytes()
         self._sample = None
+        self.session_id = uuid4().hex
         self.exit_reason = None
         self.closing = Event()
         super().__init__((host, port), DashboardHandler)

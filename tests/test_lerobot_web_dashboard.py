@@ -1,11 +1,45 @@
 from http.client import HTTPConnection
 from contextlib import nullcontext
 import json
+from pathlib import Path
+import shutil
 import socket
+import subprocess
 
 import pytest
 
 from scripts.lerobot_web_dashboard import WebDashboard
+
+
+def test_dashboard_restart_on_same_port():
+    def snapshot(server):
+        connection = HTTPConnection("127.0.0.1", server.port, timeout=2)
+        try:
+            connection.request("GET", "/api/telemetry")
+            response = connection.getresponse()
+            return response.getheader("X-Dashboard-Session"), json.loads(response.read())
+        finally:
+            connection.close()
+
+    with WebDashboard("127.0.0.1", 0) as first:
+        first.publish({"shoulder_pan": 10}, 20, {}, True)
+        first_session, readings = snapshot(first)
+        assert readings["joints_deg"] == {"shoulder_pan": 10}
+        assert snapshot(first)[0] == first_session
+        port = first.port
+    with WebDashboard("127.0.0.1", port) as second:
+        second_session, readings = snapshot(second)
+        assert second_session and second_session != first_session
+        assert readings is None
+
+
+def test_dashboard_frontend_reconnect():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is needed for the frontend lifecycle check")
+    result = subprocess.run([node, str(Path(__file__).with_name("dashboard_reconnect.cjs"))],
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_dashboard_http_and_shutdown():

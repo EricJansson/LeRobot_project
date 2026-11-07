@@ -17,7 +17,6 @@ import subprocess
 import sys
 from threading import Event, Lock, Thread
 from time import perf_counter as monotonic, sleep
-import webbrowser
 
 from controller.input.xinput import XInputGamepad
 from robot_program.lerobot_ik_controller import POSITION_TOLERANCE_M, POSITION_TOLERANCE_REASON
@@ -561,8 +560,10 @@ def main():
     parser.add_argument("--index", type=int, choices=range(4), default=0, metavar="SLOT", help="XInput slot (0–3)")
     parser.add_argument("--wsl-distro", default="Ubuntu")
     parser.add_argument("--wsl-python", default=DEFAULT_WSL_PYTHON, help="Linux path, absolute or relative to WSL home")
-    parser.add_argument("--dashboard-port", type=int, default=0)
-    parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--dashboard-port", type=int, default=18743,
+                        help="Dashboard port (default %(default)s; 0 selects a random port)")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="Compatibility flag; the dashboard is always opened manually")
     parser.add_argument("--trace", type=Path, metavar="PATH", help="Save the last 3000 control ticks after stopping")
     parser.add_argument("--speed", type=float, default=1.0, help="Gamepad motion scale (default %(default)g)")
     args = parser.parse_args()
@@ -584,9 +585,13 @@ def main():
         gamepad = XInputGamepad(args.index)
         get_key_state = load_key_state()
         with ExitStack() as stack:
+            try:
+                dashboard = stack.enter_context(WebDashboard("127.0.0.1", args.dashboard_port))
+            except OSError as exc:
+                raise RuntimeError(f"Cannot start dashboard on 127.0.0.1:{args.dashboard_port}: {exc}. "
+                                   "If the port is in use, stop the other server or choose --dashboard-port PORT.") from exc
             worker = stack.enter_context(Worker(args.wsl_distro, args.wsl_python))
             trace_model = worker.metadata["model"]
-            dashboard = stack.enter_context(WebDashboard("127.0.0.1", args.dashboard_port))
             if args.dry_run:
                 listener = stack.enter_context(socket.socket())
                 listener.bind(("127.0.0.1", 0))
@@ -609,8 +614,6 @@ def main():
             mode = "Local simulation" if args.dry_run else "Pi simulation" if args.pi_sim else "Real arm"
             url = f"http://127.0.0.1:{dashboard.port}/"
             print(f"{mode} · Controller dashboard {url}", flush=True)
-            if not args.no_browser:
-                webbrowser.open(url)
             print("Start arms with neutral controls. Hold LB to move. Back disarms. Esc stops and exits.", flush=True)
             if args.relax_on_exit:
                 print("Support the arm before exiting. The motors will release their hold.", flush=True)

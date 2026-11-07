@@ -262,7 +262,22 @@
   let sampleTime = null;
   let requestFailed = false;
   let exitReason = null;
+  let sessionId = null;
+  let exitStream = null;
   let displayedGamepad;
+
+  function watchExit() {
+    if (exitStream !== null || exitReason !== null) return;
+    const stream = new EventSource('/api/exit');
+    exitStream = stream;
+    stream.addEventListener('stopped', event => {
+      if (exitStream !== stream) return;
+      exitReason = JSON.parse(event.data);
+      stream.close();
+      exitStream = null;
+      updateStatus();
+    });
+  }
 
   function setText(element, value) {
     if (element.textContent !== value) element.textContent = value;
@@ -375,14 +390,26 @@
   }
 
   async function poll() {
-    if (exitReason !== null) return;
     const started = performance.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 2000);
     try {
       const response = await fetch('/api/telemetry', { cache: 'no-store', signal: controller.signal });
       if (!response.ok) throw new Error('Telemetry request failed');
-      sample = await response.json();
+      const readings = await response.json();
+      const nextSession = response.headers.get('X-Dashboard-Session');
+      if (nextSession !== sessionId || requestFailed) {
+        if (nextSession !== sessionId) exitReason = null;
+        sessionId = nextSession;
+        exitStream?.close();
+        exitStream = null;
+        sampleTime = null;
+        renderReadings({});
+        byId('hardware-settings').hidden = true;
+        setText(byId('device'), 'Device: —');
+        setText(byId('device-details'), 'SO-101 · LeRobot IK');
+      }
+      sample = readings;
       if (sample) {
         renderReadings(sample);
         const settings = sample.remote?.hardware_settings;
@@ -403,22 +430,18 @@
         sampleTime = performance.now() - sample.age_s * 1000;
       }
       requestFailed = false;
+      watchExit();
     } catch {
       requestFailed = true;
     } finally {
       clearTimeout(timeout);
       updateStatus();
-      setTimeout(poll, Math.max(0, 100 - (performance.now() - started)));
+      const interval = requestFailed || exitReason !== null ? 1000 : 100;
+      setTimeout(poll, Math.max(0, interval - (performance.now() - started)));
     }
   }
 
   setInterval(updateStatus, 250);
-  const exitStream = new EventSource('/api/exit');
-  exitStream.addEventListener('stopped', event => {
-    exitReason = JSON.parse(event.data);
-    exitStream.close();
-    updateStatus();
-  });
   poll();
 </script>
 </body>

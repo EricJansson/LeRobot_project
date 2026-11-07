@@ -1,4 +1,5 @@
 import ctypes
+from contextlib import nullcontext
 import errno
 from io import BytesIO
 from importlib.metadata import version
@@ -12,6 +13,7 @@ from threading import Event, Thread
 from time import sleep
 from types import SimpleNamespace
 import xml.etree.ElementTree as ET
+import webbrowser
 
 import numpy as np
 import pytest
@@ -30,6 +32,49 @@ from scripts.remote_ik_worker import solve_intent
 
 LIMITS = [[-90., 90.]] * 5 + [[0., 50.]]
 TOKEN = "sample-token"
+
+
+@pytest.mark.parametrize("options, expected_port", [
+    ([], 18743), (["--no-browser"], 18743),
+    (["--dashboard-port", "18744"], 18744), (["--dashboard-port", "0"], 0),
+])
+def test_launcher_dashboard_port_and_manual_browser(monkeypatch, capsys, options, expected_port):
+    ports = []
+    dashboards = []
+    dashboard_type = remote_teleop.WebDashboard
+
+    def dashboard(host, port):
+        ports.append(port)
+        server = dashboard_type(host, 0)
+        dashboards.append(server)
+        return server
+
+    monkeypatch.setattr(remote_teleop, "WebDashboard", dashboard)
+    monkeypatch.setattr(remote_teleop, "XInputGamepad", lambda index: None)
+    monkeypatch.setattr(remote_teleop, "load_key_state", lambda: lambda key: -1)
+    monkeypatch.setattr(remote_teleop, "Worker", lambda *args: nullcontext(
+        SimpleNamespace(metadata={"model": "fixture", "limits": LIMITS})))
+    monkeypatch.setattr(remote_teleop, "ControlLoop", lambda *args, **kwargs:
+                        SimpleNamespace(run=lambda: None, error=None))
+    monkeypatch.setattr(webbrowser, "open", lambda *args, **kwargs: pytest.fail("Browser opened automatically"))
+    monkeypatch.setattr(sys, "argv", ["remote-ik", "--dry-run", *options])
+    remote_teleop.main()
+    assert ports == [expected_port]
+    assert f"http://127.0.0.1:{dashboards[0].port}/" in capsys.readouterr().out
+
+
+def test_launcher_busy_dashboard_port(monkeypatch, capsys):
+    monkeypatch.setattr(remote_teleop, "XInputGamepad", lambda index: None)
+    monkeypatch.setattr(remote_teleop, "load_key_state", lambda: lambda key: -1)
+    monkeypatch.setattr(remote_teleop, "Worker", lambda *args: pytest.fail("Worker started with busy dashboard port"))
+    with remote_teleop.WebDashboard("127.0.0.1", 0) as dashboard:
+        monkeypatch.setattr(sys, "argv", ["remote-ik", "--dry-run", "--dashboard-port", str(dashboard.port)])
+        with pytest.raises(SystemExit) as error:
+            remote_teleop.main()
+    assert error.value.code == 1
+    message = capsys.readouterr().err
+    assert "Cannot start dashboard" in message
+    assert "--dashboard-port PORT" in message
 
 
 class FakeBus:
