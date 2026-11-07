@@ -34,7 +34,7 @@ Press **Start** with the sticks, triggers, and D-pad neutral and LB released. Ho
 
 Arm motion starts at 10% of the selected scale and eases to full scale over 300 ms. Centering the arm controls or releasing LB stops advancement immediately and clears the saved XYZ target. The next arm input starts from measured XYZ. The jaw uses its usual scale.
 
-For a short diagnostic run, add `--trace .runtime/remote-ik-test.json` to the launcher command. Choose a new filename for each run. After you press **Esc**, the launcher saves up to the last 3,000 completed control ticks. From the Windows checkout, add modeled issued and measured XYZ to a copy using the default WSL environment.
+For a short diagnostic run, add `--trace .runtime/remote-ik-test.json` to the launcher command. After you press **Esc**, the launcher saves up to the last 3,000 completed control ticks, overwriting any existing file at that path. If no ticks were recorded, the existing file is left unchanged. From the Windows checkout, add modeled issued and measured XYZ to a copy using the default WSL environment.
 
 ```powershell
 wsl.exe -d Ubuntu --exec sh -lc '~/.local/share/lerobot-phase0/venv/bin/python -m scripts.remote_ik_worker --analyze-trace .runtime/remote-ik-test.json' |

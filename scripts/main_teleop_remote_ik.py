@@ -564,7 +564,8 @@ def main():
                         help="Dashboard port (default %(default)s; 0 selects a random port)")
     parser.add_argument("--no-browser", action="store_true",
                         help="Compatibility flag; the dashboard is always opened manually")
-    parser.add_argument("--trace", type=Path, metavar="PATH", help="Save the last 3000 control ticks after stopping")
+    parser.add_argument("--trace", type=Path, metavar="PATH",
+                        help="Save the last 3000 control ticks after stopping, overwriting PATH if it exists")
     parser.add_argument("--speed", type=float, default=1.0, help="Gamepad motion scale (default %(default)g)")
     args = parser.parse_args()
     if not (args.dry_run or args.pi_sim or args.real_arm):
@@ -575,8 +576,6 @@ def main():
         parser.error("--pi must be user@host")
     if not 0 < args.speed <= 1 or not 0 <= args.dashboard_port <= 65535:
         parser.error("Invalid speed or dashboard port")
-    if args.trace is not None and args.trace.exists():
-        parser.error("--trace requires a new output path")
 
     stop = Event()
     trace = deque(maxlen=TRACE_MAX_TICKS) if args.trace is not None else None
@@ -663,7 +662,7 @@ def main():
         if trace:
             try:
                 args.trace.parent.mkdir(parents=True, exist_ok=True)
-                with args.trace.open("x", encoding="utf-8") as output:
+                with args.trace.open("w", encoding="utf-8") as output:
                     json.dump({"model": trace_model, "ticks": list(trace.copy())}, output, indent=2)
                 print(f"Remote IK trace saved to {args.trace.resolve()}", flush=True)
             except OSError as exc:

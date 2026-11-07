@@ -3,6 +3,7 @@ from contextlib import nullcontext
 import errno
 from io import BytesIO
 from importlib.metadata import version
+import json
 import os
 import shutil
 import socket
@@ -32,6 +33,40 @@ from scripts.remote_ik_worker import solve_intent
 
 LIMITS = [[-90., 90.]] * 5 + [[0., 50.]]
 TOKEN = "sample-token"
+
+
+@pytest.mark.parametrize("existing, record_tick", [(False, True), (True, True), (True, False)])
+def test_launcher_trace_overwrite(monkeypatch, tmp_path, capsys, existing, record_tick):
+    trace_path = tmp_path / "trace.json"
+    old_data = '{"previous_run": true, "padding": "old data must be truncated"}'
+    if existing:
+        trace_path.write_text(old_data, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["remote-ik", "--pi-sim", "--trace", str(trace_path)])
+    monkeypatch.setattr(remote_teleop, "XInputGamepad", lambda index: None)
+    monkeypatch.setattr(remote_teleop, "load_key_state", lambda: lambda key: -1)
+    monkeypatch.setattr(remote_teleop, "WebDashboard", lambda *args: nullcontext(
+        SimpleNamespace(port=18743, exit_reason=None)))
+    monkeypatch.setattr(remote_teleop, "Worker", lambda *args: nullcontext(
+        SimpleNamespace(metadata={"model": "fixture"})))
+    monkeypatch.setattr(remote_teleop, "PiTunnel", lambda *args, **kwargs: nullcontext(
+        SimpleNamespace(connect=None)))
+
+    def control(*args, trace, **kwargs):
+        def run():
+            if record_tick:
+                trace.append({"tick_s": 1})
+        return SimpleNamespace(run=run, error=None)
+
+    monkeypatch.setattr(remote_teleop, "ControlLoop", control)
+    remote_teleop.main()
+    if record_tick:
+        assert json.loads(trace_path.read_text(encoding="utf-8")) == {
+            "model": "fixture", "ticks": [{"tick_s": 1}],
+        }
+        assert "Remote IK trace saved to" in capsys.readouterr().out
+    else:
+        assert trace_path.read_text(encoding="utf-8") == old_data
+        assert "Remote IK trace saved to" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("options, expected_port", [
