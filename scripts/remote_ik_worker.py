@@ -15,41 +15,83 @@ from robot_program.remote_ik_protocol import (
 )
 
 
-def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_xyz_m=None):
-    """Apply base-frame XYZ, local pitch/roll and normalized jaw increments."""
-    joints = np.asarray(measured[:5], dtype=float)
-    pose = solver.kinematics.forward_kinematics(joints)
-    measured_xyz_m = pose[:3, 3].tolist()
-    # Continue from the target the Pi actually issued. Motor feedback rounds to
-    # encoder ticks, so restarting each increment from it can erase small moves.
-    reference = measured if sent is None else sent
-    if sent is not None:
-        joints = np.asarray(sent[:5], dtype=float)
-    target = (solver.kinematics.forward_kinematics(joints) if sent is not None else pose).copy()
-    arm_input = any(delta[:5])
-    baseline_xyz_m = measured_xyz_m if desired_xyz_m is None else desired_xyz_m
-    if arm_input:
-        target[:3, 3] = baseline_xyz_m
-        target[:3, 3] += delta[:3]
-    pitch, roll = np.deg2rad(delta[3:5])
-    cp, sp = np.cos(pitch), np.sin(pitch)
-    cr, sr = np.cos(roll), np.sin(roll)
-    target[:3, :3] = target[:3, :3] @ np.array([
-        [cp, 0, sp], [0, 1, 0], [-sp, 0, cp],
-    ]) @ np.array([[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]])
+def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_xyz_m=None,
+                 joint_step_limits=None, recovery_step_m=.001, correction=False):
+    """Bounded Cartesian search; no pending input is accumulated on rejection.
 
-    response = {"xyz_m": measured_xyz_m, "baseline_xyz_m": baseline_xyz_m,
-                "requested_xyz_m": target[:3, 3].tolist(), "target": None, "reason": ""}
-    if not any(delta):
+    Recovery from a measured stop is explicitly separated from operator progress.
+    Its translation is bounded before applying the same joint-rate feasibility test.
+    """
+    reference = measured if sent is None else sent
+    joints = np.asarray(reference[:5], dtype=float)
+    pose = solver.kinematics.forward_kinematics(joints).copy()
+    measured_pose = solver.kinematics.forward_kinematics(np.asarray(measured[:5], dtype=float))
+    baseline = np.asarray(measured_pose[:3, 3] if desired_xyz_m is None else desired_xyz_m, dtype=float)
+    response = {"xyz_m": measured_pose[:3, 3].tolist(), "baseline_xyz_m": baseline.tolist(),
+                "requested_xyz_m": (baseline + delta[:3]).tolist(), "target": None, "reason": "",
+                "progress_fraction": 0., "candidate_xyz_m": None, "recovering": False,
+                "issued_xyz_m": pose[:3, 3].tolist()}
+    if not any(delta) and not correction:
         return response
-    if arm_input:
+    arm_input = any(delta[:5]) or correction
+    if joint_step_limits is not None and hasattr(solver, "orientation_weight"):
+        # A five-joint arm cannot keep an arbitrary six-DOF orientation during
+        # lateral translation. Prioritize XYZ then retain the existing local
+        # pitch/roll behavior for explicit orientation-only input.
+        orientation_only = any(delta[3:5]) and not any(delta[:3])
+        solver.orientation_weight = .01 if orientation_only else .0001
+        solver.position_tolerance_m = .0005 if orientation_only else .00005
+    jaw = float(np.clip(reference[5] + delta[5], *gripper_limits))
+    if not arm_input:
+        response["target"] = [*joints.tolist(), jaw] if jaw != reference[5] else None
+        return response
+    recovery = baseline - pose[:3, 3]
+    length = float(np.linalg.norm(recovery))
+    if joint_step_limits is not None and length > recovery_step_m:
+        recovery *= recovery_step_m / length
+    response["recovering"] = length > .0005
+    # First try the entire input. Halving bounds solver work and releases a
+    # rejected outward request immediately when fresh inward input arrives.
+    for attempt in range(9 if joint_step_limits is not None else 1):
+        fraction = 2. ** -attempt
+        target = pose.copy()
+        target[:3, 3] += fraction * (recovery + np.asarray(delta[:3]))
+        pitch, roll = np.deg2rad(np.asarray(delta[3:5]) * fraction)
+        cp, sp, cr, sr = np.cos(pitch), np.sin(pitch), np.cos(roll), np.sin(roll)
+        target[:3, :3] = pose[:3, :3] @ np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]]) @ np.array(
+            [[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]])
         result = solver.solve_pose(target, joints)
         if not result.accepted:
-            return {**response, "reason": result.reason}
-        joints = result.joints_deg
-    jaw = float(np.clip(reference[5] + delta[5], *gripper_limits))
-    if arm_input or jaw != reference[5]:
-        response["target"] = [*joints.tolist(), jaw]
+            response["reason"] = result.reason
+            continue
+        if joint_step_limits is not None and np.any(
+                np.abs(result.joints_deg - joints) > np.asarray(joint_step_limits[:5]) + 1e-8):
+            response["reason"] = "Cartesian increment exceeds Pi rate allowance"
+            continue
+        achieved = solver.kinematics.forward_kinematics(result.joints_deg).copy()
+        if correction and (np.linalg.norm(achieved[:3, 3] - pose[:3, 3]) > recovery_step_m + 1e-8
+                           or np.linalg.norm(achieved[:3, 3] - baseline) >= length):
+            response["reason"] = "No bounded stationary correction progress"
+            continue
+        translation = np.asarray(delta[:3], dtype=float)
+        norm2 = float(translation @ translation)
+        # Solver tolerance is not issued progress. In particular, tiny accepted
+        # boundary steps must not grow an unreachable Cartesian reference.
+        issued_fraction = (float(np.clip((achieved[:3, 3] - baseline) @ translation / norm2, 0., fraction))
+                           if norm2 else 0.)
+        accepted_xyz = baseline + issued_fraction * translation
+        # Recheck FK against the retained line, not only the short solver
+        # request. Otherwise solver tolerance can accumulate sideways at reach.
+        if np.linalg.norm(achieved[:3, 3] - accepted_xyz) > max(.0005, length) + 1e-8:
+            response["reason"] = "Issued FK would increase retained-path error"
+            continue
+        response["accepted_xyz_m"] = accepted_xyz.tolist()
+        response.update(target=[*result.joints_deg.tolist(), jaw], reason="",
+                        progress_fraction=fraction, candidate_xyz_m=achieved[:3, 3].tolist(),
+                        requested_xyz_m=(baseline + fraction * np.asarray(delta[:3])).tolist(),
+                        search_attempts=attempt + 1)
+        return response
+    response["search_attempts"] = attempt + 1
     return response
 
 
@@ -70,14 +112,14 @@ def main():
     with TemporaryDirectory(prefix="lerobot-remote-ik-") as directory:
         path = Path(directory) / "kinematic.urdf"
         path.write_text(urdf, encoding="utf-8")
-        solver = LeRobotPoseSolver(limits[:5], urdf_path=path)
+        solver = LeRobotPoseSolver(limits[:5], urdf_path=path, position_tolerance_m=.00005, orientation_weight=.0001)
         if args.analyze_trace is not None:
             trace = json.loads(args.analyze_trace.read_text(encoding="utf-8"))
             if trace["model"] != model:
                 parser.error("Trace model differs from this URDF or calibration")
             for tick in trace["ticks"]:
-                for channel in ("issued_before", "issued", "measured"):
-                    joints = tick[channel]
+                for channel in ("issued_before", "issued", "measured", "candidate"):
+                    joints = tick.get(channel)
                     pose = (solver.kinematics.forward_kinematics(np.asarray(joints[:5], dtype=float))
                             if finite_vector(joints, 6) else None)
                     tick[f"{channel}_xyz_m"] = pose[:3, 3].tolist() if pose is not None else None
@@ -96,7 +138,17 @@ def main():
                 raise ValueError("Expected six finite sent channels")
             if desired_xyz_m is not None and not finite_vector(desired_xyz_m, 3):
                 raise ValueError("Expected three finite desired XYZ values")
-            reply(solve_intent(solver, measured, delta, limits[5], sent=sent, desired_xyz_m=desired_xyz_m))
+            recovery_step = request.get("recovery_step_m", .001)
+            if not isinstance(recovery_step, (int, float)) or not np.isfinite(recovery_step) or not 0 < recovery_step <= .001:
+                raise ValueError("Recovery step must be positive and at most 1 mm")
+            if type(request.get("correction", False)) is not bool:
+                raise ValueError("Correction must be boolean")
+            steps = request.get("joint_step_limits")
+            if steps is not None and (not finite_vector(steps, 6) or any(x <= 0 for x in steps)):
+                raise ValueError("Expected six positive joint step limits")
+            reply(solve_intent(solver, measured, delta, limits[5], sent=sent, desired_xyz_m=desired_xyz_m,
+                               joint_step_limits=steps, recovery_step_m=request.get("recovery_step_m", .001),
+                               correction=request.get("correction", False)))
 
 
 if __name__ == "__main__":

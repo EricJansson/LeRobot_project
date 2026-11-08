@@ -60,7 +60,7 @@ def test_launcher_trace_overwrite(monkeypatch, tmp_path, capsys, existing, recor
     monkeypatch.setattr(remote_teleop, "ControlLoop", control)
     remote_teleop.main()
     if record_tick:
-        assert json.loads(trace_path.read_text(encoding="utf-8")) == {
+        assert {k: v for k, v in json.loads(trace_path.read_text(encoding="utf-8")).items() if k != "provenance"} == {
             "model": "fixture", "ticks": [{"tick_s": 1}],
         }
         assert "Remote IK trace saved to" in capsys.readouterr().out
@@ -360,7 +360,7 @@ def test_control_loop_drops_stale_intent_and_reports_pi_mode(scenario, expected,
                                else gamepad_input(lb=scenario == "brief neutral during IK"))
                 latest.publish(gamepad_input(lx=.5, lb=True))
             return {"target": [1.] * 6}
-        assert sent is None
+        assert sent == ([2.] * 6 if armed else None)
         if armed:
             assert any(delta)
             return {"target": [1.] * 6}
@@ -424,7 +424,7 @@ def test_arm_start_ramp_restarts_and_traces_issued_steps(monkeypatch):
             latest.publish(gamepad_input(lb=True))
             publish()
         if index in (7, 11):
-            assert desired_xyz_m is None
+            assert desired_xyz_m is not None
         baseline = desired_xyz_m if desired_xyz_m is not None else [0.] * 3
         target = [prior + step * 1000 for prior, step in zip(feedback["sent"], delta)]
         return {"baseline_xyz_m": baseline, "requested_xyz_m": np.add(baseline, delta[:3]).tolist(),
@@ -454,16 +454,16 @@ def test_arm_start_ramp_restarts_and_traces_issued_steps(monkeypatch):
         else:
             assert tick["arm_scale"] == pytest.approx(scale)
             assert tick["delta"][0] == pytest.approx(-2 * tick["delta"][1])
-    assert trace[0]["delta"][5] == trace[4]["delta"][5] == 1.
+    assert [trace[i]["delta"][5] for i in (0, 4)] == pytest.approx([1., 1.])
     assert trace[0]["issued"][0] - trace[0]["issued_before"][0] == pytest.approx(.2)
     assert trace[2]["issued"][0] - trace[2]["issued_before"][0] == pytest.approx(4.)
     assert trace[7]["issued"][0] - trace[7]["issued_before"][0] == pytest.approx(.2)
     assert trace[8]["ik_reason"] == "joint limit exceeded"
     for hold_index in (6, 10):
         hold, restart = trace[hold_index:hold_index + 2]
-        assert hold["xyz_reset"] == "arm input neutral"
+        assert hold["xyz_reset"] is None
         assert hold["desired_before_m"] is not None
-        assert hold["desired_xyz_m"] is restart["desired_before_m"] is None
+        assert hold["desired_xyz_m"] == restart["desired_before_m"] == hold["desired_before_m"]
         assert restart["arm_scale"] == pytest.approx(.1)
 
 
@@ -503,7 +503,7 @@ def test_worker_uses_cartesian_reference_independently_of_joint_seed(delta, desi
     assert jaw_only["target"] == [*issued[:5], 13.]
 
 
-def test_control_loop_preserves_xyz_through_rejection_and_slew_until_input_stops(monkeypatch):
+def test_control_loop_preserves_xyz_through_rejection_slew_neutral_and_lb_release(monkeypatch):
     now = [0.]
     monkeypatch.setattr(remote_teleop, "monotonic", lambda: now[0])
     latest = LatestInput()
@@ -521,13 +521,13 @@ def test_control_loop_preserves_xyz_through_rejection_and_slew_until_input_stops
         (.02, 1., True, advanced, "reject", "hold"),
         (.04, 1., True, advanced, "reject", "poll"),
         (.06, -1., True, advanced, "reject", "poll"),
-        (.08, -1., True, None, "slew", "move"),
-        (.10, -1., True, start, "full", "move"),
-        (.12, 0., True, None, None, "hold"),
-        (.14, -1., True, None, "slew", "move"),
-        (.16, -1., True, settled, "full", "move"),
+        (.08, -1., True, advanced, "slew", "move"),
+        (.10, -1., True, advanced, "full", "move"),
+        (.12, 0., True, retracted, None, "hold"),
+        (.14, -1., True, retracted, "slew", "move"),
+        (.16, -1., True, retracted, "full", "move"),
         (.18, -1., False, None, None, "hold"),
-        (.20, 1., True, None, "full", "move"),
+        (.20, 1., True, retracted, "full", "move"),
     ]
     index = 0
     statuses = []
@@ -549,11 +549,11 @@ def test_control_loop_preserves_xyz_through_rejection_and_slew_until_input_stops
         assert not any(delta[1:])
         baseline = measured[:3] if desired_xyz_m is None else desired_xyz_m
         if at == .14:
-            assert baseline == settled and sent is None
+            assert baseline == retracted and sent is not None
         return {"xyz_m": measured[:3], "baseline_xyz_m": baseline,
                 "requested_xyz_m": advanced if x > 0 else retracted,
                 "target": None if outcome == "reject" else target,
-                "reason": remote_teleop.POSITION_TOLERANCE_REASON if outcome == "reject" else ""}
+                "reason": "position tolerance not reached" if outcome == "reject" else ""}
 
     def request(op, **values):
         nonlocal index
@@ -580,7 +580,7 @@ def test_control_loop_preserves_xyz_through_rejection_and_slew_until_input_stops
     control = ControlLoop(SimpleNamespace(solve=solve), None, latest, stop, .25, "Sim")
     control.session(SimpleNamespace(feedback=feedback, request=request))
     assert statuses[1:] == [
-        advanced, advanced, advanced, None, start, retracted, None, settled, retracted, None,
+        advanced, advanced, advanced, advanced, advanced, retracted, retracted, retracted, retracted, retracted,
     ]
     assert control.status["desired_xyz_m"] == advanced
 
@@ -611,7 +611,7 @@ def test_small_sustained_ik_input_survives_encoder_quantization(tmp_path):
                               sent=sent, desired_xyz_m=desired)
         sent = result["target"]
         assert sent is not None, result["reason"]
-        desired = result["requested_xyz_m"]
+        desired = result.get("accepted_xyz_m", result["requested_xyz_m"])
         measured = quantize(sent)
     assert y_position(measured) - start_y == pytest.approx(25 * .00005, abs=.00025)
 

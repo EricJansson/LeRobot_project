@@ -79,7 +79,14 @@ def _joint_limits(bus, urdf_path: Path) -> np.ndarray:
 class LeRobotPoseSolver:
     """Official LeRobot FK/IK with explicit joint bounds and no motor access."""
 
-    def __init__(self, limits_deg, *, urdf_path: Path = DEFAULT_URDF, kinematics=None):
+    def __init__(self, limits_deg, *, urdf_path: Path = DEFAULT_URDF, kinematics=None,
+                 position_tolerance_m=POSITION_TOLERANCE_M, orientation_weight=.01):
+        if not np.isfinite(position_tolerance_m) or position_tolerance_m <= 0:
+            raise ValueError("Position tolerance must be finite and positive")
+        if not np.isfinite(orientation_weight) or orientation_weight <= 0:
+            raise ValueError("Orientation weight must be finite and positive")
+        self.orientation_weight = orientation_weight
+        self.position_tolerance_m = position_tolerance_m
         self.limits_deg = np.asarray(limits_deg, dtype=float)
         if (self.limits_deg.shape != (5, 2) or not np.isfinite(self.limits_deg).all()
                 or np.any(self.limits_deg[:, 0] >= self.limits_deg[:, 1])):
@@ -114,7 +121,7 @@ class LeRobotPoseSolver:
         try:
             for _ in range(MAX_ITERATIONS):
                 q = np.asarray(self.kinematics.inverse_kinematics(
-                    q, target, position_weight=1.0, orientation_weight=0.01,
+                    q, target, position_weight=1.0, orientation_weight=self.orientation_weight,
                 ), dtype=float)
                 if q.shape != (5,) or not np.isfinite(q).all():
                     reason = "nonfinite or malformed IK solution"
@@ -127,7 +134,7 @@ class LeRobotPoseSolver:
                 q = np.clip(q, self.limits_deg[:, 0], self.limits_deg[:, 1])
                 achieved = _pose(self.kinematics.forward_kinematics(q))
                 error = float(np.linalg.norm(achieved[:3, 3] - target[:3, 3]))
-                if error <= POSITION_TOLERANCE_M:
+                if error <= self.position_tolerance_m:
                     accepted, reason = True, "accepted"
                     break
         except (RuntimeError, ValueError) as exc:

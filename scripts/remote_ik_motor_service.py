@@ -188,6 +188,7 @@ class MotorSession:
             self.hold("wrong session or old command", disarm=True)
             return None
         self.sequence = seq
+        self.rate_limited = False
         if op == "poll":
             return None
         if op == "relax_on_exit":
@@ -229,6 +230,7 @@ class MotorSession:
         delta = [goal - last for goal, last in zip(target, self.sent)]
         fraction = max(1., *(abs(step) / (rate * self.period) for step, rate in zip(delta, self.rates)))
         bounded = [last + step / fraction for last, step in zip(self.sent, delta)]
+        self.rate_limited = fraction > 1.
         self.advancing = True
         self.last_move_at = self.clock()
         self.sent = self.send_target(bounded)
@@ -275,7 +277,8 @@ class MotorSession:
                 "simulated": self.simulated, "motion_enabled": self.motion_enabled,
                 "relax_on_exit": self.relax_on_exit,
                 "read_max_ms": self.read_max_ms, "write_max_ms": self.write_max_ms,
-                "watchdog_s": self.watchdog, "hz": 1 / self.period}
+                "watchdog_s": self.watchdog, "hz": 1 / self.period, "rates": self.rates,
+                "sampled_before_command": True, "rate_limited": getattr(self, "rate_limited", False)}
 
 
 def serve(listener, motor, stop):
