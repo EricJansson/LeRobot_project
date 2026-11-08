@@ -18,9 +18,18 @@
     body { margin: 0; }
     main { max-width: 720px; margin: auto; padding: 12px 16px 16px; }
     header { min-height: 74px; }
+    .title-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
     h1 { margin: 0 0 4px; font-size: 22px; line-height: 26px; }
     p { margin: 0; }
     header p { color: var(--muted); line-height: 22px; overflow-wrap: anywhere; }
+    .connectivity { min-width: 0; max-width: 100%; font-size: 13px; overflow-wrap: anywhere; }
+    .connectivity-label { color: #ffa7ad; white-space: nowrap; }
+    .connectivity-label::before {
+      content: ''; display: inline-block; width: 8px; height: 8px;
+      border-radius: 50%; background: currentColor; margin-right: 6px;
+    }
+    .connectivity[data-online="true"] .connectivity-label { color: var(--ok); }
+    #connectivity-detail { color: var(--muted); }
     .status-card {
       --status-color: #b9b9c6;
       background: #24242b;
@@ -105,12 +114,15 @@
       color: #fff;
     }
     .badge[data-held="true"] { background: #276745; }
-    .connection { grid-area: 2 / 1; font-size: 13px; }
-    .connection .mode { margin-top: 4px; color: var(--muted); }
+    .diagnostics { grid-column: 1 / -1; }
+    .diagnostics summary { cursor: pointer; color: var(--muted); padding: 3px; }
+    .diagnostics h3 { margin: 12px 0 6px; font-size: 14px; color: var(--accent); font-weight: normal; }
+    .diagnostics .rows div { grid-template-columns: minmax(0, 160px) minmax(0, 1fr); gap: 8px; }
+    .diagnostics dd { min-width: 0; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+    .diagnostics dt { overflow-wrap: anywhere; }
     .settings { grid-column: 1 / -1; }
     .settings .rows div { grid-template-columns: 145px minmax(0, 1fr); }
     .settings dd { text-align: left; white-space: normal; overflow-wrap: anywhere; }
-    #age { margin-top: 4px; color: var(--muted); font-size: 13px; }
     @media (max-width: 639px) {
       .dashboard { display: flex; flex-direction: column; min-height: 0; }
     }
@@ -119,13 +131,20 @@
 <body>
 <main>
   <header>
-    <h1>Controller Dashboard</h1>
+    <div class="title-row">
+      <h1>Controller Dashboard</h1>
+      <div id="connectivity" class="connectivity" data-online="false" role="status" aria-atomic="true">
+        <span id="connectivity-label" class="connectivity-label">Offline</span>
+        <span id="connectivity-detail"> · Waiting for telemetry</span>
+      </div>
+    </div>
     <p id="device">Device: —</p>
     <p id="device-details">SO-101 · LeRobot IK</p>
+    <p id="arm-mode" hidden></p>
   </header>
   <div id="status-card" class="status-card" data-tone="neutral" role="status" aria-atomic="true">
     <p class="eyebrow">Control status</p>
-    <p id="status">Waiting for telemetry</p>
+    <p id="status">Control unavailable</p>
     <p id="status-detail" hidden></p>
   </div>
   <div class="dashboard">
@@ -224,19 +243,28 @@
       </section>
     </div>
 
-    <footer class="connection">
-      <p id="remote-status" hidden></p>
-      <p id="remote-target" hidden></p>
-      <p id="remote-timing" hidden></p>
-      <p id="age" hidden></p>
-      <p class="mode">SO-101 · LeRobot IK · Read-only</p>
-    </footer>
+    <details id="diagnostics" class="panel diagnostics" hidden>
+      <summary>Diagnostics</summary>
+      <h3>Targets</h3>
+      <p>Requested XYZ in mm · Joint vectors in motor order; gripper normalized</p>
+      <dl class="rows">
+        <div><dt>Requested XYZ</dt><dd id="requested-xyz">—</dd></div>
+        <div><dt>IK candidate</dt><dd id="ik-candidate">—</dd></div>
+        <div><dt>Last motor target</dt><dd id="motor-target">—</dd></div>
+      </dl>
+      <h3>Feedback and timing</h3>
+      <dl class="rows">
+        <div><dt>Feedback rate</dt><dd id="feedback-rate">—</dd></div>
+        <div><dt>Longest feedback gap</dt><dd id="feedback-gap">—</dd></div>
+        <div><dt>Longest Pi read</dt><dd id="pi-read">—</dd></div>
+        <div><dt>Longest Pi write</dt><dd id="pi-write">—</dd></div>
+      </dl>
+    </details>
     <section id="hardware-settings" class="panel settings" aria-labelledby="settings-heading" hidden>
       <h2 id="settings-heading">Pi hardware settings</h2>
       <p>From remote_ik.hardware.conf for this run</p>
       <dl class="rows">
         <div><dt>Serial adapter</dt><dd data-setting="serial-port">—</dd></div>
-        <div><dt>Motion allowed</dt><dd data-setting="allow-motion">—</dd></div>
         <div><dt>Motor cycle</dt><dd data-setting="hz" data-unit=" Hz">—</dd></div>
         <div><dt>Watchdog</dt><dd data-setting="watchdog-ms" data-unit=" ms">—</dd></div>
         <div><dt>Arm rate limit</dt><dd data-setting="arm-rate" data-unit=" °/s">—</dd></div>
@@ -250,7 +278,9 @@
   const statusCard = byId('status-card');
   const statusLabel = byId('status');
   const statusDetail = byId('status-detail');
-  const ageLabel = byId('age');
+  const connectivity = byId('connectivity');
+  const connectivityLabel = byId('connectivity-label');
+  const connectivityDetail = byId('connectivity-detail');
   const lbLabel = byId('lb-status');
   const graphic = byId('gamepad');
   const buttons = graphic.querySelectorAll('[data-button]');
@@ -324,41 +354,51 @@
     byId('controller-status').hidden = gamepad !== null;
   }
 
-  function controlStatus(fresh, stale) {
+  function offlineReason() {
+    if (exitReason !== null) return 'Program stopped';
+    if (!sample) return requestFailed ? 'Telemetry unavailable' : 'Waiting for telemetry';
+    const age = sampleTime === null ? null : (performance.now() - sampleTime) / 1000;
+    if (age === null || age > 3) return 'Telemetry unavailable';
+    const remote = sample.remote;
+    if (remote && remote.connection !== 'Connected') {
+      const label = remote.connection === 'Connecting' ? 'Connecting to Pi' : 'Pi disconnected';
+      return [label, remote.reason].filter(Boolean).join(' · ');
+    }
+    return '';
+  }
+
+  function controlStatus(fresh) {
     if (exitReason !== null) return ['stopped', 'Program stopped', exitReason];
-    if (stale) return ['red', 'Telemetry unavailable', 'Readings may be stale'];
+    if (!fresh) return ['neutral', 'Control unavailable', ''];
 
     const remote = fresh?.remote;
-    if (remote?.connection === 'Disconnected') {
-      return ['red', 'Pi connection lost', ['Readings may be stale', remote.reason].filter(Boolean).join(' · ')];
-    }
-    if (remote?.connection === 'Connecting') return ['neutral', 'Connecting to Pi', remote.reason];
     switch (remote?.state) {
       case 'Fault': return ['red', 'Motor fault', remote.reason];
-      case 'Moving': return ['green', 'Active - moving', remote.reason || 'Sending movement commands'];
-      case 'Armed': return ['green', 'Active', remote.reason || 'Ready for movement input'];
+      case 'Moving': return ['green', 'Moving', ''];
+      case 'Armed': return ['green', 'Armed', ''];
       case 'Disarmed':
         return ['neutral', 'Disarmed', remote.reason ||
           (remote.mode === 'Observe only' ? 'Observe only · motion disabled' : 'Movement disabled')];
       default:
-        if (!fresh) return ['neutral', 'Waiting for telemetry', ''];
         return fresh.gamepad_enabled
-          ? ['green', 'Control enabled', 'LB held']
-          : ['neutral', 'Standing by', 'LB released'];
+          ? ['green', 'Control enabled', '']
+          : ['neutral', 'Standing by', ''];
     }
   }
 
   function updateStatus() {
-    const age = sampleTime === null ? null : (performance.now() - sampleTime) / 1000;
-    const stale = requestFailed || age > 3 || (age !== null && sample === null);
-    const fresh = stale || exitReason !== null ? null : sample;
-    const [tone, label, detail] = controlStatus(fresh, stale);
+    const reason = offlineReason();
+    const online = !reason;
+    connectivity.dataset.online = online;
+    setText(connectivityLabel, online ? 'Online' : 'Offline');
+    setText(connectivityDetail, reason ? ` · ${reason}` : '');
+    connectivityDetail.hidden = online;
+    const fresh = online ? sample : null;
+    const [tone, label, detail] = controlStatus(fresh);
     statusCard.dataset.tone = tone;
     setText(statusLabel, label);
     setText(statusDetail, detail ?? '');
     statusDetail.hidden = !detail;
-    ageLabel.hidden = age === null;
-    if (age !== null) setText(ageLabel, `Last sample ${age.toFixed(1)} s ago`);
 
     const gamepad = fresh?.gamepad ?? null;
     if (gamepad !== displayedGamepad) {
@@ -369,23 +409,29 @@
     setText(lbLabel, lbHeld === true ? 'LB held' : lbHeld === false ? 'LB released' : 'LB unavailable');
     lbLabel.dataset.held = lbHeld === true;
 
+    const mode = sample?.remote?.mode;
+    const armMode = byId('arm-mode');
+    armMode.hidden = !sample?.remote;
+    const modes = {
+      'Real arm': 'Physical', 'Real arm enabled': 'Physical',
+      'Observe only': 'Physical · Observe only',
+      'Local simulation': 'Simulation · Local', 'Pi simulation': 'Simulation · Pi',
+    };
+    setText(armMode, `Arm mode: ${modes[mode] ?? 'Unknown'}`);
+
     const remote = fresh?.remote;
-    const remoteStatus = byId('remote-status');
-    const remoteTarget = byId('remote-target');
-    const remoteTiming = byId('remote-timing');
-    remoteStatus.hidden = !remote;
-    remoteTarget.hidden = !remote;
-    remoteTiming.hidden = !remote || remote.feedback_hz == null;
+    byId('diagnostics').hidden = !remote;
     if (remote) {
-      setText(remoteStatus, `${remote.mode} · ${remote.connection}`);
-      const xyz = remote.requested_xyz_m?.map(m => (m * 1000).toFixed(1)).join(', ');
-      const candidate = remote.candidate?.map(v => v.toFixed(1)).join(', ');
-      const sent = remote.sent?.map(v => v.toFixed(1)).join(', ');
-      setText(remoteTarget, `Requested XYZ: ${xyz ? xyz + ' mm' : '—'} · IK candidate: ${candidate ?? '—'} · Last motor target: ${sent ?? '—'}`);
-      if (!remoteTiming.hidden) {
-        const ms = value => value == null ? '—' : value.toFixed(1) + ' ms';
-        setText(remoteTiming, `Feedback: ${remote.feedback_hz.toFixed(1)} Hz · Longest feedback gap: ${ms(remote.feedback_max_gap_ms)} · Longest Pi read: ${ms(remote.read_max_ms)} · Longest Pi write: ${ms(remote.write_max_ms)}`);
-      }
+      const vector = (values, scale = 1) => values?.length
+        ? values.map(value => (value * scale).toFixed(1)).join(', ') : '—';
+      const unit = (value, suffix) => Number.isFinite(value) ? value.toFixed(1) + suffix : '—';
+      setText(byId('requested-xyz'), vector(remote.requested_xyz_m, 1000));
+      setText(byId('ik-candidate'), vector(remote.candidate));
+      setText(byId('motor-target'), vector(remote.sent));
+      setText(byId('feedback-rate'), unit(remote.feedback_hz, ' Hz'));
+      setText(byId('feedback-gap'), unit(remote.feedback_max_gap_ms, ' ms'));
+      setText(byId('pi-read'), unit(remote.read_max_ms, ' ms'));
+      setText(byId('pi-write'), unit(remote.write_max_ms, ' ms'));
     }
   }
 
@@ -399,10 +445,12 @@
       const readings = await response.json();
       const nextSession = response.headers.get('X-Dashboard-Session');
       if (nextSession !== sessionId || requestFailed) {
-        if (nextSession !== sessionId) exitReason = null;
-        sessionId = nextSession;
         exitStream?.close();
         exitStream = null;
+      }
+      if (nextSession !== sessionId) {
+        exitReason = null;
+        sessionId = nextSession;
         sampleTime = null;
         renderReadings({});
         byId('hardware-settings').hidden = true;
@@ -427,7 +475,8 @@
         setText(byId('device-details'), gamepad
           ? `Axes:${gamepad.axis_count} Buttons:${gamepad.button_count} Hats:${gamepad.hat_count}  |  Deadzone:${gamepad.deadzone.toFixed(2)}`
           : 'SO-101 · LeRobot IK');
-        sampleTime = performance.now() - sample.age_s * 1000;
+        sampleTime = Number.isFinite(sample.age_s) && sample.age_s >= 0
+          ? performance.now() - sample.age_s * 1000 : null;
       }
       requestFailed = false;
       watchExit();
