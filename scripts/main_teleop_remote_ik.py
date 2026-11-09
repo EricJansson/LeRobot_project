@@ -20,7 +20,7 @@ from controller.input.xinput import XInputGamepad
 from robot_program.remote_ik_correction import CorrectionProfile
 from robot_program import remote_ik_control
 from robot_program.remote_ik_protocol import (
-    CHANNELS, MAX_FRAME, OFFLINE_WATCHDOG, PI_PORT, PROTOCOL_VERSION, RATE_HZ,
+    CHANNELS, MAX_FRAME, MOTION_POLICY, OFFLINE_WATCHDOG, PI_PORT, PROTOCOL_VERSION, RATE_HZ,
     decode_frame, encode_frame, finite_vector,
 )
 from scripts.lerobot_web_dashboard import WebDashboard
@@ -93,6 +93,9 @@ class Worker:
         self.reader.start()
         try:
             self.metadata = self.receive(20)
+            if (self.metadata.get("v") != PROTOCOL_VERSION
+                    or self.metadata.get("motion_policy") != MOTION_POLICY):
+                raise RuntimeError("Update Windows and WSL for adaptive limit recovery")
         except BaseException:
             self.__exit__()
             raise
@@ -119,13 +122,18 @@ class Worker:
         return reply
 
     def solve(self, measured, delta, *, sent, desired_xyz_m, joint_step_limits, correction, recovery_step_m):
+        return self._request({
+            "measured": measured, "delta": delta, "sent": sent, "desired_xyz_m": desired_xyz_m,
+            "joint_step_limits": joint_step_limits, "recovery_step_m": recovery_step_m, "correction": correction,
+        })
+
+    def recover(self, measured, delta, *, sent, automatic, anchor, goal, steps):
+        return self._request({"op": "recover", "measured": measured, "delta": delta, "sent": sent,
+                              "automatic": automatic, "anchor": anchor, "goal": goal, "steps": steps})
+
+    def _request(self, message):
         try:
-            self.process.stdin.write(encode_frame({
-                "measured": measured, "delta": delta, "sent": sent, "desired_xyz_m": desired_xyz_m,
-                "joint_step_limits": joint_step_limits,
-                "recovery_step_m": recovery_step_m,
-                "correction": correction,
-            }))
+            self.process.stdin.write(encode_frame(message))
             self.process.stdin.flush()
         except OSError as exc:
             raise RuntimeError(f"WSL2 IK worker input failed: {exc}") from exc
@@ -148,8 +156,13 @@ class MotorLink:
             self.reader = self.resources.enter_context(self.socket.makefile("rb"))
             self.sequence = 0
             self.feedback = self.exchange({"op": "hello", "token": self.token})
+            if (self.metadata.get("v") != PROTOCOL_VERSION
+                    or self.metadata.get("motion_policy") != MOTION_POLICY
+                    or self.feedback.get("motion_policy") != MOTION_POLICY):
+                raise RuntimeError("Update Windows, WSL and Pi service for adaptive limit recovery")
             if (self.feedback.get("model") != self.metadata["model"]
-                    or self.feedback.get("limits") != self.metadata["limits"]):
+                    or any(self.feedback.get(key) != self.metadata.get(key)
+                           for key in ("limits", "calibrated_limits", "command_limits"))):
                 raise RuntimeError("Pi and WSL2 URDF or calibration differ")
             if self.feedback.get("simulated") is not self.simulated:
                 raise RuntimeError("Unexpected Pi motor service mode")
@@ -391,6 +404,7 @@ def main():
                 token = secrets.token_hex(32)
                 limits = worker.metadata["limits"]
                 motor = MotorSession(SimulatedBus(limits), limits=limits, model=worker.metadata["model"], token=token,
+                                     calibrated_limits=worker.metadata["calibrated_limits"],
                                      watchdog=OFFLINE_WATCHDOG, hz=RATE_HZ, arm_rate=120, gripper_rate=50)
                 server = Thread(target=serve, args=(listener, motor, stop), daemon=True)
                 server.start()
@@ -457,7 +471,7 @@ def main():
                 args.trace.parent.mkdir(parents=True, exist_ok=True)
                 with args.trace.open("w", encoding="utf-8") as output:
                     json.dump({"model": trace_model, "provenance": {"revision": revision, "dirty": dirty,
-                               "controller": "cartesian-progress-v1", "speed": args.speed,
+                               "controller": MOTION_POLICY, "speed": args.speed,
                                "correction_profile": vars(correction_profile) if correction_profile else None,
                                "hardware_config": HARDWARE_CONFIG.read_text() if args.real_arm and HARDWARE_CONFIG.exists() else None},
                                "ticks": list(trace.copy())}, output, indent=2)

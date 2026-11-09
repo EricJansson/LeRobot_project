@@ -16,6 +16,7 @@ FILES = (
     "robot_program/lerobot_compat.py",
     "robot_program/lerobot_ik_controller.py",
     "robot_program/remote_ik_protocol.py",
+    "robot_program/remote_ik_recovery.py",
     "robot_program/so101_follower.py",
     "scripts/remote_ik_motor_service.py",
     "calibration/lerobot_arm.json",

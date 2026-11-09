@@ -22,19 +22,46 @@ import pytest
 from controller.input.xinput import XInputGamepad, XInputPad, XInputState
 from robot_program.lerobot_ik_controller import DEFAULT_URDF, LeRobotPoseSolver
 from robot_program.remote_ik_protocol import (
-    CHANNELS, PROTOCOL_VERSION, calibrated_follower, channel_limits, kinematic_urdf,
+    CHANNELS, MOTION_POLICY, PROTOCOL_VERSION, calibrated_follower, channel_limits, command_limits, kinematic_urdf,
 )
 from scripts import main_teleop_remote_ik as remote_teleop
 from scripts.install_remote_ik_pi import bundle
 from scripts.main_teleop_remote_ik import MotorLink, PiTunnel
 from robot_program import remote_ik_control
 from robot_program.remote_ik_control import ControlLoop, LatestInput
-from scripts.remote_ik_motor_service import MotorSession, PiMotorBus, ProtocolError, serve
+from scripts.remote_ik_motor_service import MotorSession, PiMotorBus, ProtocolError, motor_listener, serve
 from scripts.remote_ik_worker import solve_intent
 
 
 LIMITS = [[-90., 90.]] * 5 + [[0., 50.]]
+METADATA = {"model": "fixture", "limits": LIMITS, "calibrated_limits": LIMITS,
+            "command_limits": command_limits(LIMITS), "v": PROTOCOL_VERSION, "motion_policy": MOTION_POLICY}
 TOKEN = "sample-token"
+
+
+def test_motor_listener_preserves_exclusive_active_owner():
+    with motor_listener(0) as first:
+        with pytest.raises(OSError, match="already in use"):
+            with motor_listener(first.getsockname()[1]):
+                pytest.fail("A second live motor listener acquired the port")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Pi/Linux TIME_WAIT restart behavior")
+def test_motor_listener_restarts_immediately_after_server_closed_connection():
+    with motor_listener(0) as first:
+        port = first.getsockname()[1]
+        with socket.create_connection(("127.0.0.1", port), timeout=2) as client:
+            accepted, _ = first.accept()
+            with accepted:
+                accepted.settimeout(2)
+                # Make the server the active closer so its address enters
+                # TIME_WAIT before the new service attempts to bind it.
+                accepted.shutdown(socket.SHUT_WR)
+                assert client.recv(1) == b""
+                client.shutdown(socket.SHUT_WR)
+                assert accepted.recv(1) == b""
+    with motor_listener(port) as restarted:
+        assert restarted.getsockname() == ("127.0.0.1", port)
 
 
 @pytest.mark.parametrize("existing, record_tick", [(False, True), (True, True), (True, False)])
@@ -90,7 +117,7 @@ def test_launcher_dashboard_port_and_manual_browser(monkeypatch, capsys, options
     monkeypatch.setattr(remote_teleop, "XInputGamepad", lambda index: None)
     monkeypatch.setattr(remote_teleop, "load_key_state", lambda: lambda key: -1)
     monkeypatch.setattr(remote_teleop, "Worker", lambda *args: nullcontext(
-        SimpleNamespace(metadata={"model": "fixture", "limits": LIMITS})))
+        SimpleNamespace(metadata=METADATA)))
     monkeypatch.setattr(remote_ik_control, "ControlLoop", lambda *args, **kwargs:
                         SimpleNamespace(run=lambda: None, error=None))
     monkeypatch.setattr(webbrowser, "open", lambda *args, **kwargs: pytest.fail("Browser opened automatically"))
@@ -161,6 +188,23 @@ def test_urdf_and_install_bundle_use_only_kinematics():
     with tarfile.open(fileobj=BytesIO(bundle())) as archive:
         assert not any(name.startswith("assets/") for name in archive.getnames())
         assert archive.extractfile("so101_new_calib.urdf").read() == kinematic_urdf().encode()
+
+
+def test_pi_bundle_imports_without_the_source_checkout(tmp_path):
+    with tarfile.open(fileobj=BytesIO(bundle())) as archive:
+        archive.extractall(tmp_path, filter="data")
+    script = '''
+import sys
+sys.path.insert(0, sys.argv[1])
+from scripts.remote_ik_motor_service import MotorSession, SimulatedBus
+limits = [[-90., 90.]] * 5 + [[0., 50.]]
+motor = MotorSession(SimulatedBus(limits), limits=limits, model="fixture", token="test",
+                     watchdog=.2, hz=50, arm_rate=200, gripper_rate=30)
+assert motor.recovery.goal is None
+'''
+    result = subprocess.run([sys.executable, "-I", "-c", script, str(tmp_path)],
+                            cwd=tmp_path, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_disarmed_bounds_and_separate_gripper_rate(rig):
@@ -765,7 +809,7 @@ def test_tcp_reconnect_and_mode_gate(simulated):
         server = Thread(target=serve, args=(listener, motor, stop))
         server.start()
         port = listener.getsockname()[1]
-        metadata = {"model": "fixture", "limits": LIMITS}
+        metadata = METADATA
         try:
             with pytest.raises(RuntimeError, match="mode"):
                 with MotorLink(port, TOKEN, metadata, not simulated):
@@ -861,3 +905,17 @@ def test_worker_request_parameters_are_explicit_per_call():
     assert [frame["correction"] for frame in frames] == [True, False]
     assert [frame["recovery_step_m"] for frame in frames] == [.00002, .001]
     assert not hasattr(worker, "correction")
+
+
+def test_worker_recovery_request_carries_pi_step_without_cartesian_backlog():
+    worker = remote_teleop.Worker("Ubuntu", "python")
+    stream = BytesIO()
+    worker.process = SimpleNamespace(stdin=stream)
+    worker.receive = lambda timeout: {"target": None}
+    worker.recover([0.]*6, [0.,0.,.001,0.,0.,0.], sent=[0.]*6,
+                   automatic=[.1]*5+[0.], anchor=[0.]*6, goal=[1.]*5+[0.], steps=[.1]*6)
+    frame = json.loads(stream.getvalue())
+    assert frame["op"] == "recover"
+    assert frame["automatic"] == [.1]*5+[0.]
+    assert frame["steps"] == [.1]*6
+    assert "desired_xyz_m" not in frame

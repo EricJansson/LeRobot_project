@@ -7,7 +7,7 @@ import subprocess
 from time import perf_counter as monotonic
 
 from robot_program.remote_ik_correction import StationaryCorrection
-from robot_program.remote_ik_protocol import RATE_HZ, finite_vector
+from robot_program.remote_ik_protocol import RATE_HZ, RECOVERY_RATE_DEG_S, finite_vector
 
 ARM_START_RAMP_S = 0.3
 
@@ -163,8 +163,11 @@ class ControlLoop:
         current_delta = motion_delta(current.gamepad) if current.gamepad is not None else [0.] * 6
         if (self.stop.is_set() or current.gamepad is None or current.stop != sample.stop
                 or current.disconnect != sample.disconnect
-                or self.clock() - current.sampled_at >= freshness):
+                or self.clock() - current.sampled_at >= freshness
+                or current.gamepad["buttons"]["Back"]):
             op = "disarm"
+        elif op == "recover":
+            return op  # Limit recovery is independent of LB and stick direction.
         elif (result.get("target") is not None and current.lb and current.release == sample.release
               and self.clock() - sample.sampled_at < freshness
               and (not arm_input or current.arm_idle == sample.arm_idle)
@@ -192,7 +195,13 @@ class ControlLoop:
                 state.arm_started = started
         else:
             state.arm_started = None
-        if not feedback["armed"] or feedback["fault"] or op == "disarm":
+        if op == "recover":
+            state.desired_xyz_m = None
+            state.was_correcting = False
+            if state.correction is not None:
+                state.correction.reset()
+            reset_reason = "limit recovery discards prior path"
+        elif not feedback["armed"] or feedback["fault"] or op == "disarm":
             if state.desired_xyz_m is not None:
                 reset_reason = "disarmed or fault"
             state.desired_xyz_m = None
@@ -224,21 +233,43 @@ class ControlLoop:
                 "correction": correcting, "correction_exhausted": state.correction.exhausted if state.correction else False,
                 "input_edges": {"neutral": sample.arm_idle, "release": sample.release},
                 "measured": feedback["measured"], "pi_reason": feedback["reason"],
+                "motion_status": ("Armed—constrained" if feedback.get("recovery_blocked") else
+                                  "Recovering" if op == "recover" else result.get("motion_status")),
+                "limit_excess": feedback.get("limit_excess"),
+                "recovery_goal": feedback.get("recovery_goal"),
+                "recovery_remaining_deg": feedback.get("recovery_remaining_deg"),
+                "recovery_blocked": feedback.get("recovery_blocked"),
+                "recovery_margin_deg": feedback.get("recovery_margin_deg"),
+                "recovery_coordinated": feedback.get("recovery_coordinated"),
+                "path_bound_deg": result.get("path_bound_deg"), "path_angle_deg": result.get("path_angle_deg"),
             })
 
     def _publish_status(self, state, sample, feedback, result, *, issuance_diverged, fresh, mode,
                         measured, feedback_count, received, connected_at, max_gap_ms):
         reason = ("Pi shortened the validated Cartesian target" if issuance_diverged
                   else feedback["reason"] or result.get("reason", ""))
+        if not reason and result.get("path_bound_deg") == 75.:
+            reason = "75° path escape"
         if not fresh and not reason:
             reason = "Connect a gamepad" if sample.gamepad is None else "Gamepad sample expired"
         display_state = ("Fault" if feedback["fault"] else "Moving" if feedback["moving"]
                          else "Armed" if feedback["armed"] else "Disarmed")
+        motion_status = result.get("motion_status")
+        if feedback["armed"] and not feedback["fault"]:
+            if feedback.get("recovery_blocked"):
+                display_state = "Armed—constrained"
+            elif feedback.get("recovery_required"):
+                display_state = "Recovering"
+            elif motion_status:
+                display_state = motion_status
         self.status = {"connection": "Connected", "mode": mode, "state": display_state,
                        "reason": reason, "measured": measured, "sent": feedback["sent"],
                        "xyz_m": result.get("xyz_m"), "desired_xyz_m": state.desired_xyz_m,
                        "requested_xyz_m": result.get("requested_xyz_m"),
                        "candidate": result.get("target"),
+                       "path_bound_deg": result.get("path_bound_deg"), "path_angle_deg": result.get("path_angle_deg"),
+                       "limit_excess": feedback.get("limit_excess"),
+                       "recovery_goal": feedback.get("recovery_goal"),
                        "read_max_ms": feedback.get("read_max_ms"), "write_max_ms": feedback.get("write_max_ms"),
                        "feedback_hz": feedback_count / max(received - connected_at, 1e-6),
                        "feedback_max_gap_ms": max_gap_ms}
@@ -273,18 +304,30 @@ class ControlLoop:
                 state, feedback, sample, seen, arm_interrupted=arm_interrupted,
                 fresh=fresh, elapsed=elapsed, period=period, started=started)
             seen = sample
+            recovering = feedback["armed"] and feedback.get("recovery_required") and op != "disarm" and fresh
+            if recovering:
+                op, delta, sent, arm_input, ramp_scale = "recover", [0.] * 6, None, False, None
+                state.arm_started = None
             result = {}
             correcting = False
             recovery_step_m = .001
-            if state.was_correcting and fresh and sample.lb and not any(delta) and op != "disarm":
+            if (recovering and finite_vector(feedback.get("recovery_target"), 6)
+                    and hasattr(self.worker, "recover") and any(motion_delta(sample.gamepad)[:3])):
+                result = self.worker.recover(
+                    measured, motion_delta(sample.gamepad, self.speed), sent=feedback["sent"],
+                    automatic=feedback["recovery_target"], anchor=feedback["recovery_anchor"],
+                    goal=feedback["recovery_goal"],
+                    steps=[min(rate, RECOVERY_RATE_DEG_S) * period for rate in feedback["rates"]])
+            if not recovering and state.was_correcting and fresh and sample.lb and not any(delta) and op != "disarm":
                 op = "poll"
             if finite_vector(measured, 6) and (op in ("poll", "arm") or any(delta)):
                 result = self.worker.solve(measured, delta, sent=sent if any(delta) else None,
                                            desired_xyz_m=state.desired_xyz_m, joint_step_limits=joint_step_limits,
                                            correction=correcting, recovery_step_m=recovery_step_m)
-            op, result, correcting = self._select_correction(
-                state, feedback, sample, result, op=op, delta=delta, arm_input=arm_input,
-                fresh=fresh, started=started, period=period, joint_step_limits=joint_step_limits, measured=measured)
+            if not recovering:
+                op, result, correcting = self._select_correction(
+                    state, feedback, sample, result, op=op, delta=delta, arm_input=arm_input,
+                    fresh=fresh, started=started, period=period, joint_step_limits=joint_step_limits, measured=measured)
             # Recheck input after IK. A release and re-press while solving also
             # invalidates this candidate, even when LB is held again now.
             current = self.latest_input.sample
@@ -292,6 +335,17 @@ class ControlLoop:
                                       correcting=correcting, freshness=freshness)
 
             values = {"target": result["target"]} if op == "move" else {}
+            if op == "recover":
+                axes = current.gamepad["axes"]
+                values = {"input": [-axes["LY"], -axes["LX"], -axes["RY"],
+                                    axes["RT"] - axes["LT"], axes["RX"], current.gamepad["dpad"][1]]}
+                # A direction change while WSL was solving discards only the
+                # coordination candidate; the automatic inward retreat continues.
+                same_direction = (current.arm_idle == sample.arm_idle
+                                  and all(abs(a - b) <= .0002 for a, b in zip(
+                                      motion_delta(sample.gamepad)[:3], motion_delta(current.gamepad)[:3])))
+                if result.get("target") is not None and same_direction:
+                    values["target"] = result["target"]
             ik_reason = result.get("reason")
             solve_finished = self.clock()
             feedback = link.request(op, **values)

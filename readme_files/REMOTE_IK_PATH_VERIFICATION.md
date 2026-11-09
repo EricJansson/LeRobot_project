@@ -1,5 +1,10 @@
 # Remote IK path verification
 
+The 2026-11-09 [adaptive motion and recovery](REMOTE_IK_ADAPTIVE_MOTION.md)
+update supersedes strict retained-line behavior for blocked translation and
+changes the remote Pi policy/protocol. Use that document for current behavior,
+verification and supervised tests. Results below describe earlier revisions.
+
 ## Status and behavior
 
 Implementation is OFFLINE tested; physical acceptance is pending owner-approved tests. Calibration, Feetech registers, torque settings and `remote_ik.hardware.conf` are unchanged. No service was deployed during development. No collision checks have been added.

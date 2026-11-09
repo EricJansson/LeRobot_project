@@ -32,9 +32,11 @@ Connect an XInput gamepad to Windows. The launcher uses slot 0 by default. Use `
 
 Press **Start** with the sticks, triggers, and D-pad neutral and LB released. Hold **LB** to drive. The left stick controls XY, right-stick vertical controls Z, right-stick horizontal controls roll, the triggers control pitch, and D-pad up/down operates the gripper. **Back** disarms. **Esc** stops teleop and exits the Windows launcher, including while the dashboard has focus on the active Windows desktop. The motion scale defaults to 1. Use `--speed` to reduce it. Reconnect requires another neutral Start press.
 
-Arm motion starts at 10% of the selected scale and eases to full scale over 300 ms. Every observed arm-input gap restarts that ramp. Centering controls or releasing LB stops operator advancement while retaining intended XYZ; only disarm/fault/new-session arming replaces that reference. LB still enables movement. The jaw uses its usual scale.
+Arm motion starts at 10% of the selected scale and eases to full scale over 300 ms. Every observed arm-input gap restarts that ramp. Centering controls or releasing LB stops ordinary operator advancement while retaining intended XYZ. Adaptation adopts achieved XYZ, limit recovery discards the previous path, and disarm/fault/new-session arming resets the reference. LB still enables ordinary movement; automatic limit recovery works independently of LB. The jaw uses its usual scale.
 
-The WSL worker searches bounded fractions of each Cartesian increment within the Pi's reported joint-rate allowance. Unexecuted input is discarded. On resuming after a measured stop, reference recovery is limited to 1 mm per command before the joint-rate feasibility check. This is a command bound, not a guarantee of physical tracking or smoothness. The remote worker uses tighter position convergence and prioritizes XYZ during translation; the five-joint arm cannot preserve arbitrary six-DOF orientation during lateral motion. Explicit orientation-only input keeps the existing numerical solver settings. Legacy solver defaults are unchanged.
+The WSL worker searches bounded fractions of each Cartesian increment within the Pi's reported joint-rate allowance. If precise movement is unavailable or extremely short, it tries orientation relaxation and then a nearby forward path within 45° of input. When those stages make less than one eighth of requested forward progress, an owner-approved escape can deviate up to 75°, prioritizing useful forward gain at the cost of more sideways travel. Every adapted translation remains no longer than the requested increment. Adapted motion continues from achieved, acknowledged XYZ without returning to the abandoned line. Unexecuted input is discarded. Ordinary measured-stop reference recovery remains bounded to 1 mm per command. Legacy solver defaults and explicit orientation-only behavior are unchanged.
+
+Operating-limit excursions inside calibrated motor ranges now recover inward while armed, even during active input and with LB released. Normal arm commands reserve 0.5° of joint margin. If that initial retreat stalls, recovery can try a finite deeper destination up to 2° inside the limit and coordinate other arm joints with fresh input, with independent Pi validation and a 5°/s recovery ceiling. Blocked recovery holds **Armed—constrained**; serious faults, watchdog/disconnect and explicit stops still disarm. Windows, WSL and Pi require protocol version 3; reinstall the stopped Pi service when updating code. The owner reports that the tight-wrist escape works, with slight adjustment jitter. The pre-commit refactor is offline verified; its post-cleanup hardware smoke test and broader fault checks remain pending. See [current behavior, verification and supervised run sheet](REMOTE_IK_ADAPTIVE_MOTION.md).
 
 Stationary correction is **disabled by default**. An explicitly commissioned JSON profile can be supplied with `--correction-profile PATH`; see [path verification and supervised tests](REMOTE_IK_PATH_VERIFICATION.md). Correction never runs with LB released. This software has not been hardware verified for the new behavior.
 
@@ -116,6 +118,19 @@ Use the observation results to agree on the initial cycle and watchdog before en
 3. Report the stick direction, visible movement, measured joint change, longest Pi write time, stop behavior, and any fault. Verify the other axes, gripper, retraction, controller loss, and SSH interruption in follow-up trials. A reconnect must stay disarmed until a fresh neutral **Start**.
 4. Press **Esc** to exit and stop the Pi service. Support the arm before stopping the service or cutting power. If shutdown fails or an older launcher left the service running, run `systemctl --user stop lerobot-remote-ik.service` on the Pi with the arm supported. Remove `--allow-motion` from the local `remote_ik.hardware.conf` to return the next launch to observation mode.
 
+## Service startup reports address already in use
+
+If the service journal shows `OSError: [Errno 98] Address already in use` at
+`listener.bind`, startup failed before opening the motor bus. Check the current
+owner from Windows with `ssh eric@rpi 'ss -ltnp sport = :8766'`; do not terminate
+an unidentified owner. The Pi listener now permits immediate Linux restart after
+a closed connection enters TIME_WAIT, while still rejecting a second live
+listener. Windows uses exclusive binding. Reinstall the stopped service with
+`python.exe -m scripts.install_remote_ik_pi`, then run the normal launcher.
+The restart/exclusivity fix passed targeted offline checks (99 WSL tests and
+56 Windows tests, three Windows platform/dependency skips); no physical service
+restart or motor test was performed during this fix.
+
 ## Verification status
 
 - **OFFLINE VERIFIED** · Official WSL2 IK accepted a reachable pose and rejected an unreachable pose in a checkout with no assets directory. Regression tests cover command age, reconnect, held targets, and Linux serial exclusivity on a pseudo-terminal.
@@ -126,7 +141,7 @@ Use the observation results to agree on the initial cycle and watchdog before en
 
 ## Control-code ownership
 
-The launcher owns arguments, Windows XInput/Esc sampling, WSL/Pi connections and dashboard lifecycle. `robot_program/remote_ik_control.py` owns input-edge tracking, per-session `MotionState`, startup ramping, post-solve input checks, issued-reference acceptance and control reporting. Stationary correction remains optional in `robot_program/remote_ik_correction.py`. Worker solve requests carry their rate allowance, correction mode and recovery bound explicitly; the Pi protocol and motor policy are unchanged.
+The launcher owns arguments, Windows XInput/Esc sampling, WSL/Pi connections and dashboard lifecycle. `robot_program/remote_ik_control.py` owns input-edge tracking, per-session `MotionState`, startup ramping, post-solve input checks, issued-reference acceptance and reporting. Stationary correction remains optional in `robot_program/remote_ik_correction.py`. The worker owns IK and candidate selection; `robot_program/remote_ik_recovery.py` owns Pi-local recovery state and pure validation, while the motor service owns serialized hardware operations. This pre-commit extraction preserves protocol 3, policy `adaptive-limits-v3` and numerical motion behavior.
 
 The cleanup preserves this command and all of its defaults:
 

@@ -375,6 +375,11 @@
     switch (remote?.state) {
       case 'Fault': return ['red', 'Motor fault', remote.reason];
       case 'Moving': return ['green', 'Moving', ''];
+      case 'Following path':
+      case 'Adapting pitch':
+      case 'Adapting path':
+      case 'Recovering': return ['green', remote.state, remote.reason || ''];
+      case 'Armed—constrained': return ['neutral', 'Armed—constrained', remote.reason || ''];
       case 'Armed': return ['green', 'Armed', ''];
       case 'Disarmed':
         return ['neutral', 'Disarmed', remote.reason ||

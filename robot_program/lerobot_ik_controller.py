@@ -107,7 +107,8 @@ class LeRobotPoseSolver:
         self.kinematics.solver.mask_dof("gripper")
         self.kinematics.solver.enable_joint_limits(True)
 
-    def solve_pose(self, target: np.ndarray, measured_deg: np.ndarray) -> IKResult:
+    def solve_pose(self, target: np.ndarray, measured_deg: np.ndarray, *,
+                   position_only=False, approximate=False, max_iterations=MAX_ITERATIONS) -> IKResult:
         """Solve and validate without reading or writing hardware."""
         target = _pose(target)
         measured = np.asarray(measured_deg, dtype=float)
@@ -118,27 +119,37 @@ class LeRobotPoseSolver:
         achieved = measured_pose.copy()
         reason = POSITION_TOLERANCE_REASON
         accepted = False
+        best = None
         try:
-            for _ in range(MAX_ITERATIONS):
+            for _ in range(max_iterations):
                 q = np.asarray(self.kinematics.inverse_kinematics(
-                    q, target, position_weight=1.0, orientation_weight=self.orientation_weight,
+                    q, target, position_weight=1.0,
+                    orientation_weight=0. if position_only else self.orientation_weight,
                 ), dtype=float)
                 if q.shape != (5,) or not np.isfinite(q).all():
                     reason = "nonfinite or malformed IK solution"
+                    best = None
                     break
                 if (np.any(q < self.limits_deg[:, 0] - JOINT_ROUNDOFF_DEG)
                         or np.any(q > self.limits_deg[:, 1] + JOINT_ROUNDOFF_DEG)):
                     reason = "joint limit exceeded"
+                    best = None
                     break
                 # Snap solver roundoff, then verify FK of the exact bounded command.
                 q = np.clip(q, self.limits_deg[:, 0], self.limits_deg[:, 1])
                 achieved = _pose(self.kinematics.forward_kinematics(q))
                 error = float(np.linalg.norm(achieved[:3, 3] - target[:3, 3]))
+                if best is None or error < best[0]:
+                    best = (error, q.copy(), achieved.copy())
                 if error <= self.position_tolerance_m:
                     accepted, reason = True, "accepted"
                     break
         except (RuntimeError, ValueError) as exc:
             reason = f"IK solver failed: {exc}"
+            best = None  # A solver failure is not an approximate solution.
+        if not accepted and approximate and best is not None:
+            _, q, achieved = best
+            accepted, reason = True, "bounded approximate candidate"
         if not accepted:
             q, achieved = measured.copy(), measured_pose
             self.kinematics.forward_kinematics(measured)

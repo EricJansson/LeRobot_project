@@ -2,6 +2,7 @@
 
 import argparse
 from contextlib import ExitStack
+import errno
 import hmac
 import math
 import os
@@ -16,9 +17,14 @@ from time import perf_counter as monotonic
 
 from robot_program.lerobot_ik_controller import DEFAULT_URDF
 from robot_program.remote_ik_protocol import (
-    CHANNELS, MAX_FRAME, OFFLINE_WATCHDOG, PI_PORT, PROTOCOL_VERSION, RATE_HZ,
-    calibrated_follower, channel_limits, decode_frame, encode_frame, finite_vector,
-    kinematic_urdf, model_id,
+    CHANNELS, MAX_FRAME, MOTION_POLICY, OFFLINE_WATCHDOG, PI_PORT, PROTOCOL_VERSION, RATE_HZ,
+    COMMAND_MARGIN_DEG,
+    calibrated_follower, calibrated_channel_limits, channel_limits, command_limits,
+    decode_frame, encode_frame, finite_vector, kinematic_urdf, limit_excess, model_id, within_limits,
+)
+
+from robot_program.remote_ik_recovery import (
+    CoordinationResult, RecoveryAction, RecoveryState, check_coordination, inward_segment_valid,
 )
 
 
@@ -119,9 +125,17 @@ class MotorSession:
     """Called only by the motor loop. Feedback timestamps are Pi-local."""
 
     def __init__(self, bus, *, limits, model, token, watchdog, hz, arm_rate, gripper_rate,
-                 simulated=True, allow_motion=False, clock=monotonic):
+                 simulated=True, allow_motion=False, clock=monotonic, calibrated_limits=None):
         self.bus = bus
         self.limits = limits
+        self.calibrated_limits = limits if calibrated_limits is None else calibrated_limits
+        self.command_limits = command_limits(limits)
+        if (len(self.calibrated_limits) != 6 or len(limits) != 6
+                or any(not finite_vector(list(pair), 2) or pair[0] >= pair[1]
+                       for pair in [*limits, *self.calibrated_limits, *self.command_limits])
+                or any(outer[0] > inner[0] or outer[1] < inner[1]
+                       for outer, inner in zip(self.calibrated_limits, limits))):
+            raise ValueError("Invalid calibrated, operating or command ranges")
         self.model = model
         self.token = token
         self.watchdog = watchdog
@@ -138,11 +152,12 @@ class MotorSession:
         self.session = None
         self.sequence = -1
         self.armed = self.advancing = False
+        self.stop_pending = False
         self.fault = self.reason = ""
+        self.recovery = RecoveryState(progress_at=self.clock())
 
     def in_bounds(self, values):
-        return (finite_vector(values, len(CHANNELS))
-                and all(lo <= value <= hi for value, (lo, hi) in zip(values, self.limits)))
+        return within_limits(values, self.limits)
 
     def send_target(self, target):
         started = self.clock()
@@ -153,12 +168,80 @@ class MotorSession:
     def hold(self, reason="", *, disarm=False):
         if disarm:
             self.armed = False
+            self.recovery.clear()
         if reason:
             self.reason = reason
-        if self.advancing and self.measured is not None:
+        advancing = self.advancing or self.stop_pending
+        self.advancing = False
+        self.stop_pending = advancing and self.measured is None
+        if advancing and within_limits(self.measured, self.calibrated_limits):
             # One measured stop target. Avoid repeatedly chasing drift or sag.
-            self.advancing = False
             self.sent = self.send_target(self.measured)
+
+    def recovery_needed(self):
+        return self.recovery.goal is not None or (self.measured is not None and not self.in_bounds(self.measured))
+
+    def recovery_target(self):
+        return self.recovery.next_target(self.sent, self.rates, self.period)
+
+    def recover(self, request):
+        """Apply a recovery decision with one serialized motor owner."""
+        intent, proposed = request.get("input"), request.get("target")
+        state = self.recovery
+        state.coordinated = False
+        if (not finite_vector(intent, 6) or
+                proposed is not None and (not finite_vector(proposed, 6) or not any(intent[:3]))):
+            self.hold("Invalid recovery request")
+            return
+        if not self.armed:
+            self.reason = "Disarmed"
+            return
+        if not self.recovery_needed():
+            return
+        now = self.clock()
+        if state.goal is None:
+            state.begin(self.measured, self.limits, self.command_limits)
+            # One measured stop cancels the previous goal, never recaptured sag.
+            self.advancing = False
+            self.sent = self.send_target(state.anchor)
+            state.restart_trial(now)
+            state.margin = COMMAND_MARGIN_DEG
+        stop_anchor = state.include_new_violations(self.measured, self.sent, self.limits)
+        if stop_anchor is not None:
+            self.sent = self.send_target(stop_anchor)
+            state.restart_trial(now)
+        action = state.evaluate(self.measured, self.sent, intent, proposed,
+                                self.limits, self.command_limits, now)
+        if action is RecoveryAction.COMPLETE:
+            self.hold()
+            state.clear(completed=True)
+            self.advancing = False
+            self.reason = ""
+            return
+        if action is RecoveryAction.WAIT:
+            return
+        if action is RecoveryAction.STALLED:
+            self.hold("Limit recovery made no progress; armed and constrained")
+            return
+        target = self.recovery_target()
+        if proposed is not None:
+            check = check_coordination(proposed, target, self.sent, state.active_axes,
+                                       self.rates, self.period, self.limits, self.calibrated_limits)
+            if check is CoordinationResult.ACCEPT:
+                target = proposed
+                state.coordinated = True
+            elif check is CoordinationResult.REJECT:
+                self.hold("Invalid coordinated recovery target; armed and constrained")
+                return
+            # Superseded proposals use the Pi's automatic inward step.
+        if not inward_segment_valid(self.sent, self.measured, target, self.limits, self.calibrated_limits):
+            state.blocked = True
+            self.hold("No valid inward recovery transition; armed and constrained")
+            return
+        self.advancing = True
+        self.last_move_at = now
+        self.sent = self.send_target(target)
+        self.reason = "Coordinated inward recovery" if state.coordinated else "Recovering operating limits"
 
     def disconnect(self):
         self.session = None
@@ -199,7 +282,7 @@ class MotorSession:
         if op in ("hold", "disarm"):
             self.hold(disarm=(op == "disarm"))
             return None
-        if op not in ("arm", "move"):
+        if op not in ("arm", "move", "recover"):
             self.hold("unknown operation", disarm=True)
             return None
         if not self.motion_enabled:
@@ -211,17 +294,25 @@ class MotorSession:
                 or age >= self.watchdog or self.measured is None or self.fault):
             self.hold("stale or unavailable motor feedback", disarm=True)
             return None
-        if not self.in_bounds(self.measured):
-            self.hold("measured pose is outside operating bounds", disarm=True)
-            return None
         if op == "arm":
             if not self.armed:
                 self.sent = self.bus.arm(self.measured)
                 self.armed = True
                 self.reason = ""
             return None
+        if op == "recover":
+            self.recover(request)
+            return None
+        if self.recovery_needed():
+            self.hold("Operating limit requires inward recovery; armed and constrained")
+            return None
         target = request.get("target")
-        if not self.armed or not self.in_bounds(target):
+        # A measured hold can sit in the margin. Jaw-only operation may retain
+        # that exact arm target; advancing an arm joint still needs the inset.
+        normal_target = (self.in_bounds(target) and self.sent is not None
+                         and all(lo <= q <= hi or i < 5 and abs(q - self.sent[i]) <= 1e-8
+                                 for i, (q, (lo, hi)) in enumerate(zip(target, self.command_limits))))
+        if not self.armed or not normal_target:
             self.hold("disarmed or joint target outside bounds")
             return None
 
@@ -230,6 +321,9 @@ class MotorSession:
         delta = [goal - last for goal, last in zip(target, self.sent)]
         fraction = max(1., *(abs(step) / (rate * self.period) for step, rate in zip(delta, self.rates)))
         bounded = [last + step / fraction for last, step in zip(self.sent, delta)]
+        if not self.in_bounds(bounded):
+            self.hold("Rate-limited transition would leave operating bounds")
+            return None
         self.rate_limited = fraction > 1.
         self.advancing = True
         self.last_move_at = self.clock()
@@ -243,6 +337,9 @@ class MotorSession:
             if not finite_vector(measured, len(CHANNELS)):
                 raise ValueError("Motor bus returned incomplete or nonfinite feedback")
             self.measured, self.sampled_at = measured, self.clock()
+            if not within_limits(measured, self.calibrated_limits):
+                self.fault = "Measured pose is outside calibrated motor ranges"
+                self.armed = False
             self.read_max_ms = max(self.read_max_ms or 0., (self.sampled_at - started) * 1000)
         except Exception as exc:
             self.measured, self.armed = None, False
@@ -254,6 +351,8 @@ class MotorSession:
                 self.disconnect()
             if self.fault or self.advancing and self.clock() - self.last_move_at >= self.watchdog:
                 self.hold("motion watchdog expired", disarm=True)
+            elif self.measured is not None and not self.in_bounds(self.measured) and self.recovery.goal is None:
+                self.hold("Operating limit requires inward recovery; armed and constrained")
         except Exception as exc:
             self.armed = False
             self.fault = f"Motor hold failed: {exc}"
@@ -271,6 +370,14 @@ class MotorSession:
         self.feedback_at = self.sampled_at if self.measured is not None else float("-inf")
         return {"v": PROTOCOL_VERSION, "session": self.session, "ack": self.sequence,
                 "feedback_seq": self.feedback_seq, "model": self.model, "limits": self.limits,
+                "calibrated_limits": self.calibrated_limits, "command_limits": self.command_limits,
+                "motion_policy": MOTION_POLICY,
+                "limit_excess": limit_excess(self.measured, self.limits) if self.measured else None,
+                "recovery_required": self.recovery_needed() if self.measured else False,
+                "recovery_goal": self.recovery.goal, "recovery_blocked": self.recovery.blocked,
+                "recovery_remaining_deg": self.recovery.remaining,
+                "recovery_margin_deg": self.recovery.margin, "recovery_coordinated": self.recovery.coordinated,
+                "recovery_target": self.recovery_target(), "recovery_anchor": self.recovery.anchor,
                 "measured": self.measured, "sent": self.sent, "armed": self.armed,
                 "moving": self.advancing, "reason": self.fault or self.reason,
                 "fault": bool(self.fault),
@@ -356,6 +463,25 @@ def notify_ready():
             notifier.sendto(b"READY=1", address)
 
 
+def motor_listener(port):
+    """Allow Linux restart through TIME_WAIT, never a second live listener."""
+    listener = socket.socket()
+    try:
+        # Windows SO_REUSEADDR can admit competing live owners; use exclusive
+        # binding there. Linux reuse only permits replacing a closed listener.
+        option = socket.SO_EXCLUSIVEADDRUSE if os.name == "nt" else socket.SO_REUSEADDR
+        listener.setsockopt(socket.SOL_SOCKET, option, 1)
+        listener.bind(("127.0.0.1", port))
+        listener.listen(4)
+        return listener
+    except OSError as exc:
+        listener.close()
+        if exc.errno == errno.EADDRINUSE:
+            raise OSError(exc.errno, f"Pi motor service port {port} is already in use; "
+                          "check the existing service or port owner before restarting") from exc
+        raise
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--token-file", type=Path, required=True)
@@ -396,14 +522,12 @@ def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
     with ExitStack() as stack:
-        listener = stack.enter_context(socket.socket())
-        listener.bind(("127.0.0.1", args.listen_port))
-        listener.listen(4)
+        listener = stack.enter_context(motor_listener(args.listen_port))
         bus = (stack.enter_context(PiMotorBus(follower, args.serial_port))
                if args.serial_port else SimulatedBus(limits))
         motor = MotorSession(bus, limits=limits, model=fingerprint, token=token, watchdog=watchdog_ms / 1000,
                              hz=hz, arm_rate=arm_rate, gripper_rate=gripper_rate, simulated=not args.serial_port,
-                             allow_motion=args.allow_motion)
+                             allow_motion=args.allow_motion, calibrated_limits=calibrated_channel_limits(follower))
         notify_ready()
         serve(listener, motor, stop)
 

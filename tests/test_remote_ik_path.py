@@ -166,7 +166,8 @@ def test_solver_tolerance_does_not_bank_unexecuted_boundary_progress():
     for _ in range(100):
         result = solve_intent(solver, sent, [.0001, 0, 0, 0, 0, 0], [0, 50], sent=sent,
                               desired_xyz_m=desired, joint_step_limits=[1.]*6)
-        desired = result["accepted_xyz_m"]
+        assert result["target"] is None
+        desired = result.get("accepted_xyz_m", desired)
     assert desired == [0., 0., .1]
 
 
