@@ -77,6 +77,7 @@ def test_launcher_trace_overwrite(monkeypatch, tmp_path, capsys, existing, recor
         SimpleNamespace(port=18743, exit_reason=None)))
     monkeypatch.setattr(remote_teleop, "Worker", lambda *args: nullcontext(
         SimpleNamespace(metadata={"model": "fixture"})))
+    monkeypatch.setattr(remote_teleop, "ensure_installed", lambda host: "a" * 64)
     monkeypatch.setattr(remote_teleop, "PiTunnel", lambda *args, **kwargs: nullcontext(
         SimpleNamespace(connect=None)))
 

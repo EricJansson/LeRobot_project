@@ -34,13 +34,13 @@ There are three states: **Released** (blue, all six motors off, including the gr
 
 Hold **LB** to drive. The left stick controls XY, right-stick vertical controls Z, right-stick horizontal controls roll, the triggers control pitch, and D-pad up/down operates the gripper. **Esc** stops teleop and exits the Windows launcher, including while the dashboard has focus on the active Windows desktop. The motion scale defaults to 1. Use `--speed` to reduce it. Reconnect disables controller movement. A Released arm stays Released; restoring Holding captures its new measured pose without enabling motion.
 
-**Default actions retain Start/Options to advance and Back/Share/Create to stop, as in the run sheets below.** Neither Holding nor Released runs automatic recovery or stationary correction. Torque-state changes passed offline checks; the owner reported successful boundary capture and recovery. All components now require protocol **4**, policy **boundary-capture-v4**; reinstall the stopped Pi service before hardware testing.
+**Default actions retain Start/Options to advance and Back/Share/Create to stop, as in the run sheets below.** Neither Holding nor Released runs automatic recovery or stationary correction. Torque-state changes passed offline checks; the owner reported successful boundary capture and recovery. All components now require protocol **4**, policy **boundary-capture-v4**; the launcher updates the stopped Pi service automatically before hardware testing.
 
 Arm motion starts at 10% of the selected scale and eases to full scale over 300 ms. Every observed arm-input gap restarts that ramp. Centering controls or releasing LB stops ordinary operator advancement while retaining intended XYZ. Adaptation adopts achieved XYZ, limit recovery discards the previous path, and disarm/fault/new-session arming resets the reference. LB still enables ordinary movement; automatic limit recovery works independently of LB. The jaw uses its usual scale.
 
 The WSL worker searches bounded fractions of each Cartesian increment within the Pi's reported joint-rate allowance. If precise movement is unavailable or extremely short, it tries orientation relaxation and then a nearby forward path within 45° of input. When those stages make less than one eighth of requested forward progress, an owner-approved escape can deviate up to 75°, prioritizing useful forward gain at the cost of more sideways travel. Every adapted translation remains no longer than the requested increment. Adapted motion continues from achieved, acknowledged XYZ without returning to the abandoned line. Unexecuted input is discarded. Ordinary measured-stop reference recovery remains bounded to 1 mm per command. Legacy solver defaults and explicit orientation-only behavior are unchanged.
 
-Operating-limit excursions inside calibrated motor ranges now recover inward while armed, even during active input and with LB released. Normal arm commands reserve 0.5° of joint margin. Recovery targets a fixed destination 5° inside the violated limit (capped at the range midpoint) and can coordinate other arm joints with fresh input, with independent Pi validation and a 10°/s arm recovery ceiling (5 normalized units/s for the gripper). Blocked recovery holds **Armed—constrained**; serious faults, watchdog/disconnect and explicit stops still disarm. Windows, WSL and Pi require protocol version 4; reinstall the stopped Pi service when updating code. The owner reports that the tight-wrist escape works, with slight adjustment jitter. The pre-commit refactor is offline verified; its post-cleanup hardware smoke test and broader fault checks remain pending. See [current behavior, verification and supervised run sheet](REMOTE_IK_ADAPTIVE_MOTION.md).
+Operating-limit excursions inside calibrated motor ranges now recover inward while armed, even during active input and with LB released. Normal arm commands reserve 0.5° of joint margin. Recovery targets a fixed destination 5° inside the violated limit (capped at the range midpoint) and can coordinate other arm joints with fresh input, with independent Pi validation and a 10°/s arm recovery ceiling (5 normalized units/s for the gripper). Blocked recovery holds **Armed—constrained**; serious faults, watchdog/disconnect and explicit stops still disarm. Windows, WSL and Pi require protocol version 4; the launcher updates changed Pi service code automatically. The owner reports that the tight-wrist escape works, with slight adjustment jitter. The pre-commit refactor is offline verified; its post-cleanup hardware smoke test and broader fault checks remain pending. See [current behavior, verification and supervised run sheet](REMOTE_IK_ADAPTIVE_MOTION.md).
 
 Stationary correction is **disabled by default**. An explicitly commissioned JSON profile can be supplied with `--correction-profile PATH`; see [path verification and supervised tests](REMOTE_IK_PATH_VERIFICATION.md). Correction never runs with LB released. This software has not been hardware verified for the new behavior.
 
@@ -56,24 +56,50 @@ Compare `desired_xyz_m`, `issued_xyz_m`, and `measured_xyz_m` around a drop. The
 To test the real SSH link with the Pi’s simulated bus:
 
 ```powershell
-python.exe -m scripts.install_remote_ik_pi
 python.exe -m scripts.main_teleop_remote_ik --pi-sim
 ```
 
 The installer defaults to `eric@rpi`, uses the Pi’s existing `~/lerobot-env`, and deploys separate user services with private tokens. SSH needs a trusted host key and noninteractive authentication. The Pi user service manager must stay available after SSH disconnect. This Pi has `Linger=yes` for `eric`.
 
+### Automatic Pi service updates
+
+The `--pi-sim` and `--real-arm` launch modes check the installed Pi release before starting the control loop. You no longer need to run the installer between implementations. The launcher prints **Checking Pi service**, followed by **Pi service is up to date** or **Installing Pi service** and **Installed Pi service** with a short fingerprint. A fresh Pi or an older installation without a fingerprint is installed automatically using the existing `~/lerobot-env`; Python dependencies are not installed or upgraded.
+
+The fingerprint covers the existing Pi deployment files (including the calibration snapshot), generated kinematic URDF, service units, and deployment recipe. Uncommitted edits count. Timestamps, archive metadata, and PC-only files do not. Hardware settings continue to synchronize separately. Deployment does not perform physical calibration or change motion policy. The payload is captured once at launch; editing code during a session takes effect on the next launch. `--dry-run` never contacts the Pi, and reconnects never deploy code. Startup/reconnect checks the expected release under the deployment lock and refuses a changed or incomplete installation.
+
+Updates refuse to proceed while either Pi service is active, activating, or stopping. The error names the service: close its launcher first, supporting the arm before stopping a live service. Updates never automatically stop another session. An unchanged installation retains the existing service ownership rules. SSH, upload, validation, and installation errors abort startup rather than falling back to stale code. Installation and lifecycle operations share bounded locks; if another operation is busy, wait for it to finish and relaunch. Failed activation attempts restore the previous release and units. Interrupted activation or failed rollback leaves an incomplete-transaction marker that blocks startup even if the old fingerprint matches; the next launch must successfully reinstall with both services stopped. Any rollback error explicitly requires inspection/repair before teleop.
+
+For an unconditional reinstall or repair, stop both Pi services and run this from the Windows checkout with `.venv` active. It preserves existing tokens/settings and starts neither service:
+
+```powershell
+python.exe -m scripts.install_remote_ik_pi
+```
+
+Both commands accept `--pi user@host` to override `eric@rpi`.
+
+#### Manual simulation update check
+
+Prerequisites: trusted noninteractive SSH, the existing Pi Python environment/user service manager, working Windows gamepad/WSL setup, and both Pi services stopped. These steps use only the Pi simulated bus; do not start `--real-arm` for this check. Run all commands in Windows PowerShell from `C:\Users\rapid\Documents\GitHub\LeRobot_project` with `.venv` active.
+
+1. Run `python.exe -m scripts.main_teleop_remote_ik --pi-sim`. Expect installation if the release is missing/outdated, then the normal simulation dashboard. Open the printed URL; use separate neutral **Start** presses to advance and **LB** plus a small stick input to move the simulated arm. Press **Esc** or **Ctrl+C** to stop.
+2. Repeat the same command. Expect **Pi service is up to date**, no upload, and no new release. For confirmation, run `ssh eric@rpi 'readlink ~/.local/share/lerobot-remote-ik/current'` before and after; the path should match. Press **Esc**.
+3. Add a temporary `# automatic deployment check` comment to `scripts/remote_ik_motor_service.py`, save, then run the same simulation command. Expect one installation and a new fingerprint/release path. Press **Esc**, remove the comment, save, and launch again to restore the original payload. Expect one installation; stop with **Esc**.
+4. Leave simulation running. In a second PowerShell window in the same checkout/venv run `python.exe -m scripts.install_remote_ik_pi`. Expect refusal naming `lerobot-remote-ik-sim.service`; the existing simulation should continue responding. Press **Esc** in its launcher to stop. Report deployment messages, fingerprints/release paths, errors, and whether simulation remained uninterrupted. Remove the temporary comment even if a check fails.
+
+**OFFLINE VERIFIED (2026-11-10):** Windows mocked deployment/startup tests and Linux/WSL fake-systemd transactions cover content fingerprints, fresh/legacy installations, active-service refusal, upload/validation failure, activation rollback, concurrent lifecycle operations, and bounded locks. **PI SIMULATION / HARDWARE:** this update workflow has not yet been verified on the Pi or physical arm; the owner simulation check above remains pending.
+
 ## Real arm setup and testing
 
 On Windows, `--real-arm` starts and connects to the Pi service for the physical arm. With `--allow-motion` in the Pi configuration, the dashboard shows **Real arm enabled**. Without that setting it shows **Observe only**. A normal exit with **Esc** or **Ctrl+C** stops the Pi service started by that launcher. If Windows or the network drops out, the Pi watchdog handles the pause. Closing the dashboard tab leaves the launcher running.
 
-Edit `remote_ik.hardware.conf` in the Windows checkout to change settings such as `--arm-rate`. This project config can be tracked in Git. If the file is missing, the first real-arm launch imports the existing settings from the Pi. Subsequent launches use the local file as the source of truth. Press **Esc**, edit the file, then launch again. The launcher copies changed settings to `~/.config/lerobot-remote-ik/hardware.env` on the Pi before starting the service. Run the installer to deploy service code when needed.
+Edit `remote_ik.hardware.conf` in the Windows checkout to change settings such as `--arm-rate`. This project config can be tracked in Git. If the file is missing, the first real-arm launch imports the existing settings from the Pi. Subsequent launches use the local file as the source of truth. Press **Esc**, edit the file, then launch again. The launcher copies changed settings to `~/.config/lerobot-remote-ik/hardware.env` on the Pi before starting the service. Service code is checked and updated automatically at launch.
 
 ```powershell
 notepad .\remote_ik.hardware.conf
 python.exe -m scripts.main_teleop_remote_ik --real-arm --speed 0.5
 ```
 
-Add `--relax-on-exit` to release all motor torque, including the gripper, when the Pi service stops normally. This requires `--allow-motion` in the Pi settings and the updated Pi service installed with `python.exe -m scripts.install_remote_ik_pi`. Support the arm before exiting because it can drop when the motors release. By default, exit preserves the existing torque state: a holding arm keeps holding and a Released arm stays Released. The in-session release gesture also releases all six channels, including the gripper.
+Add `--relax-on-exit` to release all motor torque, including the gripper, when the Pi service stops normally. This requires `--allow-motion` in the Pi settings; the launcher updates service code automatically. Support the arm before exiting because it can drop when the motors release. By default, exit preserves the existing torque state: a holding arm keeps holding and a Released arm stays Released. The in-session release gesture also releases all six channels, including the gripper.
 
 ```powershell
 python.exe -m scripts.main_teleop_remote_ik --real-arm --relax-on-exit --speed 0.25
@@ -84,7 +110,6 @@ python.exe -m scripts.main_teleop_remote_ik --real-arm --relax-on-exit --speed 0
 1. From the Windows checkout with `.venv` active, deploy the current service and run the simulator with the Windows gamepad.
 
    ```powershell
-   python.exe -m scripts.install_remote_ik_pi
    python.exe -m scripts.main_teleop_remote_ik --pi-sim
    ```
 
@@ -129,8 +154,9 @@ If the service journal shows `OSError: [Errno 98] Address already in use` at
 owner from Windows with `ssh eric@rpi 'ss -ltnp sport = :8766'`; do not terminate
 an unidentified owner. The Pi listener now permits immediate Linux restart after
 a closed connection enters TIME_WAIT, while still rejecting a second live
-listener. Windows uses exclusive binding. Reinstall the stopped service with
-`python.exe -m scripts.install_remote_ik_pi`, then run the normal launcher.
+listener. Windows uses exclusive binding. Close the launcher and relaunch; changed
+service code deploys automatically. Use `python.exe -m scripts.install_remote_ik_pi`
+with both services stopped if an explicit repair is needed.
 The restart/exclusivity fix passed targeted offline checks (99 WSL tests and
 56 Windows tests, three Windows platform/dependency skips); no physical service
 restart or motor test was performed during this fix.

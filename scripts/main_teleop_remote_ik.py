@@ -25,13 +25,12 @@ from robot_program.remote_ik_protocol import (
 )
 from scripts.lerobot_web_dashboard import WebDashboard
 from scripts.remote_ik_motor_service import MotorSession, SimulatedBus, serve
+from scripts.remote_ik_deploy import (
+    PI_SIM_PORT, PI_UNIT, ROOT, SSH, ensure_installed, locked_command, release_guard,
+)
 
 
-ROOT = Path(__file__).resolve().parents[1]
 HARDWARE_CONFIG = ROOT / "remote_ik.hardware.conf"
-PI_UNIT = "lerobot-remote-ik"
-PI_SIM_PORT = PI_PORT + 1
-SSH = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5"]
 DEFAULT_WSL_PYTHON = ".local/share/lerobot-phase0/venv/bin/python"
 GAMEPAD_POLL_S = 1 / 250
 TRACE_MAX_TICKS = 3000
@@ -213,10 +212,11 @@ class MotorLink:
 
 
 class PiTunnel:
-    def __init__(self, host, simulated, *, relax_on_exit=False):
+    def __init__(self, host, simulated, *, relax_on_exit=False, fingerprint=None):
         self.host = host
         self.simulated = simulated
         self.relax_on_exit = relax_on_exit
+        self.fingerprint = fingerprint
         self.unit = PI_UNIT + ("-sim.service" if simulated else ".service")
         self.mode = "sim" if simulated else "live"
         self.hardware_config = None
@@ -246,7 +246,7 @@ class PiTunnel:
                     f'invocation=$(systemctl --user show -p InvocationID --value {self.unit}); '
                     f'if test "$invocation" = "{self.invocation}"; then systemctl --user stop {self.unit}; '
                     f'test "$(systemctl --user show -p Result --value {self.unit})" = success; fi',
-                    timeout=10,
+                    timeout=20,
                 )
                 if stopped.returncode:
                     raise RuntimeError(stopped.stderr.strip() or "The Pi reported a shutdown error.")
@@ -257,9 +257,8 @@ class PiTunnel:
     def service_command(self, command, *, timeout, config=None):
         # Serialize startup and shutdown with other Windows launchers. Keep the
         # lock off the motor loop and release it before opening the SSH tunnel.
-        remote = (f'set -e; umask 077; config_dir="$HOME/.config/lerobot-remote-ik"; '
-                  f'exec 9>"$config_dir/{self.mode}.lock"; flock -x 9; {command}')
-        return subprocess.run([*SSH, self.host, remote], input=config, capture_output=True,
+        remote = locked_command(command, mode=self.mode)
+        return subprocess.run([*SSH, self.host, "sh -c " + shlex.quote(remote)], input=config, capture_output=True,
                               encoding="utf-8", timeout=timeout)
 
     def load_hardware_config(self):
@@ -272,7 +271,7 @@ class PiTunnel:
                 'if test -s "$config" && test "$(stat -c %a "$config")" = 600; then cat "$config"; '
                 "else echo 'Create remote_ik.hardware.conf in the Windows checkout. "
                 "See readme_files/REMOTE_IK_SETUP.md.' >&2; exit 1; fi",
-                timeout=10,
+                timeout=15,
             )
             if result.returncode:
                 error = OSError if result.returncode == 255 else RuntimeError
@@ -315,14 +314,15 @@ class PiTunnel:
                   "{ echo 'Real arm service is already running on the Pi. Close its launcher or stop the "
                   "service with the arm supported before starting a new session.' >&2; exit 1; }; "
                   if not self.simulated else "")
-        command = (f"if systemctl --user is-active --quiet {self.unit}; then "
+        guard = release_guard(self.fingerprint) if self.fingerprint is not None else ""
+        command = (guard + f"if systemctl --user is-active --quiet {self.unit}; then "
                    f'invocation=$(systemctl --user show -p InvocationID --value {self.unit}); {active}'
                    f'if test "$invocation" != "{self.invocation}"; then invocation=; fi; '
                    f"else {sync}systemctl --user start {self.unit}; "
                    f"systemctl --user is-active --quiet {self.unit}; "
                    f"invocation=$(systemctl --user show -p InvocationID --value {self.unit}); fi; "
                    f'printf "%s\\n" "$invocation"; cat "$config_dir/{self.mode}.token"')
-        result = self.service_command(command, timeout=27, config=self.hardware_config)
+        result = self.service_command(command, timeout=40, config=self.hardware_config)
         invocation, _, token = result.stdout.partition("\n")
         if re.fullmatch(r"[a-f0-9]{32}", invocation):
             self.invocation = invocation
@@ -424,7 +424,9 @@ def main():
                 def connect(metadata):
                     return MotorLink(listener.getsockname()[1], token, metadata, True)
             else:
-                tunnel = stack.enter_context(PiTunnel(args.pi, args.pi_sim, relax_on_exit=args.relax_on_exit))
+                fingerprint = ensure_installed(args.pi)
+                tunnel = stack.enter_context(PiTunnel(args.pi, args.pi_sim, relax_on_exit=args.relax_on_exit,
+                                                      fingerprint=fingerprint))
                 connect = tunnel.connect
 
             mode = "Local simulation" if args.dry_run else "Pi simulation" if args.pi_sim else "Real arm"

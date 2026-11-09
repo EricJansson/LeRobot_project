@@ -10,9 +10,10 @@ The Windows launcher reads an XInput gamepad, opens a local dashboard, and uses 
 
 ```powershell
 python.exe -m scripts.main_teleop_remote_ik --dry-run
-python.exe -m scripts.install_remote_ik_pi
 python.exe -m scripts.main_teleop_remote_ik --pi-sim
 ```
+
+Pi-backed launches automatically check and install changed service code before starting teleop. Unchanged deployments print **Pi service is up to date**. Updates require both Pi services to be stopped; running sessions are never updated. Keep `python.exe -m scripts.install_remote_ik_pi` for an explicit reinstall/repair. See [automatic updates and simulation test steps](readme_files/REMOTE_IK_SETUP.md#automatic-pi-service-updates).
 
 The PC and Pi simulations are **OFFLINE VERIFIED**. Live control requires commissioning and owner-approved hardware tests. See the [remote IK setup and verification guide](readme_files/REMOTE_IK_SETUP.md).
 
