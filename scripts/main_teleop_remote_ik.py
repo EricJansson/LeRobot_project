@@ -4,9 +4,7 @@ import argparse
 from collections import deque
 from contextlib import ExitStack, suppress
 import ctypes
-from dataclasses import dataclass
 import json
-from math import isclose
 from pathlib import Path
 from queue import Empty, Queue
 import re
@@ -19,7 +17,8 @@ from threading import Event, Lock, Thread
 from time import perf_counter as monotonic, sleep
 
 from controller.input.xinput import XInputGamepad
-from robot_program.remote_ik_correction import CorrectionProfile, StationaryCorrection
+from robot_program.remote_ik_correction import CorrectionProfile
+from robot_program import remote_ik_control
 from robot_program.remote_ik_protocol import (
     CHANNELS, MAX_FRAME, OFFLINE_WATCHDOG, PI_PORT, PROTOCOL_VERSION, RATE_HZ,
     decode_frame, encode_frame, finite_vector,
@@ -34,7 +33,6 @@ PI_UNIT = "lerobot-remote-ik"
 PI_SIM_PORT = PI_PORT + 1
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5"]
 DEFAULT_WSL_PYTHON = ".local/share/lerobot-phase0/venv/bin/python"
-ARM_START_RAMP_S = 0.3
 GAMEPAD_POLL_S = 1 / 250
 TRACE_MAX_TICKS = 3000
 VK_ESCAPE = 0x1B
@@ -120,13 +118,13 @@ class Worker:
             raise reply
         return reply
 
-    def solve(self, measured, delta, *, sent=None, desired_xyz_m=None):
+    def solve(self, measured, delta, *, sent, desired_xyz_m, joint_step_limits, correction, recovery_step_m):
         try:
             self.process.stdin.write(encode_frame({
                 "measured": measured, "delta": delta, "sent": sent, "desired_xyz_m": desired_xyz_m,
-                "joint_step_limits": getattr(self, "joint_step_limits", None),
-                "recovery_step_m": getattr(self, "recovery_step_m", .001),
-                "correction": getattr(self, "correction", False),
+                "joint_step_limits": joint_step_limits,
+                "recovery_step_m": recovery_step_m,
+                "correction": correction,
             }))
             self.process.stdin.flush()
         except OSError as exc:
@@ -333,252 +331,6 @@ class PiTunnel:
         return MotorLink(self.local_port, self.token, metadata, self.simulated, relax_on_exit=self.relax_on_exit)
 
 
-@dataclass(frozen=True)
-class GamepadSample:
-    sampled_at: float
-    gamepad: dict | None
-    start: int = 0
-    stop: int = 0
-    release: int = 0
-    disconnect: int = 0
-    arm_idle: int = 0
-
-    @property
-    def lb(self):
-        return bool(self.gamepad and self.gamepad["buttons"]["LB"])
-
-    @property
-    def neutral(self):
-        return self.gamepad is not None and not any(self.gamepad["axes"].values()) and self.gamepad["dpad"] == (0, 0)
-
-
-def motion_delta(gamepad, scale=1.):
-    axes = gamepad["axes"]
-    return [scale * value for value in (-.002 * axes["LY"], -.002 * axes["LX"], -.002 * axes["RY"],
-                                        .4 * (axes["RT"] - axes["LT"]), .75 * axes["RX"],
-                                        gamepad["dpad"][1])]
-
-
-class LatestInput:
-    def __init__(self):
-        self.sample = GamepadSample(monotonic(), None)
-
-    def publish(self, gamepad):
-        previous = self.sample
-        before = previous.gamepad["buttons"] if previous.gamepad else {}
-        after = gamepad["buttons"] if gamepad else {}
-        start = (bool(before) and not before["Start"] and after.get("Start", False)
-                 and not after["LB"] and not after["Back"]
-                 and not any(gamepad["axes"].values()) and gamepad["dpad"] == (0, 0))
-        # Retain a neutral edge even if another tap arrives before the next IK tick.
-        arm_centered = (previous.gamepad is not None and gamepad is not None
-                        and any(motion_delta(previous.gamepad)[:5])
-                        and not any(motion_delta(gamepad)[:5]))
-        self.sample = GamepadSample(
-            monotonic(), gamepad,
-            previous.start + start,
-            previous.stop + (not before.get("Back", False) and after.get("Back", False)),
-            previous.release + (previous.lb and not after.get("LB", False)),
-            previous.disconnect + (previous.gamepad is not None and gamepad is None),
-            previous.arm_idle + arm_centered,
-        )
-
-
-class ControlLoop:
-    def __init__(self, worker, connect, latest_input, stop, speed, mode, *, trace=None, correction_profile=None):
-        self.worker, self.connect, self.latest_input, self.stop = worker, connect, latest_input, stop
-        self.speed, self.mode = speed, mode
-        self.trace = trace
-        self.correction_profile = correction_profile
-        self.status = {"connection": "Connecting", "state": "Disarmed", "reason": "", "mode": mode}
-        self.error = None
-
-    def run(self):
-        while not self.stop.is_set():
-            try:
-                with self.connect(self.worker.metadata) as link:
-                    try:
-                        self.session(link)
-                    finally:
-                        with suppress(OSError, ValueError):
-                            link.request("disarm")
-            except (OSError, ValueError, subprocess.SubprocessError) as exc:
-                self.status = {"connection": "Disconnected", "state": "Disarmed", "reason": str(exc),
-                               "mode": self.mode}
-                self.stop.wait(0.25)
-            except Exception as exc:
-                self.error = exc
-                self.stop.set()
-
-    def session(self, link):
-        seen = self.latest_input.sample
-        feedback = link.feedback
-        mode = self.mode
-        if not feedback.get("simulated", True):
-            mode = "Real arm enabled" if feedback["motion_enabled"] else "Observe only"
-        period = 1 / feedback["hz"]
-        freshness = min(.1, feedback["watchdog_s"] / 2)
-        connected_at = last_feedback = monotonic()
-        previous_tick = connected_at
-        feedback_count = 0
-        max_gap_ms = 0.
-        desired_xyz_m = None
-        arm_started = None
-        correction = StationaryCorrection(self.correction_profile) if self.correction_profile else None
-        was_correcting = False
-        self.worker.correction = False
-        self.worker.joint_step_limits = ([rate * period for rate in feedback["rates"]]
-                                         if finite_vector(feedback.get("rates"), 6) else None)
-        while not self.stop.is_set():
-            started = monotonic()
-            # Use the command cadence, with at most two Pi cycles of input per
-            # step so a slow round trip cannot turn into a large catch-up move.
-            elapsed = min(2 * period, max(period, started - previous_tick))
-            previous_tick = started
-            sample = self.latest_input.sample
-            arm_interrupted = sample.arm_idle != seen.arm_idle
-            measured = feedback.get("measured")
-            fresh = sample.gamepad is not None and started - sample.sampled_at < freshness
-            delta = [0.] * 6
-            sent = None
-            op = "poll"
-            ramp_scale = None
-            reset_reason = None
-            desired_before = desired_xyz_m
-            issued_before = feedback["sent"]
-            if (not fresh or sample.disconnect != seen.disconnect or sample.stop != seen.stop
-                    or sample.gamepad["buttons"]["Back"]):
-                op = "disarm" if feedback["armed"] else "poll"
-            elif feedback["armed"] and (not sample.lb or sample.release != seen.release
-                    or (arm_started is not None and arm_interrupted)):
-                op = "hold" if feedback["moving"] else "poll"
-            elif feedback["armed"] and sample.lb:
-                if finite_vector(feedback["sent"], 6):
-                    sent = feedback["sent"]
-                delta = motion_delta(sample.gamepad, self.speed * RATE_HZ * (elapsed if sent is not None else period))
-                op = "hold" if feedback["moving"] else "poll"
-            elif sample.start != seen.start and sample.neutral and not sample.lb:
-                op = "arm"
-            if arm_interrupted:
-                arm_started = None
-            seen = sample
-
-            result = {}
-            correcting = False
-            self.worker.correction = False
-            self.worker.recovery_step_m = .001
-            arm_input = any(delta[:5])
-            if arm_input:
-                progress = 0. if arm_started is None else min(1., (started - arm_started) / ARM_START_RAMP_S)
-                ramp_scale = .1 + .9 * progress * progress * (3. - 2. * progress)
-                delta[:5] = [value * ramp_scale for value in delta[:5]]
-            if was_correcting and fresh and sample.lb and not any(delta) and op != "disarm":
-                op = "poll"
-            if finite_vector(measured, 6) and (op in ("poll", "arm") or any(delta)):
-                result = self.worker.solve(measured, delta, sent=sent if any(delta) else None,
-                                           desired_xyz_m=desired_xyz_m)
-            if correction is not None:
-                eligible = (op == "poll" and feedback["armed"] and fresh and sample.lb
-                            and not any(delta) and desired_xyz_m is not None and result.get("xyz_m") is not None)
-                if not eligible:
-                    # Ordinary LB release pauses correction; only operator motion or
-                    # a session reset grants a fresh bounded correction episode.
-                    if arm_input or not feedback["armed"]:
-                        correction.reset()
-                    else:
-                        correction.since = None
-                elif correction.ready(started, result["xyz_m"], desired_xyz_m):
-                    self.worker.correction = correcting = True
-                    self.worker.recovery_step_m = min(.001, correction.profile.speed_m_s * period,
-                                                     correction.profile.travel_m - correction.travel)
-                    result = self.worker.solve(measured, delta, sent=feedback["sent"], desired_xyz_m=desired_xyz_m)
-            if was_correcting and not correcting and feedback["moving"] and not any(delta) and op != "disarm":
-                op = "hold"
-            # Recheck input after IK. A release and re-press while solving also
-            # invalidates this candidate, even when LB is held again now.
-            current = self.latest_input.sample
-            current_delta = motion_delta(current.gamepad) if current.gamepad is not None else [0.] * 6
-            if (self.stop.is_set() or current.gamepad is None or current.stop != sample.stop
-                    or current.disconnect != sample.disconnect
-                    or monotonic() - current.sampled_at >= freshness):
-                op = "disarm"
-            elif (result.get("target") is not None and current.lb and current.release == sample.release
-                  and monotonic() - sample.sampled_at < freshness
-                  and (not arm_input or current.arm_idle == sample.arm_idle)
-                  and ((not any(current_delta) and current.arm_idle == sample.arm_idle) if correcting
-                       else (any(current_delta[:5]) if arm_input else current_delta[5]))):
-                op = "move"
-            elif op == "arm" and (current.lb or not current.neutral or current.gamepad["buttons"]["Back"]):
-                op = "poll"
-
-            values = {"target": result["target"]} if op == "move" else {}
-            ik_reason = result.get("reason")
-            solve_finished = monotonic()
-            feedback = link.request(op, **values)
-            if correcting and op == "move" and result.get("candidate_xyz_m") is not None:
-                # Count actual issued movement only when Pi confirms the exact arm target.
-                if finite_vector(feedback.get("sent"), 6) and all(isclose(a, b, abs_tol=1e-8)
-                        for a, b in zip(feedback["sent"][:5], result["target"][:5])):
-                    correction.issued(result.get("issued_xyz_m", result["xyz_m"]), result["candidate_xyz_m"])
-            issuance_diverged = (op == "move" and finite_vector(feedback.get("sent"), 6)
-                                 and not all(isclose(a, b, rel_tol=0., abs_tol=1e-8)
-                                 for a, b in zip(feedback["sent"][:5], result["target"][:5])))
-            was_correcting = correcting and op == "move" and feedback["moving"]
-            if arm_input and op == "move" and feedback["moving"] and feedback["armed"] and not feedback["fault"]:
-                if arm_started is None:
-                    arm_started = started
-            else:
-                arm_started = None
-            if not feedback["armed"] or feedback["fault"] or op == "disarm":
-                if desired_xyz_m is not None:
-                    reset_reason = "disarmed or fault"
-                desired_xyz_m = None
-            else:
-                if desired_xyz_m is None:
-                    desired_xyz_m = result.get("baseline_xyz_m")
-                    if desired_xyz_m is not None:
-                        reset_reason = "fresh arm reference"
-                issued = feedback["sent"]
-                # The Pi can shorten a move. Only advance XYZ for a fully issued arm target.
-                if (op == "move" and feedback["moving"] and finite_vector(issued, 6)
-                        and all(isclose(actual, goal, rel_tol=0., abs_tol=1e-8)
-                                for actual, goal in zip(issued[:5], result["target"][:5]))):
-                    if arm_input:
-                        desired_xyz_m = result.get("accepted_xyz_m", result["requested_xyz_m"])
-            received = monotonic()
-            if self.trace is not None:
-                self.trace.append({
-                    "tick_s": started, "ack_s": received, "ack": feedback.get("ack"), "op": op,
-                    "input": sample.gamepad, "arm_idle": sample.arm_idle, "arm_scale": ramp_scale, "delta": delta,
-                    "desired_before_m": desired_before, "desired_xyz_m": desired_xyz_m, "xyz_reset": reset_reason,
-                    "requested_xyz_m": result.get("requested_xyz_m"), "ik_reason": ik_reason,
-                    "candidate": result.get("target"), "issued_before": issued_before, "issued": feedback["sent"],
-                    "candidate_xyz_m": result.get("candidate_xyz_m"),
-                    "progress_fraction": result.get("progress_fraction"), "recovering": result.get("recovering"),
-                    "session": feedback.get("session"), "feedback_seq": feedback.get("feedback_seq"),
-                    "solve_finished_s": solve_finished, "issuance_diverged": issuance_diverged,
-                    "rate_limited": feedback.get("rate_limited"), "sampled_before_command": True,
-                    "correction": correcting, "correction_exhausted": correction.exhausted if correction else False,
-                    "input_edges": {"neutral": sample.arm_idle, "release": sample.release},
-                    "measured": feedback["measured"], "pi_reason": feedback["reason"],
-                })
-            feedback_count += 1
-            max_gap_ms = max(max_gap_ms, (received - last_feedback) * 1000)
-            last_feedback = received
-            reason = ("Pi shortened the validated Cartesian target" if issuance_diverged
-                      else feedback["reason"] or result.get("reason", ""))
-            if not fresh and not reason:
-                reason = "Connect a gamepad" if sample.gamepad is None else "Gamepad sample expired"
-            state = ("Fault" if feedback["fault"] else "Moving" if feedback["moving"]
-                     else "Armed" if feedback["armed"] else "Disarmed")
-            self.status = {"connection": "Connected", "mode": mode, "state": state,
-                           "reason": reason, "measured": measured, "sent": feedback["sent"],
-                           "xyz_m": result.get("xyz_m"), "desired_xyz_m": desired_xyz_m,
-                           "requested_xyz_m": result.get("requested_xyz_m"),
-                           "candidate": result.get("target"),
-                           "read_max_ms": feedback.get("read_max_ms"), "write_max_ms": feedback.get("write_max_ms"),
-                           "feedback_hz": feedback_count / max(received - connected_at, 1e-6),
-                           "feedback_max_gap_ms": max_gap_ms}
 
 
 def main():
@@ -587,7 +339,6 @@ def main():
     modes.add_argument("--dry-run", action="store_true", help="Use a local simulated arm with real WSL2 IK")
     modes.add_argument("--pi-sim", action="store_true", help="Use the Pi’s simulated bus over SSH")
     modes.add_argument("--real-arm", action="store_true", help="Connect to the real robot arm on the Pi")
-    modes.add_argument("--commission-ik", dest="real_arm", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--relax-on-exit", action="store_true", help="Release motor torque when the real arm service stops")
     parser.add_argument("--pi", default="eric@rpi", help="SSH destination")
     parser.add_argument("--index", type=int, choices=range(4), default=0, metavar="SLOT", help="XInput slot (0–3)")
@@ -595,8 +346,6 @@ def main():
     parser.add_argument("--wsl-python", default=DEFAULT_WSL_PYTHON, help="Linux path, absolute or relative to WSL home")
     parser.add_argument("--dashboard-port", type=int, default=18743,
                         help="Dashboard port (default %(default)s; 0 selects a random port)")
-    parser.add_argument("--no-browser", action="store_true",
-                        help="Compatibility flag; the dashboard is always opened manually")
     parser.add_argument("--trace", type=Path, metavar="PATH",
                         help="Save the last 3000 control ticks after stopping, overwriting PATH if it exists")
     parser.add_argument("--speed", type=float, default=1.0, help="Gamepad motion scale (default %(default)g)")
@@ -620,8 +369,10 @@ def main():
     stop = Event()
     trace = deque(maxlen=TRACE_MAX_TICKS) if args.trace is not None else None
     trace_model = None
-    revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
-    dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True).stdout)
+    revision, dirty = None, None
+    if trace is not None:
+        revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+        dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True).stdout)
     try:
         gamepad = XInputGamepad(args.index)
         get_key_state = load_key_state()
@@ -658,8 +409,8 @@ def main():
             print("Start arms with neutral controls. Hold LB to move. Back disarms. Esc stops and exits.", flush=True)
             if args.relax_on_exit:
                 print("Support the arm before exiting. The motors will release their hold.", flush=True)
-            latest = LatestInput()
-            control = ControlLoop(worker, connect, latest, stop, args.speed, mode, trace=trace, correction_profile=correction_profile)
+            latest = remote_ik_control.LatestInput()
+            control = remote_ik_control.ControlLoop(worker, connect, latest, stop, args.speed, mode, trace=trace, correction_profile=correction_profile)
             thread = Thread(target=control.run, daemon=True)
             thread.start()
             try:

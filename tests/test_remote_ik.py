@@ -26,7 +26,9 @@ from robot_program.remote_ik_protocol import (
 )
 from scripts import main_teleop_remote_ik as remote_teleop
 from scripts.install_remote_ik_pi import bundle
-from scripts.main_teleop_remote_ik import ControlLoop, LatestInput, MotorLink, PiTunnel
+from scripts.main_teleop_remote_ik import MotorLink, PiTunnel
+from robot_program import remote_ik_control
+from robot_program.remote_ik_control import ControlLoop, LatestInput
 from scripts.remote_ik_motor_service import MotorSession, PiMotorBus, ProtocolError, serve
 from scripts.remote_ik_worker import solve_intent
 
@@ -57,7 +59,7 @@ def test_launcher_trace_overwrite(monkeypatch, tmp_path, capsys, existing, recor
                 trace.append({"tick_s": 1})
         return SimpleNamespace(run=run, error=None)
 
-    monkeypatch.setattr(remote_teleop, "ControlLoop", control)
+    monkeypatch.setattr(remote_ik_control, "ControlLoop", control)
     remote_teleop.main()
     if record_tick:
         assert {k: v for k, v in json.loads(trace_path.read_text(encoding="utf-8")).items() if k != "provenance"} == {
@@ -70,7 +72,7 @@ def test_launcher_trace_overwrite(monkeypatch, tmp_path, capsys, existing, recor
 
 
 @pytest.mark.parametrize("options, expected_port", [
-    ([], 18743), (["--no-browser"], 18743),
+    ([], 18743),
     (["--dashboard-port", "18744"], 18744), (["--dashboard-port", "0"], 0),
 ])
 def test_launcher_dashboard_port_and_manual_browser(monkeypatch, capsys, options, expected_port):
@@ -89,9 +91,10 @@ def test_launcher_dashboard_port_and_manual_browser(monkeypatch, capsys, options
     monkeypatch.setattr(remote_teleop, "load_key_state", lambda: lambda key: -1)
     monkeypatch.setattr(remote_teleop, "Worker", lambda *args: nullcontext(
         SimpleNamespace(metadata={"model": "fixture", "limits": LIMITS})))
-    monkeypatch.setattr(remote_teleop, "ControlLoop", lambda *args, **kwargs:
+    monkeypatch.setattr(remote_ik_control, "ControlLoop", lambda *args, **kwargs:
                         SimpleNamespace(run=lambda: None, error=None))
     monkeypatch.setattr(webbrowser, "open", lambda *args, **kwargs: pytest.fail("Browser opened automatically"))
+    monkeypatch.setattr(remote_teleop.subprocess, "run", lambda *args, **kwargs: pytest.fail("Git called without tracing"))
     monkeypatch.setattr(sys, "argv", ["remote-ik", "--dry-run", *options])
     remote_teleop.main()
     assert ports == [expected_port]
@@ -346,7 +349,7 @@ def test_control_loop_drops_stale_intent_and_reports_pi_mode(scenario, expected,
                 "armed": armed, "moving": moving, "measured": [0.] * 6, "hz": 50,
                 "watchdog_s": .15, "sent": [2.] * 6 if armed else None, "reason": "", "fault": False}
 
-    def solve(measured, delta, *, sent, desired_xyz_m):
+    def solve(measured, delta, *, sent, desired_xyz_m, joint_step_limits, correction, recovery_step_m):
         assert desired_xyz_m is None
         if moving:
             assert any(delta)
@@ -359,11 +362,11 @@ def test_control_loop_drops_stale_intent_and_reports_pi_mode(scenario, expected,
                 latest.publish(None if scenario == "disconnect during IK"
                                else gamepad_input(lb=scenario == "brief neutral during IK"))
                 latest.publish(gamepad_input(lx=.5, lb=True))
-            return {"target": [1.] * 6}
+            return {"target": [1.] * 6, "accepted_xyz_m": [0.] * 3}
         assert sent == ([2.] * 6 if armed else None)
         if armed:
             assert any(delta)
-            return {"target": [1.] * 6}
+            return {"target": [1.] * 6, "accepted_xyz_m": [0.] * 3}
         assert not any(delta)
         return {}
 
@@ -380,8 +383,7 @@ def test_control_loop_drops_stale_intent_and_reports_pi_mode(scenario, expected,
 
 def test_arm_start_ramp_restarts_and_traces_issued_steps(monkeypatch):
     now = [0.]
-    monkeypatch.setattr(remote_teleop, "monotonic", lambda: now[0])
-    latest, stop, trace = LatestInput(), Event(), []
+    latest, stop, trace = LatestInput(clock=lambda: now[0]), Event(), []
     measured = [0.] * 6
     feedback = {"armed": True, "moving": False, "measured": measured, "sent": measured,
                 "hz": 50, "watchdog_s": .2, "fault": False, "reason": ""}
@@ -415,7 +417,7 @@ def test_arm_start_ramp_restarts_and_traces_issued_steps(monkeypatch):
         sample["dpad"] = (0, int(jaw))
         latest.publish(sample)
 
-    def solve(measured, delta, *, sent, desired_xyz_m):
+    def solve(measured, delta, *, sent, desired_xyz_m, joint_step_limits, correction, recovery_step_m):
         if index == 8:
             return {"reason": "joint limit exceeded"}
         if not any(delta):
@@ -428,7 +430,7 @@ def test_arm_start_ramp_restarts_and_traces_issued_steps(monkeypatch):
         baseline = desired_xyz_m if desired_xyz_m is not None else [0.] * 3
         target = [prior + step * 1000 for prior, step in zip(feedback["sent"], delta)]
         return {"baseline_xyz_m": baseline, "requested_xyz_m": np.add(baseline, delta[:3]).tolist(),
-                "target": target}
+                "target": target, "accepted_xyz_m": np.add(baseline, delta[:3]).tolist()}
 
     def request(op, **values):
         nonlocal index
@@ -445,7 +447,7 @@ def test_arm_start_ramp_restarts_and_traces_issued_steps(monkeypatch):
         return feedback
 
     publish()
-    control = ControlLoop(SimpleNamespace(solve=solve), None, latest, stop, 1., "Sim", trace=trace)
+    control = ControlLoop(SimpleNamespace(solve=solve), None, latest, stop, 1., "Sim", trace=trace, clock=lambda: now[0])
     control.session(SimpleNamespace(feedback=feedback, request=request))
     for tick, (_, _, _, scale, op) in zip(trace, steps, strict=True):
         assert tick["op"] == op
@@ -491,7 +493,7 @@ def test_worker_uses_cartesian_reference_independently_of_joint_seed(delta, desi
         np.testing.assert_allclose(target[:3, 3], requested)
         if any(delta[3:5]):
             assert not np.allclose(target[:3, :3], np.eye(3))
-        return SimpleNamespace(accepted=True, joints_deg=seed)
+        return SimpleNamespace(accepted=True, joints_deg=seed, pose=forward(seed))
 
     solver = SimpleNamespace(kinematics=SimpleNamespace(forward_kinematics=forward), solve_pose=solve_pose)
     result = solve_intent(solver, measured, delta, LIMITS[5], sent=issued, desired_xyz_m=desired)
@@ -505,8 +507,7 @@ def test_worker_uses_cartesian_reference_independently_of_joint_seed(delta, desi
 
 def test_control_loop_preserves_xyz_through_rejection_slew_neutral_and_lb_release(monkeypatch):
     now = [0.]
-    monkeypatch.setattr(remote_teleop, "monotonic", lambda: now[0])
-    latest = LatestInput()
+    latest = LatestInput(clock=lambda: now[0])
     stop = Event()
     measured = [.1, .2, .3, 0., 0., 10.]
     target = [1., 2., 3., 0., 0., 10.]
@@ -539,7 +540,7 @@ def test_control_loop_preserves_xyz_through_rejection_slew_neutral_and_lb_releas
         gamepad["axes"]["LY"] = np.float64(-x)
         latest.publish(gamepad)
 
-    def solve(measured, delta, *, sent, desired_xyz_m):
+    def solve(measured, delta, *, sent, desired_xyz_m, joint_step_limits, correction, recovery_step_m):
         at, x, _, expected_desired, outcome, _ = steps[index]
         assert desired_xyz_m == expected_desired
         if outcome is None:
@@ -552,6 +553,7 @@ def test_control_loop_preserves_xyz_through_rejection_slew_neutral_and_lb_releas
             assert baseline == retracted and sent is not None
         return {"xyz_m": measured[:3], "baseline_xyz_m": baseline,
                 "requested_xyz_m": advanced if x > 0 else retracted,
+                "accepted_xyz_m": advanced if x > 0 else retracted,
                 "target": None if outcome == "reject" else target,
                 "reason": "position tolerance not reached" if outcome == "reject" else ""}
 
@@ -577,7 +579,7 @@ def test_control_loop_preserves_xyz_through_rejection_slew_neutral_and_lb_releas
         return feedback
 
     publish()
-    control = ControlLoop(SimpleNamespace(solve=solve), None, latest, stop, .25, "Sim")
+    control = ControlLoop(SimpleNamespace(solve=solve), None, latest, stop, .25, "Sim", clock=lambda: now[0])
     control.session(SimpleNamespace(feedback=feedback, request=request))
     assert statuses[1:] == [
         advanced, advanced, advanced, advanced, advanced, retracted, retracted, retracted, retracted, retracted,
@@ -828,3 +830,34 @@ def test_pi_serial_exclusivity_on_pseudo_terminal():
             other.kill()
             other.wait()
         os.close(master)
+
+
+@pytest.mark.parametrize("flag", ["--no-browser", "--commission-ik"])
+def test_removed_launcher_flags_are_rejected(monkeypatch, capsys, flag):
+    monkeypatch.setattr(sys, "argv", ["remote-ik", "--dry-run", flag])
+    with pytest.raises(SystemExit) as exc:
+        remote_teleop.main()
+    assert exc.value.code == 2
+    assert "unrecognized arguments: " + flag in capsys.readouterr().err
+
+
+def test_mode_remains_explicit(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["remote-ik"])
+    with pytest.raises(SystemExit) as exc:
+        remote_teleop.main()
+    assert exc.value.code == 2
+    assert "Choose --dry-run, --pi-sim, or --real-arm" in capsys.readouterr().err
+
+
+def test_worker_request_parameters_are_explicit_per_call():
+    worker = remote_teleop.Worker("Ubuntu", "python")
+    stream = BytesIO()
+    worker.process = SimpleNamespace(stdin=stream)
+    worker.receive = lambda timeout: {}
+    for correction, step in [(True, .00002), (False, .001)]:
+        worker.solve([0.]*6, [0.]*6, sent=None, desired_xyz_m=None,
+                     joint_step_limits=[1.]*6, correction=correction, recovery_step_m=step)
+    frames = [json.loads(line) for line in stream.getvalue().splitlines()]
+    assert [frame["correction"] for frame in frames] == [True, False]
+    assert [frame["recovery_step_m"] for frame in frames] == [.00002, .001]
+    assert not hasattr(worker, "correction")

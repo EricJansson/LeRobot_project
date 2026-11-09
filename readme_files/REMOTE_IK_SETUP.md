@@ -24,7 +24,7 @@ Open http://127.0.0.1:18743/ manually and keep the tab open: it shows the stop
 reason after shutdown and reconnects automatically when the launcher restarts.
 Use `--dashboard-port 18744` to choose another fixed port, or `--dashboard-port 0`
 for a random available port. A busy port causes a startup error instead of an
-automatic port change. `--no-browser` remains accepted for compatibility.
+automatic port change. Browser opening is always manual; the obsolete `--no-browser` and `--commission-ik` flags have been removed. Use `--real-arm` for physical hardware.
 These defaults apply to the Windows remote IK launcher; standalone Pi defaults
 are unchanged.
 
@@ -123,3 +123,15 @@ Use the observation results to agree on the initial cycle and watchdog before en
 - **OFFLINE VERIFIED** · Local simulation sustained 50 updates/s. The Pi simulation over SSH delivered 29.2 updates/s with the Pi cycle set to 50 Hz. Measure physical bus timing before choosing live settings.
 - **HARDWARE VERIFIED, initial supervised trial** · The owner observed a small sideways move from the Windows gamepad and confirmed that releasing LB stopped advancement. The trial used a configured Pi cycle of 50 Hz, a 200 ms watchdog, an arm rate of 20 degrees/s, a gripper rate of 10 normalized units/s, and Windows input speed `0.1`. The Windows dashboard reported 24.9 Hz feedback during the trial.
 - **HARDWARE VERIFICATION PENDING** · Other axes, gripper, extended-arm retraction, controller loss, and SSH interruption remain follow-up tests.
+
+## Control-code ownership
+
+The launcher owns arguments, Windows XInput/Esc sampling, WSL/Pi connections and dashboard lifecycle. `robot_program/remote_ik_control.py` owns input-edge tracking, per-session `MotionState`, startup ramping, post-solve input checks, issued-reference acceptance and control reporting. Stationary correction remains optional in `robot_program/remote_ik_correction.py`. Worker solve requests carry their rate allowance, correction mode and recovery bound explicitly; the Pi protocol and motor policy are unchanged.
+
+The cleanup preserves this command and all of its defaults:
+
+```powershell
+python.exe -m scripts.main_teleop_remote_ik --real-arm --trace .runtime/feedback-test.json
+```
+
+Trace files are still overwritten when a run records ticks; select a fresh path when preserving an earlier recording. See the cleanup verification and supervised smoke test in [path verification](REMOTE_IK_PATH_VERIFICATION.md).

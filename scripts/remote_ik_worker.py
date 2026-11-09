@@ -25,7 +25,8 @@ def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_
     reference = measured if sent is None else sent
     joints = np.asarray(reference[:5], dtype=float)
     pose = solver.kinematics.forward_kinematics(joints).copy()
-    measured_pose = solver.kinematics.forward_kinematics(np.asarray(measured[:5], dtype=float))
+    measured_pose = (pose.copy() if sent is None else
+                     solver.kinematics.forward_kinematics(np.asarray(measured[:5], dtype=float)).copy())
     baseline = np.asarray(measured_pose[:3, 3] if desired_xyz_m is None else desired_xyz_m, dtype=float)
     response = {"xyz_m": measured_pose[:3, 3].tolist(), "baseline_xyz_m": baseline.tolist(),
                 "requested_xyz_m": (baseline + delta[:3]).tolist(), "target": None, "reason": "",
@@ -68,7 +69,7 @@ def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_
                 np.abs(result.joints_deg - joints) > np.asarray(joint_step_limits[:5]) + 1e-8):
             response["reason"] = "Cartesian increment exceeds Pi rate allowance"
             continue
-        achieved = solver.kinematics.forward_kinematics(result.joints_deg).copy()
+        achieved = result.pose.copy()
         if correction and (np.linalg.norm(achieved[:3, 3] - pose[:3, 3]) > recovery_step_m + 1e-8
                            or np.linalg.norm(achieved[:3, 3] - baseline) >= length):
             response["reason"] = "No bounded stationary correction progress"

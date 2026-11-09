@@ -21,7 +21,7 @@ class CartesianSolver:
     def solve_pose(self, pose, seed):
         x, y, z = pose[:3, 3]
         q = np.array([x * 100, y * 100, (z - x*x) * 100, seed[3], seed[4]])
-        return SimpleNamespace(accepted=x <= .1, reason="reach", joints_deg=q)
+        return SimpleNamespace(accepted=x <= .1, reason="reach", joints_deg=q, pose=self.forward_kinematics(q))
 
 
 @pytest.mark.parametrize("axis", [0, 1, 2])
@@ -98,11 +98,10 @@ def test_diagnostics_aligns_measurement_with_prior_command():
 @pytest.mark.parametrize("lag,delay", [(0., .02), (.3, .04), (1., .06)])
 def test_real_loop_worker_and_motor_session_with_delayed_or_stalled_feedback(monkeypatch, lag, delay):
     from threading import Event
-    from scripts import main_teleop_remote_ik as teleop
+    from robot_program import remote_ik_control as teleop
     from scripts.remote_ik_motor_service import MotorSession
     from robot_program.remote_ik_protocol import PROTOCOL_VERSION
     now = [0.]
-    monkeypatch.setattr(teleop, "monotonic", lambda: now[0])
     solver = CartesianSolver()
 
     class Bus:
@@ -123,14 +122,14 @@ def test_real_loop_worker_and_motor_session_with_delayed_or_stalled_feedback(mon
         return motor.tick({"v": PROTOCOL_VERSION, "session": fb["session"], "seq": fb["ack"]+1,
                            "feedback_seq": fb["feedback_seq"], "op": op, **values})
     fb = command("arm")
-    latest, stop, trace = teleop.LatestInput(), Event(), []
+    latest, stop, trace = teleop.LatestInput(clock=lambda: now[0]), Event(), []
     def publish(active=True, lb=True):
         latest.publish({"axes": dict(LX=0., LY=-.5 if active else 0., RX=0., RY=0., LT=0., RT=0.),
                         "buttons": dict(Start=False, Back=False, LB=lb), "dpad": (0, 0)})
     class Worker:
-        def solve(self, measured, delta, *, sent, desired_xyz_m):
+        def solve(self, measured, delta, *, sent, desired_xyz_m, joint_step_limits, correction, recovery_step_m):
             return solve_intent(solver, measured, delta, [0, 50], sent=sent, desired_xyz_m=desired_xyz_m,
-                                joint_step_limits=self.joint_step_limits)
+                                joint_step_limits=joint_step_limits)
     count = 0
     def request(op, **values):
         nonlocal fb, count
@@ -143,7 +142,7 @@ def test_real_loop_worker_and_motor_session_with_delayed_or_stalled_feedback(mon
             publish(active=count not in (10, 20), lb=count != 25)
         return fb
     publish()
-    loop = teleop.ControlLoop(Worker(), None, latest, stop, 1., "offline", trace=trace)
+    loop = teleop.ControlLoop(Worker(), None, latest, stop, 1., "offline", trace=trace, clock=lambda: now[0])
     loop.session(SimpleNamespace(feedback=fb, request=request))
     assert len(trace) == 35
     assert all(t["desired_xyz_m"][2] == pytest.approx(.1) for t in trace)
@@ -158,6 +157,7 @@ def test_solver_tolerance_does_not_bank_unexecuted_boundary_progress():
     def no_progress(pose, seed):
         result = original(pose, seed)
         result.joints_deg = seed.copy()
+        result.pose = solver.forward_kinematics(seed)
         result.accepted = True
         return result
     solver.solve_pose = no_progress
@@ -172,9 +172,8 @@ def test_solver_tolerance_does_not_bank_unexecuted_boundary_progress():
 
 def test_fresh_input_cancels_stationary_correction_after_solve(monkeypatch):
     from threading import Event
-    from scripts import main_teleop_remote_ik as teleop
-    monkeypatch.setattr(teleop, "monotonic", lambda: 1.)
-    latest, stop, trace = teleop.LatestInput(), Event(), []
+    from robot_program import remote_ik_control as teleop
+    latest, stop, trace = teleop.LatestInput(clock=lambda: 1.), Event(), []
     pad = {"axes": dict(LX=0., LY=0., RX=0., RY=0., LT=0., RT=0.),
            "buttons": dict(Start=False, Back=False, LB=True), "dpad": (0, 0)}
     latest.publish(pad)
@@ -182,8 +181,8 @@ def test_fresh_input_cancels_stationary_correction_after_solve(monkeypatch):
               hz=50, watchdog_s=.2, fault=False, reason="")
     operations = []
     class Worker:
-        def solve(self, measured, delta, *, sent, desired_xyz_m):
-            if self.correction:
+        def solve(self, measured, delta, *, sent, desired_xyz_m, joint_step_limits, correction, recovery_step_m):
+            if correction:
                 latest.publish({**pad, "axes": {**pad["axes"], "LY": -1.}})
                 return {"target": [1.]*6, "xyz_m": [0,0,0], "candidate_xyz_m": [0,0,.001]}
             return {"baseline_xyz_m": [0,0,.01], "xyz_m": [0,0,0]}
@@ -196,7 +195,58 @@ def test_fresh_input_cancels_stationary_correction_after_solve(monkeypatch):
             stop.set()
         return fb
     loop = teleop.ControlLoop(Worker(), None, latest, stop, 1., "offline", trace=trace,
-                             correction_profile=CorrectionProfile(.003,.001,.1,.002,.01,.5))
+                             correction_profile=CorrectionProfile(.003,.001,.1,.002,.01,.5), clock=lambda: 1.)
     loop.session(SimpleNamespace(feedback=fb, request=request))
     assert operations == ["poll", "poll"]
     assert trace[1]["correction"]
+
+
+def test_issued_comparison_preserves_distinct_correction_tolerance():
+    from robot_program.remote_ik_control import issued_arm_matches
+    target = [100.] * 6
+    issued = [100. + 5e-8] * 5 + [0.]
+    assert not issued_arm_matches(issued, target)
+    assert issued_arm_matches(issued, target, rel_tol=1e-9)
+    assert not issued_arm_matches(None, target)
+    assert issued_arm_matches(target[:5] + [0.], target)
+
+
+def test_missing_accepted_xyz_is_rejected_before_motor_exchange():
+    from threading import Event
+    from robot_program.remote_ik_control import ControlLoop, LatestInput
+    latest = LatestInput(clock=lambda: 1.)
+    latest.publish({"axes": dict(LX=0., LY=-1., RX=0., RY=0., LT=0., RT=0.),
+                    "buttons": dict(Start=False, Back=False, LB=True), "dpad": (0, 0)})
+    worker = SimpleNamespace(solve=lambda *args, **kwargs: {"target": [0.]*6, "requested_xyz_m": [0.,0.,0.]})
+    feedback = dict(armed=True, moving=False, measured=[0.]*6, sent=[0.]*6, hz=50,
+                    watchdog_s=.2, fault=False, reason="")
+    loop = ControlLoop(worker, None, latest, Event(), 1., "offline", clock=lambda: 1.)
+    link = SimpleNamespace(feedback=feedback, request=lambda *args, **kwargs: pytest.fail("Motor exchange on malformed result"))
+    with pytest.raises(ValueError, match="accepted_xyz_m"):
+        loop.session(link)
+
+
+def test_worker_reuses_achieved_pose_and_initial_measured_fk():
+    solver = CartesianSolver()
+    calls = []
+    original = solver.forward_kinematics
+    def forward(q):
+        calls.append(np.asarray(q).copy())
+        return original(q)
+    solver.forward_kinematics = forward
+    result = solve_intent(solver, [0.,0.,10.,0.,0.,0.], [.001,0,0,0,0,0], [0,50])
+    assert result["target"] is not None
+    assert len(calls) == 2  # Initial reference and the solver's achieved pose.
+
+
+
+def test_correction_also_requires_accepted_xyz():
+    from threading import Event
+    from robot_program.remote_ik_control import ControlLoop, LatestInput
+    latest = LatestInput(clock=lambda: 1.)
+    latest.publish({"axes": dict(LX=0.,LY=0.,RX=0.,RY=0.,LT=0.,RT=0.),
+                    "buttons": dict(Start=False,Back=False,LB=True), "dpad": (0,0)})
+    loop = ControlLoop(None, None, latest, Event(), 1., "offline", clock=lambda: 1.)
+    with pytest.raises(ValueError, match="accepted_xyz_m"):
+        loop._validate_input("poll", {"target": [0.]*6}, latest.sample, latest.sample,
+                             arm_input=False, correcting=True, freshness=.1)
