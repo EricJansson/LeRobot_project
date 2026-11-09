@@ -101,6 +101,8 @@ def test_launcher_trace_overwrite(monkeypatch, tmp_path, capsys, existing, recor
 @pytest.mark.parametrize("options, expected_port", [
     ([], 18743),
     (["--dashboard-port", "18744"], 18744), (["--dashboard-port", "0"], 0),
+    (["--advance-button", "Start"], 18743),
+    (["--advance-button", "Back"], 18743),
 ])
 def test_launcher_dashboard_port_and_manual_browser(monkeypatch, capsys, options, expected_port):
     ports = []
@@ -125,7 +127,10 @@ def test_launcher_dashboard_port_and_manual_browser(monkeypatch, capsys, options
     monkeypatch.setattr(sys, "argv", ["remote-ik", "--dry-run", *options])
     remote_teleop.main()
     assert ports == [expected_port]
-    assert f"http://127.0.0.1:{dashboards[0].port}/" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert f"http://127.0.0.1:{dashboards[0].port}/" in output
+    expected_advance = options[options.index("--advance-button") + 1] if "--advance-button" in options else "Start"
+    assert f"{expected_advance}: Released" in output
 
 
 def test_launcher_busy_dashboard_port(monkeypatch, capsys):
@@ -276,9 +281,14 @@ def test_pi_motor_bus_uses_normalized_channels_and_goals_before_torque():
     values = [12., -11., 10., -9., 8., 25.]
     positions = dict(zip(CHANNELS, values))
     calls = []
-    bus = SimpleNamespace(sync_read=lambda register: positions if register == "Present_Position" else {},
+    torque = [0]
+    def enable_torque(*, num_retry):
+        calls.append(("torque", num_retry))
+        torque[0] = 1
+    bus = SimpleNamespace(sync_read=lambda register, *args, **kwargs: positions if register == "Present_Position"
+                          else dict.fromkeys(CHANNELS, torque[0]),
                           sync_write=lambda register, targets: calls.append((register, targets)),
-                          enable_torque=lambda *, num_retry: calls.append(("torque", num_retry)))
+                          enable_torque=enable_torque)
     adapter = PiMotorBus(SimpleNamespace(bus=bus), __file__)
     assert adapter.read() == values
     assert adapter.arm(values) == values
@@ -291,13 +301,13 @@ def test_failed_torque_enable_leaves_real_arm_disarmed():
     def enable_torque(*, num_retry):
         raise ConnectionError("Incorrect status packet")
 
-    bus = SimpleNamespace(sync_read=lambda register: dict.fromkeys(CHANNELS, 0.),
+    bus = SimpleNamespace(sync_read=lambda register, *args, **kwargs: dict.fromkeys(CHANNELS, 0.),
                           sync_write=lambda register, targets: writes.append(targets),
                           enable_torque=enable_torque)
     adapter = PiMotorBus(SimpleNamespace(bus=bus), __file__)
     motor = MotorSession(adapter, limits=LIMITS, model="fixture", token=TOKEN, watchdog=.15,
                          hz=50, arm_rate=100, gripper_rate=50, simulated=False, allow_motion=True)
-    feedback = command(motor, hello(motor), "arm")
+    feedback = command(motor, hello(motor), "capture")
     assert feedback["fault"] and "Incorrect status packet" in feedback["reason"]
     assert not feedback["armed"] and not adapter.torque_enabled
     feedback = command(motor, feedback, "move", target=[1.] * 6)

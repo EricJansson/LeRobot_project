@@ -18,7 +18,7 @@ from time import perf_counter as monotonic
 from robot_program.lerobot_ik_controller import DEFAULT_URDF
 from robot_program.remote_ik_protocol import (
     CHANNELS, MAX_FRAME, MOTION_POLICY, OFFLINE_WATCHDOG, PI_PORT, PROTOCOL_VERSION, RATE_HZ,
-    COMMAND_MARGIN_DEG,
+    CAPTURE_BOUNDARY_TOLERANCE_DEG,
     calibrated_follower, calibrated_channel_limits, channel_limits, command_limits,
     decode_frame, encode_frame, finite_vector, kinematic_urdf, limit_excess, model_id, within_limits,
 )
@@ -35,12 +35,18 @@ class ProtocolError(ValueError):
 class SimulatedBus:
     def __init__(self, limits):
         self.measured = [min(max(0., lo), hi) for lo, hi in limits]
+        self.torque_enabled = True
 
     def read(self):
         return self.measured.copy()
 
     def arm(self, measured):
-        return self.write(measured)
+        applied = self.write(measured)
+        self.torque_enabled = True
+        return applied
+
+    def release_arm(self):
+        self.torque_enabled = False
 
     def write(self, target):
         self.measured = target.copy()
@@ -52,7 +58,8 @@ class PiMotorBus:
         self.follower = follower
         self.port = str(Path(port).resolve(strict=True))
         self.bus = follower.bus
-        self.torque_enabled = False
+        self.torque_enabled = None
+        self.torque_sampled = False
 
     def __enter__(self):
         # The pinned Feetech SDK opens its actual pyserial descriptor in openPort.
@@ -97,20 +104,45 @@ class PiMotorBus:
 
     def read(self):
         positions = self.bus.sync_read("Present_Position")
+        if not self.torque_sampled:
+            self.refresh_torque()
         return [float(positions[channel]) for channel in CHANNELS]
+
+    def refresh_torque(self):
+        values = self.bus.sync_read("Torque_Enable", list(CHANNELS), normalize=False)
+        states = [values.get(channel) for channel in CHANNELS]
+        self.torque_enabled = (True if all(value == 1 for value in states) else
+                               False if all(value == 0 for value in states) else None)
+        self.torque_sampled = True
+        return self.torque_enabled
 
     def arm(self, measured):
         applied = self.write(measured)
         if not self.torque_enabled:
+            self.torque_enabled = None
             self.bus.enable_torque(num_retry=1)
-            self.torque_enabled = True
+            if self.refresh_torque() is not True:
+                raise RuntimeError("Could not confirm arm holding torque")
         return applied
+
+    def release_arm(self):
+        self.torque_enabled = None
+        failures = []
+        for channel in CHANNELS:
+            try:
+                self.bus.disable_torque(channel, num_retry=1)
+            except Exception as exc:
+                failures.append(f"{channel}: {exc}")
+        state = self.refresh_torque()
+        if failures or state is not False:
+            raise RuntimeError("Could not confirm arm torque release: " + "; ".join(failures or ["torque still enabled"]))
 
     def write(self, target):
         self.bus.sync_write("Goal_Position", dict(zip(CHANNELS, target)))
         return target.copy()
 
     def relax(self):
+        self.torque_enabled = None
         failures = []
         for channel in CHANNELS:
             try:
@@ -119,6 +151,7 @@ class PiMotorBus:
                 failures.append(f"{channel}: {exc}")
         if failures:
             raise RuntimeError("Could not release motor torque: " + ", ".join(failures))
+        self.refresh_torque()
 
 
 class MotorSession:
@@ -154,32 +187,71 @@ class MotorSession:
         self.armed = self.advancing = False
         self.stop_pending = False
         self.fault = self.reason = ""
+        self.released_range_warning = ""
+        self.recovery_holding = False
+        self.capture_boundary_sides = [0] * len(CHANNELS)
         self.recovery = RecoveryState(progress_at=self.clock())
 
     def in_bounds(self, values):
         return within_limits(values, self.limits)
 
     def send_target(self, target):
+        if not within_limits(target, self.calibrated_limits):
+            raise ValueError("Motor target outside calibrated ranges")
         started = self.clock()
         sent = self.bus.write(target)
         self.write_max_ms = max(self.write_max_ms or 0., (self.clock() - started) * 1000)
         return sent
 
+    @property
+    def arm_torque(self):
+        enabled = getattr(self.bus, "torque_enabled", True)
+        return "holding" if enabled is True else "released" if enabled is False else "unknown"
+
+    @property
+    def boundary_capture(self):
+        return any(self.capture_boundary_sides)
+
+    def capture_target(self, measured, *, existing=False):
+        """Only a small, explicit arm-boundary capture may seed inward recovery.
+
+        Keep feedback unchanged and every goal inside the recorded calibration.
+        The jaw has its own normalized range and receives no angular tolerance.
+        Existing captures permit only the originally exceeded side/joints.
+        """
+        if not finite_vector(measured, len(CHANNELS)):
+            return None
+        target = []
+        for i, (q, (lo, hi)) in enumerate(zip(measured, self.calibrated_limits)):
+            tolerance = CAPTURE_BOUNDARY_TOLERANCE_DEG if i < 5 else 0.
+            side = self.capture_boundary_sides[i]
+            low_tolerance = tolerance if not existing or side == -1 else 0.
+            high_tolerance = tolerance if not existing or side == 1 else 0.
+            if not lo - low_tolerance - 1e-8 <= q <= hi + high_tolerance + 1e-8:
+                return None
+            target.append(min(max(q, lo), hi))
+        return target
+
     def hold(self, reason="", *, disarm=False):
+        advancing = self.advancing or self.stop_pending
+        if advancing:
+            self.recovery_holding = False
         if disarm:
             self.armed = False
             self.recovery.clear()
         if reason:
             self.reason = reason
-        advancing = self.advancing or self.stop_pending
         self.advancing = False
         self.stop_pending = advancing and self.measured is None
-        if advancing and within_limits(self.measured, self.calibrated_limits):
+        stop_target = (self.measured if within_limits(self.measured, self.calibrated_limits)
+                       else self.capture_target(self.measured, existing=True) if self.boundary_capture else None)
+        if advancing and self.arm_torque == "holding" and stop_target is not None:
             # One measured stop target. Avoid repeatedly chasing drift or sag.
-            self.sent = self.send_target(self.measured)
+            self.sent = self.send_target(stop_target)
 
     def recovery_needed(self):
-        return self.recovery.goal is not None or (self.measured is not None and not self.in_bounds(self.measured))
+        return (self.boundary_capture or self.recovery.goal is not None
+                or (self.measured is not None and not self.in_bounds(self.measured)))
 
     def recovery_target(self):
         return self.recovery.next_target(self.sent, self.rates, self.period)
@@ -200,23 +272,28 @@ class MotorSession:
             return
         now = self.clock()
         if state.goal is None:
-            state.begin(self.measured, self.limits, self.command_limits)
+            self.recovery_holding = False
+            state.begin(self.measured, self.limits, self.command_limits, boundary_sides=self.capture_boundary_sides)
             # One measured stop cancels the previous goal, never recaptured sag.
             self.advancing = False
-            self.sent = self.send_target(state.anchor)
+            anchor = self.capture_target(state.anchor, existing=True) if self.boundary_capture else state.anchor
+            self.sent = self.send_target(anchor)
             state.restart_trial(now)
-            state.margin = COMMAND_MARGIN_DEG
         stop_anchor = state.include_new_violations(self.measured, self.sent, self.limits)
         if stop_anchor is not None:
+            if self.boundary_capture:
+                stop_anchor = self.capture_target(stop_anchor, existing=True)
             self.sent = self.send_target(stop_anchor)
             state.restart_trial(now)
-        action = state.evaluate(self.measured, self.sent, intent, proposed,
-                                self.limits, self.command_limits, now)
+        action = state.evaluate(self.measured, self.sent, intent, self.limits, now)
         if action is RecoveryAction.COMPLETE:
-            self.hold()
+            # Keep the issued inward goal that overcame static tracking error.
+            # Recapturing near-limit feedback here caused the recorded rebound.
+            self.advancing = self.stop_pending = False
+            self.recovery_holding = True
+            self.capture_boundary_sides = [0] * len(CHANNELS)
             state.clear(completed=True)
-            self.advancing = False
-            self.reason = ""
+            self.reason = "Recovered; retaining inward holding target"
             return
         if action is RecoveryAction.WAIT:
             return
@@ -282,7 +359,7 @@ class MotorSession:
         if op in ("hold", "disarm"):
             self.hold(disarm=(op == "disarm"))
             return None
-        if op not in ("arm", "move", "recover"):
+        if op not in ("arm", "capture", "release_arm", "move", "recover"):
             self.hold("unknown operation", disarm=True)
             return None
         if not self.motion_enabled:
@@ -294,11 +371,47 @@ class MotorSession:
                 or age >= self.watchdog or self.measured is None or self.fault):
             self.hold("stale or unavailable motor feedback", disarm=True)
             return None
+        if op == "release_arm":
+            if self.armed or self.advancing or self.arm_torque != "holding":
+                self.hold("Release requires Holding", disarm=True)
+                return None
+            self.recovery.clear()
+            self.recovery_holding = False
+            self.capture_boundary_sides = [0] * len(CHANNELS)
+            self.stop_pending = False
+            self.bus.release_arm()
+            self.sent = None
+            self.reason = "Arm and gripper torque released"
+            return None
+        if op == "capture":
+            if self.armed or self.arm_torque == "holding":
+                self.reason = "Capture requires Released or unknown torque"
+                return None
+            target = self.capture_target(self.measured)
+            if target is None:
+                self.reason = "Capture requires arm joints within 1 degree of calibration and gripper inside its calibrated range"
+                return None
+            self.sent = self.bus.arm(target)
+            self.capture_boundary_sides = [-1 if q < lo else 1 if q > hi else 0
+                                           for q, (lo, hi) in zip(self.measured, self.calibrated_limits)]
+            self.recovery.clear()
+            self.recovery_holding = False
+            self.advancing = self.stop_pending = False
+            self.reason = ("Holding at calibrated boundary; enable control for inward recovery" if self.boundary_capture
+                           else "Holding current pose; controller movement disabled")
+            return None
         if op == "arm":
+            if self.arm_torque != "holding":
+                self.reason = "Restore Holding before enabling control"
+                return None
             if not self.armed:
-                self.sent = self.bus.arm(self.measured)
+                if not self.recovery_holding and not self.boundary_capture:
+                    self.sent = self.bus.arm(self.measured)
                 self.armed = True
                 self.reason = ""
+            return None
+        if self.arm_torque != "holding":
+            self.hold("Arm torque is not confirmed holding", disarm=True)
             return None
         if op == "recover":
             self.recover(request)
@@ -325,6 +438,7 @@ class MotorSession:
             self.hold("Rate-limited transition would leave operating bounds")
             return None
         self.rate_limited = fraction > 1.
+        self.recovery_holding = False
         self.advancing = True
         self.last_move_at = self.clock()
         self.sent = self.send_target(bounded)
@@ -337,9 +451,26 @@ class MotorSession:
             if not finite_vector(measured, len(CHANNELS)):
                 raise ValueError("Motor bus returned incomplete or nonfinite feedback")
             self.measured, self.sampled_at = measured, self.clock()
+            self.released_range_warning = ""
             if not within_limits(measured, self.calibrated_limits):
-                self.fault = "Measured pose is outside calibrated motor ranges"
-                self.armed = False
+                if self.arm_torque == "released":
+                    self.armed = False
+                    channels = [f"{name} ({q:.1f}; range {lo:.1f} to {hi:.1f}"
+                                + (" normalized)" if name == "gripper" else "°)")
+                                for name, q, (lo, hi) in zip(CHANNELS, measured, self.calibrated_limits)
+                                if not lo <= q <= hi]
+                    self.released_range_warning = ("Released: " + ", ".join(channels)
+                                                   + ("; press advance to capture boundary, then enable inward recovery"
+                                                      if self.capture_target(measured) is not None else
+                                                      "; reposition inside recorded ranges (arm capture allowance: 1 degree)"))
+                elif self.boundary_capture and self.capture_target(measured, existing=True) is not None:
+                    if not self.armed:
+                        self.reason = "Holding at calibrated boundary; enable control for inward recovery"
+                else:
+                    self.armed = False
+                    self.fault = "Measured pose is outside calibrated motor ranges"
+            elif self.arm_torque == "released":
+                self.reason = "Arm and gripper torque released"
             self.read_max_ms = max(self.read_max_ms or 0., (self.sampled_at - started) * 1000)
         except Exception as exc:
             self.measured, self.armed = None, False
@@ -351,7 +482,7 @@ class MotorSession:
                 self.disconnect()
             if self.fault or self.advancing and self.clock() - self.last_move_at >= self.watchdog:
                 self.hold("motion watchdog expired", disarm=True)
-            elif self.measured is not None and not self.in_bounds(self.measured) and self.recovery.goal is None:
+            elif self.armed and self.measured is not None and not self.in_bounds(self.measured) and self.recovery.goal is None:
                 self.hold("Operating limit requires inward recovery; armed and constrained")
         except Exception as exc:
             self.armed = False
@@ -373,13 +504,16 @@ class MotorSession:
                 "calibrated_limits": self.calibrated_limits, "command_limits": self.command_limits,
                 "motion_policy": MOTION_POLICY,
                 "limit_excess": limit_excess(self.measured, self.limits) if self.measured else None,
-                "recovery_required": self.recovery_needed() if self.measured else False,
+                "recovery_required": self.arm_torque == "holding" and self.recovery_needed() if self.measured else False,
                 "recovery_goal": self.recovery.goal, "recovery_blocked": self.recovery.blocked,
+                "recovery_holding": self.recovery_holding,
+                "boundary_capture": self.boundary_capture,
                 "recovery_remaining_deg": self.recovery.remaining,
                 "recovery_margin_deg": self.recovery.margin, "recovery_coordinated": self.recovery.coordinated,
                 "recovery_target": self.recovery_target(), "recovery_anchor": self.recovery.anchor,
                 "measured": self.measured, "sent": self.sent, "armed": self.armed,
-                "moving": self.advancing, "reason": self.fault or self.reason,
+                "arm_torque": self.arm_torque,
+                "moving": self.advancing, "reason": self.fault or self.released_range_warning or self.reason,
                 "fault": bool(self.fault),
                 "simulated": self.simulated, "motion_enabled": self.motion_enabled,
                 "relax_on_exit": self.relax_on_exit,

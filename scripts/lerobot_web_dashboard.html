@@ -43,10 +43,18 @@
     }
     .status-card[data-tone="green"] { --status-color: #79e3ac; background: #173629; }
     .status-card[data-tone="red"] { --status-color: #ffa7ad; background: #3b2025; }
+    .status-card[data-tone="blue"] { --status-color: #82bdff; background: #172d49; }
     .status-card[data-tone="stopped"] { --status-color: #6d788b; background: #151a24; }
     .status-card .eyebrow { color: #d0d0da; font-size: 12px; }
     #status { color: var(--status-color); font-size: 22px; font-weight: bold; }
     #status-detail { color: #e6e6eb; font-size: 13px; margin-top: 4px; }
+    .release-gesture { display: flex; align-items: center; gap: 10px; margin-top: 8px; color: #82bdff; }
+    .release-gesture[hidden] { display: none; }
+    .release-ring { width: 38px; height: 38px; transform: rotate(-90deg); flex-shrink: 0; }
+    .release-track, .release-fill { fill: none; stroke-width: 4; }
+    .release-track { stroke: #425268; }
+    .release-fill { stroke: currentColor; stroke-linecap: round; transition: stroke-dashoffset .1s linear; }
+    #control-hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
     .dashboard {
       display: grid;
       grid-template-columns: minmax(170px, 1fr) 400px;
@@ -146,6 +154,14 @@
     <p class="eyebrow">Control status</p>
     <p id="status">Control unavailable</p>
     <p id="status-detail" hidden></p>
+    <div id="release-gesture" class="release-gesture" hidden>
+      <svg class="release-ring" viewBox="0 0 40 40" aria-hidden="true">
+        <circle class="release-track" cx="20" cy="20" r="16"/>
+        <circle id="release-fill" class="release-fill" cx="20" cy="20" r="16" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"/>
+      </svg>
+      <span id="release-countdown" role="progressbar" aria-label="Hold to release arm torque" aria-valuemin="0" aria-valuemax="100"></span>
+    </div>
+    <p id="control-hint" hidden></p>
   </div>
   <div class="dashboard">
     <section class="controller" aria-label="Gamepad">
@@ -374,6 +390,11 @@
     const remote = fresh?.remote;
     switch (remote?.state) {
       case 'Fault': return ['red', 'Motor fault', remote.reason];
+      case 'Released': return ['blue', 'Released', remote.reason || 'Arm and gripper torque off'];
+      case 'Releasing': return ['blue', 'Releasing…', 'Waiting for motor confirmation · Keep supporting the arm'];
+      case 'Holding': return ['neutral', 'Holding', remote.reason || 'Holding position · Controller movement disabled'];
+      case 'Control enabled': return ['green', 'Control enabled', 'Hold LB to move'];
+      case 'Unavailable': return ['neutral', 'Torque state unavailable', remote.reason || 'Restore Holding with neutral controls'];
       case 'Moving': return ['green', 'Moving', ''];
       case 'Following path':
       case 'Adapting pitch':
@@ -404,6 +425,24 @@
     setText(statusLabel, label);
     setText(statusDetail, detail ?? '');
     statusDetail.hidden = !detail;
+    // Display only confirmed producer progress; the browser never completes the gesture itself.
+    const progress = Math.max(0, Math.min(1, fresh?.remote?.release_progress || 0));
+    const releasing = fresh?.remote?.state === 'Releasing';
+    const releaseVisible = progress > 0 && (fresh?.remote?.state === 'Holding' || releasing);
+    byId('release-gesture').hidden = !releaseVisible;
+    byId('release-fill').setAttribute('stroke-dashoffset', String(100 * (1 - progress)));
+    byId('release-countdown').setAttribute('aria-valuenow', String(Math.round(progress * 100)));
+    setText(byId('release-countdown'), releasing ? 'Releasing… keep supporting the arm'
+      : `Support the arm · ${(2 * (1 - progress)).toFixed(1)} s to release`);
+    const hint = byId('control-hint');
+    const remote = fresh?.remote;
+    hint.hidden = !remote?.advance_button;
+    const physical = name => name === 'Start' ? 'Start / Options' : 'Back / Share / Create';
+    const advance = physical(remote?.advance_button);
+    const stop = physical(remote?.stop_button);
+    setText(hint, remote?.state === 'Released' ? `${advance}: hold current pose`
+      : remote?.state === 'Holding' ? `${advance}: enable control · Hold ${stop} 2 s: release arm`
+      : `${stop}: Holding · LB: hold to move`);
 
     const gamepad = fresh?.gamepad ?? null;
     if (gamepad !== displayedGamepad) {
@@ -424,7 +463,6 @@
     };
     setText(armMode, `Arm mode: ${modes[mode] ?? 'Unknown'}`);
 
-    const remote = fresh?.remote;
     byId('diagnostics').hidden = !remote;
     if (remote) {
       const vector = (values, scale = 1) => values?.length

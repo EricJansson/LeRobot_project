@@ -10,12 +10,15 @@ from pathlib import Path
 from robot_program.lerobot_ik_controller import ARM_JOINTS, DEFAULT_URDF, GRIPPER_RANGE, _joint_limits
 
 
-PROTOCOL_VERSION = 3
-MOTION_POLICY = "adaptive-limits-v3"
+PROTOCOL_VERSION = 4
+MOTION_POLICY = "boundary-capture-v4"
 COMMAND_MARGIN_DEG = .5
-RECOVERY_RATE_DEG_S = 5.
-RECOVERY_MAX_MARGIN_DEG = 2.
-RECOVERY_DEEPEN_S = .5
+RECOVERY_RATE_DEG_S = 10.
+RECOVERY_GRIPPER_RATE = 5.
+CAPTURE_BOUNDARY_TOLERANCE_DEG = 1.
+RECOVERY_TARGET_MARGIN = 5.
+RECOVERY_MEASURED_MARGIN = 1.
+RECOVERY_SETTLE_S = .3
 MAX_FRAME = 4096
 CHANNELS = (*ARM_JOINTS, "gripper")
 PI_PORT = 8766
@@ -81,11 +84,11 @@ def calibrated_channel_limits(follower):
     """Motor endpoints in bus units, before intersecting the URDF ranges."""
     bus = follower.bus
     ranges = []
-    for name in ARM_JOINTS:
+    for name in CHANNELS:
         motor, calibration = bus.motors[name], bus.calibration[name]
         ranges.append([float(bus._normalize({motor.id: endpoint})[motor.id])
                        for endpoint in (calibration.range_min, calibration.range_max)])
-    return [*ranges, list(GRIPPER_RANGE)]
+    return ranges
 
 
 def command_limits(limits):
@@ -96,6 +99,12 @@ def command_limits(limits):
 def within_limits(values, limits):
     return (finite_vector(values, 6)
             and all(lo <= value <= hi for value, (lo, hi) in zip(values, limits)))
+
+
+def recovery_step_limits(rates, period):
+    """Arm degrees and separate normalized gripper units per recovery command."""
+    return [min(rate, RECOVERY_GRIPPER_RATE if i == 5 else RECOVERY_RATE_DEG_S) * period
+            for i, rate in enumerate(rates)]
 
 
 def limit_excess(values, limits):

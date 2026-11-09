@@ -1,5 +1,7 @@
 # Remote IK path verification
 
+> Current controls: see [manual torque states](REMOTE_IK_TORQUE_STATES.md). Start/Options advances; Back/Share/Create stops/releases by default, retaining the Start-enable/Back-stop pairing below. `--advance-button Back` swaps these actions. All components now require protocol 4, policy `boundary-capture-v4`. Owner-reported boundary capture/recovery succeeded; broader fault checks remain pending.
+
 The 2026-11-09 [adaptive motion and recovery](REMOTE_IK_ADAPTIVE_MOTION.md)
 update supersedes strict retained-line behavior for blocked translation and
 changes the remote Pi policy/protocol. Use that document for current behavior,

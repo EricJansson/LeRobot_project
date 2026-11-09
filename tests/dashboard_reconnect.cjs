@@ -7,8 +7,8 @@ const vm = require('node:vm');
 const elements = new Map();
 function element(id) {
   if (!elements.has(id)) elements.set(id, {
-    textContent: '', dataset: {}, hidden: false,
-    querySelectorAll: () => [], setAttribute() {}, classList: { toggle() {} },
+    textContent: '', dataset: {}, hidden: false, attributes: {},
+    querySelectorAll: () => [], setAttribute(name, value) { this.attributes[name] = value; }, classList: { toggle() {} },
   });
   return elements.get(id);
 }
@@ -154,6 +154,53 @@ async function nextPoll() {
   readings.remote.reason = 'Start requires neutral controls';
   await nextPoll();
   assert.equal(element('status-detail').textContent, 'Start requires neutral controls');
+
+  readings.remote.mode = 'Real arm enabled';
+  readings.remote.state = 'Holding';
+  readings.remote.advance_button = 'Back';
+  readings.remote.stop_button = 'Start';
+  readings.remote.reason = '';
+  readings.remote.release_progress = .5;
+  await nextPoll();
+  assert.equal(element('status').textContent, 'Holding');
+  assert.equal(element('release-gesture').hidden, false);
+  assert.equal(element('release-fill').attributes['stroke-dashoffset'], '50');
+  assert.equal(element('release-countdown').attributes['aria-valuenow'], '50');
+  assert.match(element('release-countdown').textContent, /1.0 s/);
+  assert.match(element('control-hint').textContent, /Back.*enable control.*Start.*2 s/);
+  // Even after wall time advances, a browser cannot finish a motor release.
+  now += 1000;
+  updateStatus();
+  assert.equal(element('release-fill').attributes['stroke-dashoffset'], '50');
+  readings.remote.release_progress = 0;
+  await nextPoll();
+  assert.equal(element('release-gesture').hidden, true);
+  readings.remote.state = 'Releasing';
+  readings.remote.release_progress = 1;
+  await nextPoll();
+  assert.equal(element('status').textContent, 'Releasing…');
+  assert.match(element('status-detail').textContent, /Waiting for motor confirmation/);
+  readings.remote.state = 'Released';
+  readings.remote.release_progress = 0;
+  await nextPoll();
+  assert.equal(element('status').textContent, 'Released');
+  assert.equal(element('status-card').dataset.tone, 'blue');
+  assert.match(element('status-detail').textContent, /Arm and gripper torque off/);
+  readings.remote.reason = 'Released: move shoulder_lift inside calibrated ranges before restoring Holding';
+  await nextPoll();
+  assert.equal(element('status').textContent, 'Released');
+  assert.equal(element('status-card').dataset.tone, 'blue');
+  assert.match(element('status-detail').textContent, /shoulder_lift.*inside calibrated/);
+  readings.remote.reason = '';
+  assert.equal(element('release-gesture').hidden, true);
+  assert.match(element('control-hint').textContent, /hold current pose/);
+  readings.remote.state = 'Control enabled';
+  await nextPoll();
+  assert.equal(element('status-card').dataset.tone, 'green');
+  assert.equal(element('status').textContent, 'Control enabled');
+  assert.match(element('status-detail').textContent, /LB/);
+  // Keep the original lifecycle fixture's mode for reconnect assertions below.
+  readings.remote.mode = 'Observe only';
 
   for (const connection of ['Connecting', 'Disconnected']) {
     readings.remote.connection = connection;

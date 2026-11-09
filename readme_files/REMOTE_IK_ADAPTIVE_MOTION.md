@@ -1,5 +1,7 @@
 # Adaptive remote IK and limit recovery
 
+> Current controls: see [manual torque states](REMOTE_IK_TORQUE_STATES.md). Start/Options advances; Back/Share/Create stops/releases by default, retaining the Start-enable/Back-stop pairing below. `--advance-button Back` swaps these actions. All components now require protocol 4, policy `boundary-capture-v4`. Owner-reported boundary capture/recovery succeeded; broader fault checks remain pending.
+
 Current behavior and verification as of 2026-11-09. Applies to the Windows → WSL →
 Pi remote teleop entry point; legacy launchers remain unchanged.
 
@@ -33,29 +35,52 @@ rate and FK checks do not establish physical clearance.
 
 Operating-limit excursions inside calibrated ranges recover while armed, even
 with active input or LB released. Recovery never arms a disarmed session.
+An explicit near-boundary capture can temporarily admit up to 1° of arm feedback
+outside a recorded calibration endpoint while all motor goals remain inside it.
+This applies only to the captured joint/side and ends on successful recovery;
+larger or unrelated powered violations still fault. See [capture rules and tests](REMOTE_IK_TORQUE_STATES.md).
 
-The Pi latches an inward destination 0.5° inside each violated limit. If the issued
-goal is reached but measured improvement stalls for 0.5 seconds, it can deepen
-that destination in 0.5° increments, up to 2° inside. This finite search does not
-integrate tracking error, change motor tuning or continually recapture sag.
+The Pi latches a **fixed destination 5° inside each violated limit**, capped at the
+range midpoint. It advances the rate-limited command all the way to that finite
+legal destination; a long retreat is not declared stalled merely because one
+second has elapsed. The destination does not move in response to tracking error,
+and the old sequence of progressively deeper small targets has been removed.
+Unaffected joints retain their targets unless fresh input coordinates them. This
+does not change motor tuning or repeatedly recapture sag. The five-degree inset
+is a destination margin, not a joint-step cap.
 
 Fresh XYZ input can coordinate the other arm joints while offending joints follow
 exactly the Pi's mandatory inward step. Coordination is bounded differential IK;
 its FK must improve agreement with current input relative to automatic retreat.
 The Pi independently validates the proposed joint segment. Recovery advancement
-is limited to 5°/s or the configured joint rate, whichever is lower. The jaw cannot
-move during recovery. Direction changes during solving drop the coordination
+is limited to 10°/s or the configured joint rate, whichever is lower. Gripper-only
+limit recovery uses normalized units, capped at 5 units/s and its configured rate;
+operator coordination cannot move the jaw. Direction changes during solving drop the coordination
 candidate while automatic retreat continues. Centering stops user coordination.
 
-Recovery finishes once measured offending joints regain the normal command margin
-with 0.1° tolerance, without requiring precise tracking of a deeper escape target.
-A single measured stop cancels that deeper target; the latest fresh input resumes
-with a new Cartesian reference and startup ramp.
+Recovery finishes only after the fixed target has been issued and measured
+offending joints remain at least **1° inside the operating limits for 300 ms**.
+The equivalent jaw margin is one normalized unit. A sample nearer the boundary
+resets the clearance timer. Exact servo tracking is not required: a static load
+can leave a measured-versus-commanded offset while still giving adequate clearance.
+On success the Pi **retains the issued inward holding target**; it does not replace
+it with near-limit measured feedback. Idle FK/reference generation and a later
+Holding → Control enabled transition preserve that target. Fresh manual movement
+starts from the retained reference with the usual startup ramp.
 
-After destination trials are exhausted, one second without 0.05° measured
-improvement holds **Armed—constrained**. An invalid inward transition also holds
-armed. Retry requires measured improvement, a meaningful input change, or fresh
-validated coordination; analog noise alone does not restart automatic attempts.
+After the fixed goal has been issued, one
+second without 0.1° measured improvement holds **Armed—constrained** (normalized
+units for the jaw). A single roughly 0.088° encoder tick does not restart a blocked
+episode. An invalid inward transition also holds armed. Retry requires measured
+improvement or a meaningful input change. Repeated solver proposals from the same
+held input and analog noise do not restart automatic attempts.
+
+**OFFLINE VERIFIED:** regression tests reproduce a static load offset and verify fixed-margin retreat,
+sustained measured clearance, retained targets through idle/re-arm, fresh-input
+reference continuity, long arm/jaw retreats and blocked encoder/solver noise.
+**HARDWARE — owner reported, 2026-11-09:** the final near-boundary capture and recovery
+worked well in their trial. Broader stop/reconnect and fault-injection checks remain
+pending; the agent performed no physical tests. See the [supervised run sheet](REMOTE_IK_TORQUE_STATES.md).
 
 Explicit Back/stop, control loss/watchdog, invalid feedback, calibrated-range
 violations, bus failures and incompatible components retain serious stop/fault
@@ -64,7 +89,7 @@ stationary correction remains disabled by default and is suspended in recovery.
 
 ## Components and diagnostics
 
-Windows, WSL and Pi require protocol **3**, policy **adaptive-limits-v3**. Startup
+Windows, WSL and Pi require protocol **4**, policy **boundary-capture-v4**. Startup
 compares model identity plus calibrated, operating and command ranges. Reinstall
 the stopped Pi service when updating code; WSL runs the Windows checkout directly.
 The installer includes the new recovery module and refuses to replace a live service.
@@ -72,7 +97,7 @@ The installer includes the new recovery module and refuses to replace a live ser
 `robot_program/remote_ik_recovery.py` owns Pi recovery state, transitions and pure
 validation. `MotorSession` owns serialized motor operations and applies those
 validation results. The WSL worker uses named candidates and explicit numerical
-thresholds. The pre-commit extraction changes no wire fields or motion policy.
+thresholds. The earlier extraction preserved wire fields; manual release adds explicit torque state and capture/release commands.
 
 Dashboard states distinguish Following path, Adapting pitch, Adapting path,
 Recovering and Armed—constrained. Wider moves explain `75° path escape`. Traces

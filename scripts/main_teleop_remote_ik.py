@@ -159,7 +159,7 @@ class MotorLink:
             if (self.metadata.get("v") != PROTOCOL_VERSION
                     or self.metadata.get("motion_policy") != MOTION_POLICY
                     or self.feedback.get("motion_policy") != MOTION_POLICY):
-                raise RuntimeError("Update Windows, WSL and Pi service for adaptive limit recovery")
+                raise RuntimeError("Update Windows, WSL and Pi service for boundary capture and recovery (protocol 4)")
             if (self.feedback.get("model") != self.metadata["model"]
                     or any(self.feedback.get(key) != self.metadata.get(key)
                            for key in ("limits", "calibrated_limits", "command_limits"))):
@@ -172,6 +172,7 @@ class MotorLink:
                 raise RuntimeError("Pi service needs rate metadata. Run scripts.install_remote_ik_pi first.")
             if not isinstance(self.feedback.get("session"), str):
                 raise ValueError("Motor service returned no session")
+            self.validate_torque_feedback(self.feedback)
             self.session = self.feedback["session"]
             self.socket.settimeout(min(0.5, self.feedback["watchdog_s"] * 2))
             if self.relax_on_exit:
@@ -194,12 +195,19 @@ class MotorLink:
             raise ValueError("Motor service protocol version differs")
         return response
 
+    @staticmethod
+    def validate_torque_feedback(feedback):
+        if (feedback.get("arm_torque") not in ("holding", "released", "unknown")
+                or feedback.get("arm_torque") != "holding" and (feedback.get("armed") or feedback.get("moving"))):
+            raise ValueError("Motor service returned invalid arm torque state")
+
     def request(self, op, **values):
         self.sequence += 1
         feedback = self.exchange({"op": op, "seq": self.sequence, "session": self.session,
                                   "feedback_seq": self.feedback["feedback_seq"], **values})
         if feedback.get("session") != self.session or feedback.get("ack") != self.sequence:
             raise ValueError("Motor service returned the wrong acknowledgement")
+        self.validate_torque_feedback(feedback)
         self.feedback = feedback
         return feedback
 
@@ -355,6 +363,8 @@ def main():
     parser.add_argument("--relax-on-exit", action="store_true", help="Release motor torque when the real arm service stops")
     parser.add_argument("--pi", default="eric@rpi", help="SSH destination")
     parser.add_argument("--index", type=int, choices=range(4), default=0, metavar="SLOT", help="XInput slot (0–3)")
+    parser.add_argument("--advance-button", choices=("Start", "Back"), default="Start",
+                        help="XInput button for Holding/control enable; the other stops/releases (Start=Options, Back=Share/Create)")
     parser.add_argument("--wsl-distro", default="Ubuntu")
     parser.add_argument("--wsl-python", default=DEFAULT_WSL_PYTHON, help="Linux path, absolute or relative to WSL home")
     parser.add_argument("--dashboard-port", type=int, default=18743,
@@ -420,10 +430,13 @@ def main():
             mode = "Local simulation" if args.dry_run else "Pi simulation" if args.pi_sim else "Real arm"
             url = f"http://127.0.0.1:{dashboard.port}/"
             print(f"{mode} · Controller dashboard {url}", flush=True)
-            print("Start arms with neutral controls. Hold LB to move. Back disarms. Esc stops and exits.", flush=True)
+            advance_button = args.advance_button
+            stop_button = "Back" if advance_button == "Start" else "Start"
+            print(f"{advance_button}: Released → Holding → Control enabled (separate neutral presses). "
+                  f"{stop_button}: stop control; fresh 2-second hold releases arm torque. Hold LB to move. Esc exits.", flush=True)
             if args.relax_on_exit:
                 print("Support the arm before exiting. The motors will release their hold.", flush=True)
-            latest = remote_ik_control.LatestInput()
+            latest = remote_ik_control.LatestInput(advance_button=advance_button, stop_button=stop_button)
             control = remote_ik_control.ControlLoop(worker, connect, latest, stop, args.speed, mode, trace=trace, correction_profile=correction_profile)
             thread = Thread(target=control.run, daemon=True)
             thread.start()
@@ -442,6 +455,8 @@ def main():
                     if now >= next_dashboard:
                         sample = latest.sample
                         status = dict(control.status)
+                        status["advance_button"] = advance_button
+                        status["stop_button"] = stop_button
                         if args.real_arm:
                             status["hardware_settings"] = tunnel.hardware_settings
                         measured = status.get("measured")
@@ -449,7 +464,7 @@ def main():
                         dashboard.publish(dict(zip(CHANNELS[:5], measured[:5])) if measured else {},
                                           measured[5] if measured else None,
                                           dict(zip("xyz", xyz)) if xyz else {}, sample.lb,
-                                          gamepad=sample.gamepad, remote=status)
+                                          gamepad=latest.raw_gamepad, remote=status)
                         next_dashboard = now + .1
                     # Sample faster than the motor loop to catch short gaps between taps.
                     next_gamepad = max(now, next_gamepad + GAMEPAD_POLL_S)
