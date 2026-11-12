@@ -36,6 +36,8 @@ validate_calibration.py checks that arithmetic using export metadata. It does no
 | 5 | wrist_roll | -180.00 | 179.91 | Independent controller channel |
 | 6 | gripper | -38.06 | 90.26 | Independent controller channel; see unit mismatch below |
 
+(Should not be trusted as ground truth since values can change with new calibration)
+
 The table contains exported degree bounds. Body channels use degrees with use_degrees=True, but LeRobot configures the gripper in normalized 0–100 units. RobotArmController applies these gripper degree bounds directly to normalized values; this is an unresolved mismatch, not an established conversion. Axis mode instead clamps the gripper to normalized 0–50.
 
 The standalone `LeRobotIKController` follows a separate limit path: five arm-joint bounds intersect URDF limits with calibrated endpoints converted by the installed LeRobot bus. It excludes the normalized gripper from IK and clamps jaw commands to 0–50. It does not use the custom controller's exported gripper degree bounds. The PC-led adapter must preserve explicit conversion boundaries and verify the intended gripper range before hardware trials; this existing handling supplies no collision checking.

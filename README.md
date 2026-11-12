@@ -129,7 +129,16 @@ In the existing Python 3.13 / LeRobot 0.6.1 Pi environment:
 ```bash
 python -m pip install -r requirements-pi-ik.txt
 python -m scripts.main_teleop_lerobot_ik
+python -m scripts.main_teleop_remote_ik --real-arm --trace .runtime/feedback-test.json
 ```
+
+Or: 
+
+```bash
+# Start venv, then run:
+python -m scripts.main_teleop_remote_ik --real-arm --trace .runtime/feedback-test.json
+```
+
 
 Use `--port /dev/serial/by-id/YOUR_ADAPTER` and `--index 0` when needed.
 The optional supplement adds Placo 0.9.15 and pins the existing CPU Torch/NumPy
