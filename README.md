@@ -6,7 +6,7 @@ A separate Pi mode uses **LeRobot's URDF-based FK/IK with fine movement** and st
 
 ## Windows gamepad through the Raspberry Pi
 
-The Windows launcher reads an XInput gamepad, opens a local dashboard, and uses official LeRobot IK in WSL2 with a mesh-free model. The Pi service owns the serial connection. Self-collision checking is outside this implementation’s scope.
+The Windows launcher automatically detects gamepads, including Bluetooth DualShock 4 controllers. The launcher serves a local dashboard and uses official LeRobot IK in WSL2 with a mesh-free model. The Pi service owns the serial connection. Self-collision checking is outside this implementation’s scope.
 
 ```powershell
 python.exe -m scripts.main_teleop_remote_ik --dry-run

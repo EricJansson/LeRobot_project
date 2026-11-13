@@ -137,7 +137,7 @@ def test_launcher_deploys_before_control_and_stops_on_failure(monkeypatch, mode,
     metadata = {"model": "fixture", "limits": [[-90., 90.]] * 5 + [[0., 50.]],
                 "calibrated_limits": [[-90., 90.]] * 5 + [[0., 50.]]}
     monkeypatch.setattr(sys, "argv", ["teleop", mode, "--pi", "test@other"])
-    monkeypatch.setattr(teleop, "XInputGamepad", lambda index: None)
+    monkeypatch.setattr(teleop, "open_gamepad", lambda *args: nullcontext(lambda: None))
     monkeypatch.setattr(teleop, "load_key_state", lambda: lambda key: -1)
     monkeypatch.setattr(teleop, "WebDashboard", lambda *args: nullcontext(SimpleNamespace(port=18743)))
     monkeypatch.setattr(teleop, "Worker", lambda *args: nullcontext(SimpleNamespace(metadata=metadata)))

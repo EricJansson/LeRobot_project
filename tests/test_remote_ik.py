@@ -19,6 +19,7 @@ import webbrowser
 import numpy as np
 import pytest
 
+from controller.input import windows_gamepad
 from controller.input.xinput import XInputGamepad, XInputPad, XInputState
 from robot_program.lerobot_ik_controller import DEFAULT_URDF, LeRobotPoseSolver
 from robot_program.remote_ik_protocol import (
@@ -71,7 +72,7 @@ def test_launcher_trace_overwrite(monkeypatch, tmp_path, capsys, existing, recor
     if existing:
         trace_path.write_text(old_data, encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["remote-ik", "--pi-sim", "--trace", str(trace_path)])
-    monkeypatch.setattr(remote_teleop, "XInputGamepad", lambda index: None)
+    monkeypatch.setattr(remote_teleop, "open_gamepad", lambda *args: nullcontext(lambda: None))
     monkeypatch.setattr(remote_teleop, "load_key_state", lambda: lambda key: -1)
     monkeypatch.setattr(remote_teleop, "WebDashboard", lambda *args: nullcontext(
         SimpleNamespace(port=18743, exit_reason=None)))
@@ -104,6 +105,7 @@ def test_launcher_trace_overwrite(monkeypatch, tmp_path, capsys, existing, recor
     (["--dashboard-port", "18744"], 18744), (["--dashboard-port", "0"], 0),
     (["--advance-button", "Start"], 18743),
     (["--advance-button", "Back"], 18743),
+    (["--gamepad", "sdl", "--index", "4"], 18743),
 ])
 def test_launcher_dashboard_port_and_manual_browser(monkeypatch, capsys, options, expected_port):
     ports = []
@@ -117,7 +119,12 @@ def test_launcher_dashboard_port_and_manual_browser(monkeypatch, capsys, options
         return server
 
     monkeypatch.setattr(remote_teleop, "WebDashboard", dashboard)
-    monkeypatch.setattr(remote_teleop, "XInputGamepad", lambda index: None)
+
+    def open_gamepad(backend, index):
+        assert (backend, index) == (("sdl", 4) if "--gamepad" in options else ("auto", None))
+        return nullcontext(lambda: None)
+
+    monkeypatch.setattr(remote_teleop, "open_gamepad", open_gamepad)
     monkeypatch.setattr(remote_teleop, "load_key_state", lambda: lambda key: -1)
     monkeypatch.setattr(remote_teleop, "Worker", lambda *args: nullcontext(
         SimpleNamespace(metadata=METADATA)))
@@ -135,7 +142,7 @@ def test_launcher_dashboard_port_and_manual_browser(monkeypatch, capsys, options
 
 
 def test_launcher_busy_dashboard_port(monkeypatch, capsys):
-    monkeypatch.setattr(remote_teleop, "XInputGamepad", lambda index: None)
+    monkeypatch.setattr(remote_teleop, "open_gamepad", lambda *args: nullcontext(lambda: None))
     monkeypatch.setattr(remote_teleop, "load_key_state", lambda: lambda key: -1)
     monkeypatch.setattr(remote_teleop, "Worker", lambda *args: pytest.fail("Worker started with busy dashboard port"))
     with remote_teleop.WebDashboard("127.0.0.1", 0) as dashboard:
@@ -797,6 +804,135 @@ def test_xinput_maps_a_single_slot_and_clears_disconnected_state(monkeypatch):
     pad.buttons = 0x0010
     latest.publish(reader.read())
     assert latest.sample.start == 1
+
+
+@pytest.mark.parametrize("backend, index, expected_slot", [("auto", None, 2), ("xinput", None, 0)])
+def test_windows_gamepad_uses_xinput_without_opening_sdl(monkeypatch, backend, index, expected_slot):
+    from controller.input import sdl_gamepad
+
+    slots_read = []
+
+    def xinput(slot):
+        def read():
+            slots_read.append(slot)
+            return {"name": f"XInput {slot}"} if slot == expected_slot else None
+
+        return SimpleNamespace(read=read)
+
+    monkeypatch.setattr(windows_gamepad, "XInputGamepad", xinput)
+    monkeypatch.setattr(sdl_gamepad, "open_sdl_gamepad", lambda _: pytest.fail("SDL opened"))
+    with windows_gamepad.open_gamepad(backend, index) as read:
+        assert read() == {"name": f"XInput {expected_slot}"}
+        assert read() == {"name": f"XInput {expected_slot}"}
+    assert slots_read == [*range(expected_slot + 1), expected_slot]
+
+
+def test_windows_gamepad_waits_for_sdl_and_keeps_its_selected_device(monkeypatch):
+    from controller.input import sdl_gamepad
+
+    now = 10.
+    sdl_connected = False
+    xinput_connected = False
+    opens = []
+    monkeypatch.setattr(windows_gamepad, "monotonic", lambda: now)
+    monkeypatch.setattr(windows_gamepad, "XInputGamepad", lambda _: SimpleNamespace(
+        read=lambda: {"name": "XInput"} if xinput_connected else None))
+
+    def open_sdl(index):
+        opens.append(index)
+        if not sdl_connected:
+            raise sdl_gamepad.NoSDLGamepad()
+        return nullcontext(SimpleNamespace(
+            name="PS4 Controller", index=1,
+            read=lambda: {"name": "PS4 Controller"} if sdl_connected else None,
+        ))
+
+    monkeypatch.setattr(sdl_gamepad, "open_sdl_gamepad", open_sdl)
+    with windows_gamepad.open_gamepad("auto", None) as read:
+        assert read() is None
+        sdl_connected = True
+        assert read() is None
+        now += 1
+        assert read() == {"name": "PS4 Controller"}
+        sdl_connected = False
+        xinput_connected = True
+        now += 1
+        assert read() is None
+    assert opens == [None, None]
+
+
+def test_sdl_maps_controls_and_drops_detached_controller(monkeypatch):
+    import pygame
+    from pygame._sdl2 import controller
+
+    from controller.input.sdl_gamepad import open_sdl_gamepad
+
+    axes = {
+        pygame.CONTROLLER_AXIS_LEFTX: -32768, pygame.CONTROLLER_AXIS_LEFTY: -32768,
+        pygame.CONTROLLER_AXIS_RIGHTX: 15, pygame.CONTROLLER_AXIS_RIGHTY: 32767,
+        pygame.CONTROLLER_AXIS_TRIGGERLEFT: 500, pygame.CONTROLLER_AXIS_TRIGGERRIGHT: 32767,
+    }
+    buttons = {pygame.CONTROLLER_BUTTON_LEFTSHOULDER, pygame.CONTROLLER_BUTTON_BACK,
+               pygame.CONTROLLER_BUTTON_DPAD_UP, pygame.CONTROLLER_BUTTON_DPAD_RIGHT}
+    connected = True
+    opened = []
+    closed = []
+
+    class Pad:
+        name = "PS4 Controller"
+
+        def __init__(self, index):
+            opened.append(index)
+
+        def attached(self):
+            return connected
+
+        def get_axis(self, axis):
+            return axes[axis]
+
+        def get_button(self, button):
+            return button in buttons
+
+        def quit(self):
+            closed.append(self.name)
+
+    monkeypatch.setattr(pygame.event, "clear", lambda: None)
+    monkeypatch.setattr(pygame.display, "init", lambda: None)
+    monkeypatch.setattr(pygame.display, "quit", lambda: None)
+    monkeypatch.setattr(controller, "init", lambda: None)
+    monkeypatch.setattr(controller, "quit", lambda: None)
+    monkeypatch.setattr(controller, "get_count", lambda: 2)
+    monkeypatch.setattr(controller, "is_controller", lambda index: index == 1)
+    monkeypatch.setattr(controller, "name_forindex", lambda index: Pad.name)
+    monkeypatch.setattr(controller, "Controller", Pad)
+
+    with pytest.raises(RuntimeError, match="Available gamepads: 1: PS4 Controller"):
+        with open_sdl_gamepad(0):
+            pytest.fail("Unmapped device was opened")
+    latest = LatestInput()
+    with open_sdl_gamepad() as reader:
+        assert reader.index == 1
+        sample = reader.read()
+        assert sample["name"] == Pad.name
+        assert sample["axes"] == {"LX": -1., "LY": -1., "RX": 0., "RY": 1., "LT": 0., "RT": 1.}
+        assert {label for label, pressed in sample["buttons"].items() if pressed} == {"Back", "LB"}
+        assert sample["dpad"] == (1, 1)
+        latest.publish(sample)
+
+        axes[pygame.CONTROLLER_AXIS_TRIGGERLEFT] = 32767
+        axes[pygame.CONTROLLER_AXIS_TRIGGERRIGHT] = 0
+        buttons.clear()
+        buttons.update((pygame.CONTROLLER_BUTTON_START, pygame.CONTROLLER_BUTTON_DPAD_DOWN))
+        sample = reader.read()
+        assert (sample["axes"]["LT"], sample["axes"]["RT"]) == (1., 0.)
+        assert {label for label, pressed in sample["buttons"].items() if pressed} == {"Start"}
+        assert sample["dpad"] == (0, -1)
+
+        connected = False
+        latest.publish(reader.read())
+        assert latest.sample.gamepad is None and latest.sample.release == 1 and latest.sample.disconnect == 1
+        assert reader.read() is None
+    assert opened == [1] and closed == [Pad.name]
 
 
 @pytest.mark.parametrize("simulated", [True, False])

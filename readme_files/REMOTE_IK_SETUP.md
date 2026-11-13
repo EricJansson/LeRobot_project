@@ -1,6 +1,6 @@
 # Remote SO-101 IK from Windows
 
-Windows samples a gamepad through native XInput and shows a read-only dashboard on loopback. Ubuntu WSL2 runs Hugging Face LeRobot 0.6.1 `RobotKinematics` with PlaCo. The worker strips visual and collision elements from the URDF and preserves the kinematics. This implementation has no self-collision or environment collision checks.
+Windows samples a gamepad through native XInput or Pygame's SDL controller API and shows a read-only dashboard on loopback. Ubuntu WSL2 runs Hugging Face LeRobot 0.6.1 `RobotKinematics` with PlaCo. The worker strips visual and collision elements from the URDF and preserves the kinematics. This implementation has no self-collision or environment collision checks.
 
 ## Set up and run a simulation
 
@@ -28,7 +28,12 @@ automatic port change. Browser opening is always manual; the obsolete `--no-brow
 These defaults apply to the Windows remote IK launcher; standalone Pi defaults
 are unchanged.
 
-Connect an XInput gamepad to Windows. The launcher uses slot 0 by default. Use `--index` to select another slot. The dashboard shows sticks, triggers, D-pad and buttons before arming.
+The launcher looks for a gamepad at startup and keeps looking until one is available. It tries XInput slots in order, then the first mapped SDL device. This covers Bluetooth DualShock 4 controllers. The terminal shows the selected controller. For a specific device or a repeatable test, use `--gamepad xinput` or `--gamepad sdl`, with `--index N` if needed. Either explicit backend defaults to index 0.
+
+1. In Windows **Settings → Bluetooth & devices**, confirm **Wireless Controller** is connected. Use the Windows project `.venv`, which includes Pygame, and the WSL2 environment above.
+2. In Windows PowerShell from the repository root, run `.\.venv\Scripts\python.exe -m scripts.main_teleop_remote_ik --dry-run`. With the DualShock 4 as the only controller, expect `Gamepad: PS4 Controller (SDL index 0)` or the SDL index Windows assigned it.
+3. Open the printed dashboard URL. While Released, test both sticks, each trigger, D-pad up/down, L1, and then Share. Expect the matching axes and buttons to light up and return to neutral on release. Tap Options last and expect the dashboard to show Start and advance the simulated arm to Holding.
+4. Turn the controller off to check that the dashboard shows it disconnected. Press **Esc** to exit. Reconnect it in Windows and relaunch to open the new SDL instance. If any check fails, record the startup message and the controls that did not match the dashboard.
 
 There are three states: **Released** (blue, all six motors off, including the gripper), **Holding** (position held, controller movement disabled), and **Control enabled** (LB still required for ordinary manual movement). By default **Start / Options** advances Released → Holding → Control enabled using separate neutral presses. **Back / Share / Create** immediately stops control into Holding; a **fresh two-second hold from Holding** releases arm torque. The dashboard displays an animated progress circle. Neutral sticks, triggers and D-pad with LB released are required for advancing or releasing. To swap the two physical buttons, pass `--advance-button Back`. The dashboard and console show the selected mapping. Verify the actual device mapping in simulation first. See [torque states and supervised test steps](REMOTE_IK_TORQUE_STATES.md).
 
@@ -172,7 +177,7 @@ restart or motor test was performed during this fix.
 
 ## Control-code ownership
 
-The launcher owns arguments, Windows XInput/Esc sampling, configurable advance/stop buttons, WSL/Pi connections and dashboard lifecycle. `robot_program/remote_ik_control.py` owns input-edge tracking, the release timer, per-session `MotionState`, startup ramping, post-solve input checks, issued-reference acceptance and reporting. Stationary correction remains optional in `robot_program/remote_ik_correction.py`. The worker owns IK and candidate selection; `robot_program/remote_ik_recovery.py` owns Pi-local recovery state and pure validation, while the motor service alone owns serialized torque and goal operations. Manual release requires protocol 4, policy `boundary-capture-v4`; legacy standalone launchers are unchanged.
+The launcher owns arguments, Windows gamepad and Esc sampling, configurable advance/stop buttons, WSL/Pi connections and dashboard lifecycle. `robot_program/remote_ik_control.py` owns input-edge tracking, the release timer, per-session `MotionState`, startup ramping, post-solve input checks, issued-reference acceptance and reporting. Stationary correction remains optional in `robot_program/remote_ik_correction.py`. The worker owns IK and candidate selection; `robot_program/remote_ik_recovery.py` owns Pi-local recovery state and pure validation, while the motor service alone owns serialized torque and goal operations. Manual release requires protocol 4, policy `boundary-capture-v4`; legacy standalone launchers are unchanged.
 
 The normal launcher command remains:
 

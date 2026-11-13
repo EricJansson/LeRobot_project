@@ -16,7 +16,7 @@ import sys
 from threading import Event, Lock, Thread
 from time import perf_counter as monotonic, sleep
 
-from controller.input.xinput import XInputGamepad
+from controller.input.windows_gamepad import open_gamepad
 from robot_program.remote_ik_correction import CorrectionProfile
 from robot_program import remote_ik_control
 from robot_program.remote_ik_protocol import (
@@ -362,9 +362,12 @@ def main():
     modes.add_argument("--real-arm", action="store_true", help="Connect to the real robot arm on the Pi")
     parser.add_argument("--relax-on-exit", action="store_true", help="Release motor torque when the real arm service stops")
     parser.add_argument("--pi", default="eric@rpi", help="SSH destination")
-    parser.add_argument("--index", type=int, choices=range(4), default=0, metavar="SLOT", help="XInput slot (0–3)")
+    parser.add_argument("--gamepad", choices=("auto", "xinput", "sdl"), default="auto",
+                        help="Input backend (default %(default)s)")
+    parser.add_argument("--index", type=int, metavar="INDEX",
+                        help="Select an XInput slot (0–3) or SDL device index")
     parser.add_argument("--advance-button", choices=("Start", "Back"), default="Start",
-                        help="XInput button for Holding/control enable; the other stops/releases (Start=Options, Back=Share/Create)")
+                        help="Button for Holding/control enable; the other stops/releases (Start=Options, Back=Share/Create)")
     parser.add_argument("--wsl-distro", default="Ubuntu")
     parser.add_argument("--wsl-python", default=DEFAULT_WSL_PYTHON, help="Linux path, absolute or relative to WSL home")
     parser.add_argument("--dashboard-port", type=int, default=18743,
@@ -374,6 +377,8 @@ def main():
     parser.add_argument("--speed", type=float, default=1.0, help="Gamepad motion scale (default %(default)g)")
     parser.add_argument("--correction-profile", type=Path, help="Explicit commissioned stationary-correction JSON profile")
     args = parser.parse_args()
+    if args.index is not None and (args.index < 0 or (args.gamepad == "xinput" and args.index > 3)):
+        parser.error("--index must be nonnegative and at most 3 when forcing XInput")
     correction_profile = None
     if args.correction_profile is not None:
         try:
@@ -397,9 +402,9 @@ def main():
         revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
         dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True).stdout)
     try:
-        gamepad = XInputGamepad(args.index)
         get_key_state = load_key_state()
         with ExitStack() as stack:
+            read_gamepad = stack.enter_context(open_gamepad(args.gamepad, args.index))
             try:
                 dashboard = stack.enter_context(WebDashboard("127.0.0.1", args.dashboard_port))
             except OSError as exc:
@@ -452,7 +457,7 @@ def main():
                         stop.set()
                         print("Esc pressed. Stopping teleop.", flush=True)
                         break
-                    latest.publish(gamepad.read())
+                    latest.publish(read_gamepad())
                     now = monotonic()
                     if now >= next_dashboard:
                         sample = latest.sample
