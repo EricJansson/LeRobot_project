@@ -457,7 +457,13 @@ def main():
                         stop.set()
                         print("Esc pressed. Stopping teleop.", flush=True)
                         break
-                    latest.publish(read_gamepad())
+                    previous_gamepad = latest.raw_gamepad
+                    gamepad = read_gamepad()
+                    latest.publish(gamepad)
+                    if previous_gamepad is None and gamepad is not None:
+                        print(f"Gamepad: {gamepad['name']}", flush=True)
+                    elif previous_gamepad is not None and gamepad is None:
+                        print("Gamepad disconnected. Looking for a controller.", flush=True)
                     now = monotonic()
                     if now >= next_dashboard:
                         sample = latest.sample

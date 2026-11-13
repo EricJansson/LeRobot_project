@@ -2,10 +2,13 @@
 
 from contextlib import contextmanager
 
-import pygame
-from pygame._sdl2 import controller
-
+from controller.input.pygame_support import quiet_pygame_import
 from controller.input.xinput import STICK_DEADZONE, TRIGGER_DEADZONE
+
+
+with quiet_pygame_import():
+    import pygame
+    from pygame._sdl2 import controller
 
 
 STICKS = {
@@ -52,7 +55,7 @@ def open_sdl_gamepad(index=None):
                 # The device may disappear between enumeration and opening.
                 raise NoSDLGamepad(f"Could not open SDL gamepad at index {index}: {exc}") from exc
             try:
-                yield SDLGamepad(pad, index)
+                yield SDLGamepad(pad)
             finally:
                 pad.quit()
         finally:
@@ -64,9 +67,8 @@ def open_sdl_gamepad(index=None):
 
 
 class SDLGamepad:
-    def __init__(self, pad, index):
+    def __init__(self, pad):
         self.pad = pad
-        self.index = index
         self.name = pad.name
 
     def read(self):

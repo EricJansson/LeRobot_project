@@ -20,7 +20,9 @@ def open_gamepad(backend, index):
     with ExitStack() as stack:
         read_selected = None
         if backend == "sdl":
-            read_selected = _open_sdl(stack, index).read
+            from controller.input.sdl_gamepad import open_sdl_gamepad
+
+            read_selected = stack.enter_context(open_sdl_gamepad(index)).read
         next_probe = 0.
 
         def read():
@@ -31,7 +33,6 @@ def open_gamepad(backend, index):
                     return sample
                 read_selected = None
                 next_probe = monotonic() + PROBE_INTERVAL_S
-                print("Gamepad disconnected. Looking for a controller.", flush=True)
                 # Publish input loss before closing the old handle or probing another device.
                 return None
 
@@ -45,16 +46,15 @@ def open_gamepad(backend, index):
                 sample = pad.read()
                 if sample is not None:
                     read_selected = pad.read
-                    print(f"Gamepad: {sample['name']}", flush=True)
                     return sample
 
             if backend == "xinput":
                 return None
 
-            from controller.input.sdl_gamepad import NoSDLGamepad
+            from controller.input.sdl_gamepad import NoSDLGamepad, open_sdl_gamepad
 
             try:
-                pad = _open_sdl(stack, index)
+                pad = stack.enter_context(open_sdl_gamepad(index))
             except NoSDLGamepad:
                 return None
             sample = pad.read()
@@ -63,11 +63,3 @@ def open_gamepad(backend, index):
             return sample
 
         yield read
-
-
-def _open_sdl(stack, index):
-    from controller.input.sdl_gamepad import open_sdl_gamepad
-
-    pad = stack.enter_context(open_sdl_gamepad(index))
-    print(f"Gamepad: {pad.name} (SDL index {pad.index}).", flush=True)
-    return pad

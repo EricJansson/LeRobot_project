@@ -849,8 +849,7 @@ def test_windows_gamepad_rediscovers_after_disarming_on_input_loss(monkeypatch, 
             raise sdl_gamepad.NoSDLGamepad()
         device = connected
         try:
-            yield SimpleNamespace(name="PS4 Controller", index=device[1],
-                                  read=lambda: {**controls, "name": "PS4 Controller"}
+            yield SimpleNamespace(read=lambda: {**controls, "name": "PS4 Controller"}
                                   if connected == device else None)
         finally:
             closed.append(device)
@@ -955,7 +954,6 @@ def test_sdl_maps_controls_and_drops_detached_controller(monkeypatch):
             pytest.fail("Unmapped device was opened")
     latest = LatestInput()
     with open_sdl_gamepad() as reader:
-        assert reader.index == 1
         sample = reader.read()
         assert sample["name"] == Pad.name
         assert sample["axes"] == {"LX": -1., "LY": -1., "RX": 0., "RY": 1., "LT": 0., "RT": 1.}
