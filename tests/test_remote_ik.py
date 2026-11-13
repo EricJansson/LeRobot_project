@@ -131,7 +131,7 @@ def test_launcher_dashboard_port_and_manual_browser(monkeypatch, capsys, options
     monkeypatch.setattr(remote_ik_control, "ControlLoop", lambda *args, **kwargs:
                         SimpleNamespace(run=lambda: None, error=None))
     monkeypatch.setattr(webbrowser, "open", lambda *args, **kwargs: pytest.fail("Browser opened automatically"))
-    monkeypatch.setattr(remote_teleop.subprocess, "run", lambda *args, **kwargs: pytest.fail("Git called without tracing"))
+    monkeypatch.setattr(remote_teleop, "git_output", lambda *args: None)
     monkeypatch.setattr(sys, "argv", ["remote-ik", "--dry-run", *options])
     remote_teleop.main()
     assert ports == [expected_port]
@@ -1074,12 +1074,19 @@ def test_removed_launcher_flags_are_rejected(monkeypatch, capsys, flag):
     assert "unrecognized arguments: " + flag in capsys.readouterr().err
 
 
-def test_mode_remains_explicit(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["remote-ik"])
+@pytest.mark.parametrize("flags, message", [
+    (["--dry-run", "--pi-sim"], "not allowed with argument"),
+    (["--dry-run", "--real-arm"], "not allowed with argument"),
+    (["--pi-sim", "--real-arm"], "not allowed with argument"),
+    (["--dry-run", "--relax-on-exit"], "--relax-on-exit requires real-arm mode"),
+    (["--pi-sim", "--relax-on-exit"], "--relax-on-exit requires real-arm mode"),
+])
+def test_invalid_launcher_mode_options(monkeypatch, capsys, flags, message):
+    monkeypatch.setattr(sys, "argv", ["remote-ik", *flags])
     with pytest.raises(SystemExit) as exc:
         remote_teleop.main()
     assert exc.value.code == 2
-    assert "Choose --dry-run, --pi-sim, or --real-arm" in capsys.readouterr().err
+    assert message in capsys.readouterr().err
 
 
 def test_worker_request_parameters_are_explicit_per_call():

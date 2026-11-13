@@ -2,7 +2,9 @@
 
 from contextlib import nullcontext
 from io import BytesIO
+import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tarfile
@@ -14,6 +16,7 @@ import pytest
 from scripts import install_remote_ik_pi as installer
 from scripts import main_teleop_remote_ik as teleop
 from scripts import remote_ik_deploy as deploy
+from scripts.remote_ik_diagnostics import summarize
 
 
 @pytest.fixture
@@ -130,13 +133,27 @@ def test_standalone_installer_forces_repair(monkeypatch):
     assert calls == [(("test@other",), {"force": True})]
 
 
-@pytest.mark.parametrize("mode, fail", [("--pi-sim", False), ("--real-arm", False),
-                                      ("--dry-run", False), ("--pi-sim", True)])
-def test_launcher_deploys_before_control_and_stops_on_failure(monkeypatch, mode, fail):
+@pytest.mark.parametrize("flags, mode, capture", [
+    ([], "real-arm", "default"),
+    (["--real-arm", "--trace", ".runtime/remote-ik-latest.json"], "real-arm", "default"),
+    (["--relax-on-exit"], "real-arm", "default"),
+    (["--pi-sim", "--pi", "test@other", "--trace", "named.json"], "pi-sim", "custom"),
+    (["--pi-sim"], "pi-sim", "default"),
+    (["--dry-run"], "dry-run", "default"),
+    (["--dry-run"], "dry-run", "empty"),
+    (["--pi-sim"], "pi-sim", "deploy-failure"),
+])
+def test_launcher_modes_deployment_and_trace(monkeypatch, tmp_path, capsys, flags, mode, capture):
     events = []
     metadata = {"model": "fixture", "limits": [[-90., 90.]] * 5 + [[0., 50.]],
                 "calibrated_limits": [[-90., 90.]] * 5 + [[0., 50.]]}
-    monkeypatch.setattr(sys, "argv", ["teleop", mode, "--pi", "test@other"])
+    default_trace = tmp_path / ".runtime/remote-ik-latest.json"
+    default_trace.parent.mkdir()
+    previous = '{"ticks": ["previous capture"]}'
+    default_trace.write_text(previous, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(teleop, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["teleop", *flags])
     monkeypatch.setattr(teleop, "open_gamepad", lambda *args: nullcontext(lambda: None))
     monkeypatch.setattr(teleop, "load_key_state", lambda: lambda key: -1)
     monkeypatch.setattr(teleop, "WebDashboard", lambda *args: nullcontext(SimpleNamespace(port=18743)))
@@ -144,34 +161,79 @@ def test_launcher_deploys_before_control_and_stops_on_failure(monkeypatch, mode,
     monkeypatch.setattr(teleop, "MotorSession", lambda *args, **kwargs: None)
     monkeypatch.setattr(teleop, "serve", lambda *args: None)
 
+    def git(command, **kwargs):
+        assert command[0] == "git"
+        if mode == "dry-run":
+            raise FileNotFoundError("git not found")
+        return SimpleNamespace(stdout="abc123\n" if command[1] == "rev-parse" else " M README.md\n")
+
     def ensure(host):
-        assert mode != "--dry-run"
-        assert host == "test@other"
+        assert mode != "dry-run"
+        assert host == ("test@other" if capture == "custom" else "eric@rpi")
         events.append("deploy")
-        if fail:
+        if capture == "deploy-failure":
             raise RuntimeError("installation failed")
         return "a" * 64
 
     def tunnel(host, simulated, **kwargs):
+        assert simulated is (mode == "pi-sim")
+        assert kwargs["relax_on_exit"] is ("--relax-on-exit" in flags)
         assert kwargs["fingerprint"] == "a" * 64
         events.append("tunnel")
-        return nullcontext(SimpleNamespace(connect=None, hardware_settings=None))
+        return nullcontext(SimpleNamespace(connect=None, hardware_config="fixture hardware settings"))
 
-    def control(*args, **kwargs):
+    def control(*args, trace, **kwargs):
         events.append("control")
-        return SimpleNamespace(run=lambda: None, error=None)
 
+        def run():
+            if capture != "empty":
+                for i in range(3001):
+                    trace.append({"tick_s": i, "ack_s": i + .01})
+
+        return SimpleNamespace(run=run, error=None)
+
+    monkeypatch.setattr(teleop.subprocess, "run", git)
     monkeypatch.setattr(teleop, "ensure_installed", ensure)
     monkeypatch.setattr(teleop, "PiTunnel", tunnel)
     monkeypatch.setattr(teleop.remote_ik_control, "ControlLoop", control)
-    if fail:
+    if capture == "deploy-failure":
         with pytest.raises(SystemExit) as error:
             teleop.main()
         assert error.value.code == 1
         assert events == ["deploy"]
     else:
         teleop.main()
-        assert events == (["control"] if mode == "--dry-run" else ["deploy", "tunnel", "control"])
+        assert events == (["control"] if mode == "dry-run" else ["deploy", "tunnel", "control"])
+
+    if capture != "default":
+        assert default_trace.read_text(encoding="utf-8") == previous
+    if capture in {"default", "custom"}:
+        path = tmp_path / "named.json" if capture == "custom" else default_trace
+        report = json.loads(path.read_text(encoding="utf-8"))
+        assert str(path.resolve()) in capsys.readouterr().out
+        assert report["provenance"]["mode"] == mode
+        assert report["provenance"]["revision"] == (None if mode == "dry-run" else "abc123")
+        assert report["provenance"]["dirty"] is (None if mode == "dry-run" else True)
+        assert report["provenance"]["hardware_config"] == ("fixture hardware settings" if mode == "real-arm" else None)
+        assert report["ticks"][0]["tick_s"] == 1
+        assert summarize(report)["ticks"] == 3000
+
+
+@pytest.mark.parametrize("failure", ["serialize", "replace"])
+def test_trace_write_failure_preserves_previous_capture(monkeypatch, tmp_path, failure):
+    path = tmp_path / "trace.json"
+    path.write_text('{"ticks": ["previous capture"]}', encoding="utf-8")
+
+    def reject_replace(*args):
+        raise PermissionError("Trace destination is locked")
+
+    if failure == "replace":
+        monkeypatch.setattr(Path, "replace", reject_replace)
+    payload = {"ticks": [object() if failure == "serialize" else "new capture"]}
+    with pytest.raises(TypeError if failure == "serialize" else PermissionError):
+        teleop.save_trace(path, payload)
+    assert json.loads(path.read_text(encoding="utf-8")) == {"ticks": ["previous capture"]}
+    assert list(tmp_path.iterdir()) == [path]
 
 
 @pytest.mark.parametrize("simulated, expected_port", [(True, deploy.PI_SIM_PORT), (False, deploy.PI_PORT)])

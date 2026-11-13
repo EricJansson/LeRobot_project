@@ -13,6 +13,7 @@ import shlex
 import socket
 import subprocess
 import sys
+from tempfile import NamedTemporaryFile
 from threading import Event, Lock, Thread
 from time import perf_counter as monotonic, sleep
 
@@ -33,6 +34,7 @@ from scripts.remote_ik_deploy import (
 HARDWARE_CONFIG = ROOT / "remote_ik.hardware.conf"
 DEFAULT_WSL_PYTHON = ".local/share/lerobot-phase0/venv/bin/python"
 GAMEPAD_POLL_S = 1 / 250
+DEFAULT_TRACE = Path(".runtime") / "remote-ik-latest.json"
 TRACE_MAX_TICKS = 3000
 VK_ESCAPE = 0x1B
 TELEOP_ERRORS = (OSError, RuntimeError, ValueError, subprocess.SubprocessError)
@@ -352,14 +354,39 @@ class PiTunnel:
         return MotorLink(self.local_port, self.token, metadata, self.simulated, relax_on_exit=self.relax_on_exit)
 
 
+def git_output(*args):
+    try:
+        return subprocess.run(["git", *args], cwd=ROOT, capture_output=True,
+                              text=True, check=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return None
+
+
+def save_trace(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                prefix=f".{path.name}.", suffix=".tmp", delete=False) as output:
+            temporary = Path(output.name)
+            json.dump(payload, output, indent=2)
+        temporary.replace(path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
-    modes.add_argument("--dry-run", action="store_true", help="Use a local simulated arm with real WSL2 IK")
-    modes.add_argument("--pi-sim", action="store_true", help="Use the Pi’s simulated bus over SSH")
-    modes.add_argument("--real-arm", action="store_true", help="Connect to the real robot arm on the Pi")
+    modes.add_argument("--dry-run", dest="mode", action="store_const", const="dry-run",
+                       help="Use a local simulated arm with real WSL2 IK")
+    modes.add_argument("--pi-sim", dest="mode", action="store_const", const="pi-sim",
+                       help="Use the Pi’s simulated bus over SSH")
+    modes.add_argument("--real-arm", dest="mode", action="store_const", const="real-arm",
+                       help="Connect to the real robot arm on the Pi (default)")
     parser.add_argument("--relax-on-exit", action="store_true", help="Release motor torque when the real arm service stops")
     parser.add_argument("--pi", default="eric@rpi", help="SSH destination")
     parser.add_argument("--gamepad", choices=("auto", "xinput", "sdl"), default="auto",
@@ -372,11 +399,13 @@ def main():
     parser.add_argument("--wsl-python", default=DEFAULT_WSL_PYTHON, help="Linux path, absolute or relative to WSL home")
     parser.add_argument("--dashboard-port", type=int, default=18743,
                         help="Dashboard port (default %(default)s; 0 selects a random port)")
-    parser.add_argument("--trace", type=Path, metavar="PATH",
-                        help="Save the last 3000 control ticks after stopping, overwriting PATH if it exists")
+    parser.add_argument("--trace", type=Path, metavar="PATH", default=ROOT / DEFAULT_TRACE,
+                        help=f"Save up to {TRACE_MAX_TICKS} control ticks on exit, replacing the previous capture "
+                             f"(default: {DEFAULT_TRACE.as_posix()} in the checkout)")
     parser.add_argument("--speed", type=float, default=1.0, help="Gamepad motion scale (default %(default)g)")
     parser.add_argument("--correction-profile", type=Path, help="Explicit commissioned stationary-correction JSON profile")
     args = parser.parse_args()
+    mode = args.mode or "real-arm"
     if args.index is not None and (args.index < 0 or (args.gamepad == "xinput" and args.index > 3)):
         parser.error("--index must be nonnegative and at most 3 when forcing XInput")
     correction_profile = None
@@ -385,23 +414,20 @@ def main():
             correction_profile = CorrectionProfile(**json.loads(args.correction_profile.read_text(encoding="utf-8")))
         except (OSError, ValueError, TypeError) as exc:
             parser.error(f"Invalid correction profile: {exc}")
-    if not (args.dry_run or args.pi_sim or args.real_arm):
-        parser.error("Choose --dry-run, --pi-sim, or --real-arm. See readme_files/REMOTE_IK_SETUP.md.")
-    if args.relax_on_exit and not args.real_arm:
-        parser.error("--relax-on-exit requires --real-arm")
+    real_arm = mode == "real-arm"
+    if args.relax_on_exit and not real_arm:
+        parser.error("--relax-on-exit requires real-arm mode")
     if not re.fullmatch(r"[a-zA-Z0-9_][a-zA-Z0-9_.-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*", args.pi):
         parser.error("--pi must be user@host")
     if not 0 < args.speed <= 1 or not 0 <= args.dashboard_port <= 65535:
         parser.error("Invalid speed or dashboard port")
 
     stop = Event()
-    trace = deque(maxlen=TRACE_MAX_TICKS) if args.trace is not None else None
+    trace = deque(maxlen=TRACE_MAX_TICKS)
     trace_model = None
-    revision, dirty = None, None
-    if trace is not None:
-        revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
-        dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True).stdout)
     try:
+        revision = git_output("rev-parse", "HEAD")
+        git_status = git_output("status", "--porcelain")
         get_key_state = load_key_state()
         with ExitStack() as stack:
             read_gamepad = stack.enter_context(open_gamepad(args.gamepad, args.index))
@@ -412,7 +438,7 @@ def main():
                                    "If the port is in use, stop the other server or choose --dashboard-port PORT.") from exc
             worker = stack.enter_context(Worker(args.wsl_distro, args.wsl_python))
             trace_model = worker.metadata["model"]
-            if args.dry_run:
+            if mode == "dry-run":
                 listener = stack.enter_context(socket.socket())
                 listener.bind(("127.0.0.1", 0))
                 listener.listen(4)
@@ -430,13 +456,13 @@ def main():
                     return MotorLink(listener.getsockname()[1], token, metadata, True)
             else:
                 fingerprint = ensure_installed(args.pi)
-                tunnel = stack.enter_context(PiTunnel(args.pi, args.pi_sim, relax_on_exit=args.relax_on_exit,
+                tunnel = stack.enter_context(PiTunnel(args.pi, mode == "pi-sim", relax_on_exit=args.relax_on_exit,
                                                       fingerprint=fingerprint))
                 connect = tunnel.connect
 
-            mode = "Local simulation" if args.dry_run else "Pi simulation" if args.pi_sim else "Real arm"
+            mode_label = {"dry-run": "Local simulation", "pi-sim": "Pi simulation", "real-arm": "Real arm"}[mode]
             url = f"http://127.0.0.1:{dashboard.port}/"
-            print(f"{mode} · Controller dashboard {url}", flush=True)
+            print(f"{mode_label} · Controller dashboard {url}", flush=True)
             advance_button = args.advance_button
             stop_button = "Back" if advance_button == "Start" else "Start"
             print(f"{advance_button}: Released → Holding → Control enabled (separate neutral presses). "
@@ -444,7 +470,8 @@ def main():
             if args.relax_on_exit:
                 print("Support the arm before exiting. The motors will release their hold.", flush=True)
             latest = remote_ik_control.LatestInput(advance_button=advance_button, stop_button=stop_button)
-            control = remote_ik_control.ControlLoop(worker, connect, latest, stop, args.speed, mode, trace=trace, correction_profile=correction_profile)
+            control = remote_ik_control.ControlLoop(worker, connect, latest, stop, args.speed, mode_label,
+                                                   trace=trace, correction_profile=correction_profile)
             thread = Thread(target=control.run, daemon=True)
             thread.start()
             try:
@@ -470,7 +497,7 @@ def main():
                         status = dict(control.status)
                         status["advance_button"] = advance_button
                         status["stop_button"] = stop_button
-                        if args.real_arm:
+                        if real_arm:
                             status["hardware_settings"] = tunnel.hardware_settings
                         measured = status.get("measured")
                         xyz = status.get("xyz_m")
@@ -496,15 +523,21 @@ def main():
     finally:
         if trace:
             try:
-                args.trace.parent.mkdir(parents=True, exist_ok=True)
-                with args.trace.open("w", encoding="utf-8") as output:
-                    json.dump({"model": trace_model, "provenance": {"revision": revision, "dirty": dirty,
-                               "controller": MOTION_POLICY, "speed": args.speed,
-                               "correction_profile": vars(correction_profile) if correction_profile else None,
-                               "hardware_config": HARDWARE_CONFIG.read_text() if args.real_arm and HARDWARE_CONFIG.exists() else None},
-                               "ticks": list(trace.copy())}, output, indent=2)
+                save_trace(args.trace, {
+                    "model": trace_model,
+                    "provenance": {
+                        "revision": revision,
+                        "dirty": bool(git_status) if git_status is not None else None,
+                        "mode": mode,
+                        "controller": MOTION_POLICY,
+                        "speed": args.speed,
+                        "correction_profile": vars(correction_profile) if correction_profile else None,
+                        "hardware_config": tunnel.hardware_config if real_arm else None,
+                    },
+                    "ticks": list(trace.copy()),
+                })
                 print(f"Remote IK trace saved to {args.trace.resolve()}", flush=True)
-            except OSError as exc:
+            except (OSError, TypeError, ValueError) as exc:
                 parser.exit(1, f"Could not save remote IK trace: {exc}\n")
 
 

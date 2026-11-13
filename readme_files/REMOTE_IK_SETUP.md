@@ -24,9 +24,9 @@ Open http://127.0.0.1:18743/ manually and keep the tab open: it shows the stop
 reason after shutdown and reconnects automatically when the launcher restarts.
 Use `--dashboard-port 18744` to choose another fixed port, or `--dashboard-port 0`
 for a random available port. A busy port causes a startup error instead of an
-automatic port change. Browser opening is always manual; the obsolete `--no-browser` and `--commission-ik` flags have been removed. Use `--real-arm` for physical hardware.
-These defaults apply to the Windows remote IK launcher; standalone Pi defaults
-are unchanged.
+automatic port change. Open the browser manually. The launcher no longer accepts
+`--no-browser` or `--commission-ik`. Pass `--dry-run` or `--pi-sim` explicitly
+for simulation because the Windows launcher defaults to the physical arm.
 
 The launcher looks for a gamepad at startup and again after a disconnect. While waiting it checks about once a second, trying XInput slots in order, then the first mapped SDL device. This covers cable and Bluetooth connections, including DualShock 4. The terminal shows the selected controller. Controller loss disarms control. Once the controller returns, release the controls and press the configured advance button (Options/Start by default) to advance from the current torque state. For a specific device or a repeatable test, use `--gamepad xinput` or `--gamepad sdl`, with `--index N` if needed. Either explicit backend defaults to index 0 and reconnects within that selection.
 
@@ -51,14 +51,7 @@ Operating-limit excursions inside calibrated motor ranges now recover inward whi
 
 Stationary correction is **disabled by default**. An explicitly commissioned JSON profile can be supplied with `--correction-profile PATH`; see [path verification and supervised tests](REMOTE_IK_PATH_VERIFICATION.md). Correction never runs with LB released. This software has not been hardware verified for the new behavior.
 
-For a short diagnostic run, add `--trace .runtime/remote-ik-test.json` to the launcher command. After you press **Esc**, the launcher saves up to the last 3,000 completed control ticks, overwriting any existing file at that path. If no ticks were recorded, the existing file is left unchanged. From the Windows checkout, add modeled issued and measured XYZ to a copy using the default WSL environment.
-
-```powershell
-wsl.exe -d Ubuntu --exec sh -lc '~/.local/share/lerobot-phase0/venv/bin/python -m scripts.remote_ik_worker --analyze-trace .runtime/remote-ik-test.json' |
-    Set-Content -Encoding utf8 .runtime/remote-ik-test-xyz.json
-```
-
-Compare `desired_xyz_m`, `issued_xyz_m`, and `measured_xyz_m` around a drop. The `xyz_reset` and `op` fields identify reference resets and holds. The difference between `issued_before` and `issued` shows the joint target step.
+The launcher saves a [trace for diagnostics](#traces-and-diagnostics) when you stop the simulation.
 
 To test the real SSH link with the Pi’s simulated bus:
 
@@ -70,7 +63,7 @@ The installer defaults to `eric@rpi`, uses the Pi’s existing `~/lerobot-env`, 
 
 ### Automatic Pi service updates
 
-The `--pi-sim` and `--real-arm` launch modes check the installed Pi release before starting the control loop. You no longer need to run the installer between implementations. The launcher prints **Checking Pi service**, followed by **Pi service is up to date** or **Installing Pi service** and **Installed Pi service** with a short fingerprint. A fresh Pi or an older installation without a fingerprint is installed automatically using the existing `~/lerobot-env`; Python dependencies are not installed or upgraded.
+The real-arm mode and `--pi-sim` check the installed Pi release before starting the control loop. You no longer need to run the installer between implementations. The launcher prints **Checking Pi service**, followed by **Pi service is up to date** or **Installing Pi service** and **Installed Pi service** with a short fingerprint. A fresh Pi or an older installation without a fingerprint is installed automatically using the existing `~/lerobot-env`; Python dependencies are not installed or upgraded.
 
 The fingerprint covers the existing Pi deployment files (including the calibration snapshot), generated kinematic URDF, service units, and deployment recipe. Uncommitted edits count. Timestamps, archive metadata, and PC-only files do not. Hardware settings continue to synchronize separately. Deployment does not perform physical calibration or change motion policy. The payload is captured once at launch; editing code during a session takes effect on the next launch. `--dry-run` never contacts the Pi, and reconnects never deploy code. Startup/reconnect checks the expected release under the deployment lock and refuses a changed or incomplete installation.
 
@@ -86,7 +79,7 @@ Both commands accept `--pi user@host` to override `eric@rpi`.
 
 #### Manual simulation update check
 
-Prerequisites: trusted noninteractive SSH, the existing Pi Python environment/user service manager, working Windows gamepad/WSL setup, and both Pi services stopped. These steps use only the Pi simulated bus; do not start `--real-arm` for this check. Run all commands in Windows PowerShell from `C:\Users\rapid\Documents\GitHub\LeRobot_project` with `.venv` active.
+Prerequisites: trusted noninteractive SSH, the existing Pi Python environment/user service manager, working Windows gamepad/WSL setup, and both Pi services stopped. Use `--pi-sim` for this check. Run all commands in Windows PowerShell from `C:\Users\rapid\Documents\GitHub\LeRobot_project` with `.venv` active.
 
 1. Run `python.exe -m scripts.main_teleop_remote_ik --pi-sim`. Expect installation if the release is missing/outdated, then the normal simulation dashboard. Open the printed URL; use separate neutral **Start** presses to advance and **LB** plus a small stick input to move the simulated arm. Press **Esc** or **Ctrl+C** to stop.
 2. Repeat the same command. Expect **Pi service is up to date**, no upload, and no new release. For confirmation, run `ssh eric@rpi 'readlink ~/.local/share/lerobot-remote-ik/current'` before and after; the path should match. Press **Esc**.
@@ -97,7 +90,7 @@ Prerequisites: trusted noninteractive SSH, the existing Pi Python environment/us
 
 ## Real arm setup and testing
 
-On Windows, `--real-arm` starts and connects to the Pi service for the physical arm. With `--allow-motion` in the Pi configuration, the dashboard shows **Real arm enabled**. Without that setting it shows **Observe only**. A normal exit with **Esc** or **Ctrl+C** stops the Pi service started by that launcher. If Windows or the network drops out, the Pi watchdog handles the pause. Closing the dashboard tab leaves the launcher running.
+On Windows, the launcher defaults to the Pi service for the physical arm. You can select it explicitly with `--real-arm`. With `--allow-motion` in the Pi configuration, the dashboard shows **Real arm enabled**. Without that setting it shows **Observe only**. A normal exit with **Esc** or **Ctrl+C** stops the Pi service started by that launcher. If Windows or the network drops out, the Pi watchdog handles the pause. Closing the dashboard tab leaves the launcher running.
 
 Edit `remote_ik.hardware.conf` in the Windows checkout to change settings such as `--arm-rate`. This project config can be tracked in Git. If the file is missing, the first real-arm launch imports the existing settings from the Pi. Subsequent launches use the local file as the source of truth. Press **Esc**, edit the file, then launch again. The launcher copies changed settings to `~/.config/lerobot-remote-ik/hardware.env` on the Pi before starting the service. Service code is checked and updated automatically at launch.
 
@@ -106,7 +99,7 @@ notepad .\remote_ik.hardware.conf
 python.exe -m scripts.main_teleop_remote_ik --real-arm --speed 0.5
 ```
 
-Add `--relax-on-exit` to release all motor torque, including the gripper, when the Pi service stops normally. This requires `--allow-motion` in the Pi settings; the launcher updates service code automatically. Support the arm before exiting because it can drop when the motors release. By default, exit preserves the existing torque state: a holding arm keeps holding and a Released arm stays Released. The in-session release gesture also releases all six channels, including the gripper.
+In real-arm mode, add `--relax-on-exit` to release all motor torque, including the gripper, when the Pi service stops normally. This requires `--allow-motion` in the Pi settings. Support the arm before exiting because it can drop when the motors release. By default, exit preserves the existing torque state: a holding arm keeps holding and a Released arm stays Released. The in-session release gesture also releases all six channels, including the gripper.
 
 ```powershell
 python.exe -m scripts.main_teleop_remote_ik --real-arm --relax-on-exit --speed 0.25
@@ -181,10 +174,29 @@ restart or motor test was performed during this fix.
 
 The launcher owns arguments, Windows gamepad and Esc sampling, configurable advance/stop buttons, WSL/Pi connections and dashboard lifecycle. `robot_program/remote_ik_control.py` owns input-edge tracking, the release timer, per-session `MotionState`, startup ramping, post-solve input checks, issued-reference acceptance and reporting. Stationary correction remains optional in `robot_program/remote_ik_correction.py`. The worker owns IK and candidate selection; `robot_program/remote_ik_recovery.py` owns Pi-local recovery state and pure validation, while the motor service alone owns serialized torque and goal operations. Manual release requires protocol 4, policy `boundary-capture-v4`; legacy standalone launchers are unchanged.
 
-The normal launcher command remains:
+## Traces and diagnostics
+
+From the Windows checkout root, either command starts the real-arm mode and uses the default trace path.
 
 ```powershell
-python.exe -m scripts.main_teleop_remote_ik --real-arm --trace .runtime/feedback-test.json
+python -m scripts.main_teleop_remote_ik
+python -m scripts.main_teleop_remote_ik --real-arm --trace .runtime/remote-ik-latest.json
 ```
 
-Trace files are still overwritten when a run records ticks; select a fresh path when preserving an earlier recording. See the cleanup verification and supervised smoke test in [path verification](REMOTE_IK_PATH_VERIFICATION.md).
+All launch modes save up to the last 3,000 completed control ticks on shutdown and print the saved path. A successful write with recorded ticks replaces the previous capture. A run with zero ticks or a failed write preserves the previous capture. Check the file modification time and `provenance.mode` when reviewing the latest run. To preserve captures across runs, pass a fresh path such as `--trace .runtime/remote-ik-test.json`.
+
+Summarize the latest capture in Windows PowerShell from the checkout root.
+
+```powershell
+python -m scripts.remote_ik_diagnostics .runtime/remote-ik-latest.json
+```
+
+For modeled issued and measured XYZ, enrich a copy with WSL and pass that copy to the same diagnostics command.
+
+```powershell
+wsl.exe -d Ubuntu --exec sh -lc '~/.local/share/lerobot-phase0/venv/bin/python -m scripts.remote_ik_worker --analyze-trace .runtime/remote-ik-latest.json' |
+    Set-Content -Encoding utf8 .runtime/remote-ik-latest-xyz.json
+python -m scripts.remote_ik_diagnostics .runtime/remote-ik-latest-xyz.json
+```
+
+Compare `desired_xyz_m`, `issued_xyz_m`, and `measured_xyz_m` around a drop. The `xyz_reset` and `op` fields identify reference resets and holds. The difference between `issued_before` and `issued` shows the joint target step. See the supervised smoke test in [path verification](REMOTE_IK_PATH_VERIFICATION.md).

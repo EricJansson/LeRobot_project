@@ -8,10 +8,20 @@ A separate Pi mode uses **LeRobot's URDF-based FK/IK with fine movement** and st
 
 The Windows launcher automatically detects gamepads, including Bluetooth DualShock 4 controllers. The launcher serves a local dashboard and uses official LeRobot IK in WSL2 with a mesh-free model. The Pi service owns the serial connection. Self-collision checking is outside this implementation’s scope.
 
+Run this command from the Windows checkout with the virtual environment active to launch the physical arm.
+
+```powershell
+python -m scripts.main_teleop_remote_ik
+```
+
+Use `--dry-run` for local simulation or `--pi-sim` for simulation over SSH.
+
 ```powershell
 python.exe -m scripts.main_teleop_remote_ik --dry-run
 python.exe -m scripts.main_teleop_remote_ik --pi-sim
 ```
+
+All three modes save recorded control ticks on exit to `.runtime/remote-ik-latest.json`. Use `--trace PATH` to save a named capture. See the [trace and diagnostics commands](readme_files/REMOTE_IK_SETUP.md#traces-and-diagnostics).
 
 Pi-backed launches automatically check and install changed service code before starting teleop. Unchanged deployments print **Pi service is up to date**. Updates require both Pi services to be stopped; running sessions are never updated. Keep `python.exe -m scripts.install_remote_ik_pi` for an explicit reinstall/repair. See [automatic updates and simulation test steps](readme_files/REMOTE_IK_SETUP.md#automatic-pi-service-updates).
 
@@ -129,16 +139,7 @@ In the existing Python 3.13 / LeRobot 0.6.1 Pi environment:
 ```bash
 python -m pip install -r requirements-pi-ik.txt
 python -m scripts.main_teleop_lerobot_ik
-python -m scripts.main_teleop_remote_ik --real-arm --trace .runtime/feedback-test.json
 ```
-
-Or: 
-
-```bash
-# Start venv, then run:
-python -m scripts.main_teleop_remote_ik --real-arm --trace .runtime/feedback-test.json
-```
-
 
 Use `--port /dev/serial/by-id/YOUR_ADAPTER` and `--index 0` when needed.
 The optional supplement adds Placo 0.9.15 and pins the existing CPU Torch/NumPy
