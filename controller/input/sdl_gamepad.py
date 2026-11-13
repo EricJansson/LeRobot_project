@@ -46,7 +46,11 @@ def open_sdl_gamepad(index=None):
                     f"No mapped SDL gamepad{selection}. Available gamepads: {available}. "
                     "Connect the gamepad in Windows, then relaunch with its --index."
                 )
-            pad = controller.Controller(index)
+            try:
+                pad = controller.Controller(index)
+            except pygame.error as exc:
+                # The device may disappear between enumeration and opening.
+                raise NoSDLGamepad(f"Could not open SDL gamepad at index {index}: {exc}") from exc
             try:
                 yield SDLGamepad(pad, index)
             finally:

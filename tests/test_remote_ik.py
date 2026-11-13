@@ -1,5 +1,5 @@
 import ctypes
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import errno
 from io import BytesIO
 from importlib.metadata import version
@@ -827,38 +827,82 @@ def test_windows_gamepad_uses_xinput_without_opening_sdl(monkeypatch, backend, i
     assert slots_read == [*range(expected_slot + 1), expected_slot]
 
 
-def test_windows_gamepad_waits_for_sdl_and_keeps_its_selected_device(monkeypatch):
+@pytest.mark.parametrize("first, replacement", [("sdl", "sdl"), ("sdl", "xinput"), ("xinput", "sdl"),
+                                                ("xinput", "xinput")])
+def test_windows_gamepad_rediscovers_after_disarming_on_input_loss(monkeypatch, first, replacement):
     from controller.input import sdl_gamepad
 
     now = 10.
-    sdl_connected = False
-    xinput_connected = False
-    opens = []
+    connected = None
+    controls = gamepad_input(lb=True, lx=.5)
+    closed = []
     monkeypatch.setattr(windows_gamepad, "monotonic", lambda: now)
-    monkeypatch.setattr(windows_gamepad, "XInputGamepad", lambda _: SimpleNamespace(
-        read=lambda: {"name": "XInput"} if xinput_connected else None))
 
+    def xinput(slot):
+        return SimpleNamespace(read=lambda: {**controls, "name": "XInput"}
+                               if connected == ("xinput", slot) else None)
+
+    @contextmanager
     def open_sdl(index):
-        opens.append(index)
-        if not sdl_connected:
+        assert index is None
+        if connected is None or connected[0] != "sdl":
             raise sdl_gamepad.NoSDLGamepad()
-        return nullcontext(SimpleNamespace(
-            name="PS4 Controller", index=1,
-            read=lambda: {"name": "PS4 Controller"} if sdl_connected else None,
-        ))
+        device = connected
+        try:
+            yield SimpleNamespace(name="PS4 Controller", index=device[1],
+                                  read=lambda: {**controls, "name": "PS4 Controller"}
+                                  if connected == device else None)
+        finally:
+            closed.append(device)
 
+    monkeypatch.setattr(windows_gamepad, "XInputGamepad", xinput)
     monkeypatch.setattr(sdl_gamepad, "open_sdl_gamepad", open_sdl)
+    latest = LatestInput(clock=lambda: now)
+    control = ControlLoop(None, None, latest, Event(), 1., "Local simulation", clock=lambda: now)
+    state = remote_ik_control.MotionState()
+    feedback = {"armed": True, "moving": True, "sent": [0.] * 6, "fault": False}
+
+    def operation(seen):
+        sample = latest.sample
+        return control._prepare_input(
+            state, feedback, sample, seen, arm_interrupted=False,
+            fresh=sample.gamepad is not None, elapsed=.02, period=.02, started=now,
+        )[0]
+
     with windows_gamepad.open_gamepad("auto", None) as read:
         assert read() is None
-        sdl_connected = True
+        connected = (first, 0)
         assert read() is None
         now += 1
-        assert read() == {"name": "PS4 Controller"}
-        sdl_connected = False
-        xinput_connected = True
+        latest.publish(read())
+        assert latest.sample.lb
+        before_loss = latest.sample
+
+        connected = None
+        latest.publish(read())
+        assert latest.sample.gamepad is None and latest.sample.disconnect == 1
+        assert read() is None
         now += 1
         assert read() is None
-    assert opens == [None, None]
+        connected = (replacement, 1)
+        controls = gamepad_input(start=True)
+        now += 1
+        latest.publish(read())
+        assert latest.sample.gamepad["name"] == ("PS4 Controller" if replacement == "sdl" else "XInput")
+        assert latest.sample.start == 0
+        assert closed == ([(first, 0)] if first == "sdl" else [])
+        # Even when the next control tick sees the replacement, the loss stays latched.
+        assert operation(before_loss) == "disarm"
+        feedback.update(armed=False, moving=False)
+        assert operation(latest.sample) == "poll"
+
+        controls = gamepad_input()
+        latest.publish(read())
+        neutral = latest.sample
+        controls = gamepad_input(start=True)
+        latest.publish(read())
+        assert operation(neutral) == "arm"
+    assert closed == [(name, index) for name, index in ((first, 0), (replacement, 1)) if name == "sdl"]
 
 
 def test_sdl_maps_controls_and_drops_detached_controller(monkeypatch):
