@@ -1,4 +1,4 @@
-"""Receive phone XYZ input on Windows and run LeRobot IK in local simulation."""
+"""Receive phone control and marker poses on Windows with local IK simulation."""
 
 import argparse
 from contextlib import ExitStack
@@ -13,7 +13,7 @@ from scripts.lerobot_web_dashboard import WebDashboard
 from scripts.main_teleop_remote_ik import (
     DEFAULT_WSL_PYTHON, TELEOP_ERRORS, VK_ESCAPE, Worker, load_key_state, local_simulated_link,
 )
-from scripts.mobile_teleop_gateway import INPUT_PATH, MobileGateway, MobileInput
+from scripts.mobile_teleop_gateway import INPUT_PATH, POSE_PATH, MobileGateway, MobileInput
 
 
 TOKEN_PATH = Path(__file__).resolve().parents[1] / "mobile-teleop.token"
@@ -83,6 +83,7 @@ def main():
             if args.listen is None and host == LOOPBACK:
                 print("No private LAN address detected. Phone input is available on this PC only.", flush=True)
             print(f"Phone input: ws://{gateway.address}:{gateway.port}{INPUT_PATH}\n"
+                  f"ArUco pose: ws://{gateway.address}:{gateway.port}{POSE_PATH}\n"
                   f"Phone authentication: use the bearer token from {TOKEN_PATH.name}.\n"
                   "Esc or Ctrl+C exits.", flush=True)
             while not stop.is_set():
@@ -91,6 +92,7 @@ def main():
                     break
                 status = dict(control.status) if control else {"mode": mode, "state": "Monitoring"}
                 status["phone"] = phone.telemetry()
+                status["marker_pose"] = gateway.marker_pose.telemetry()
                 dashboard.publish({}, None, {}, False, remote=status)
                 stop.wait(.05)
             if control and control.error:

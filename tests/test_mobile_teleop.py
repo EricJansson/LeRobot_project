@@ -9,7 +9,10 @@ from websockets.sync.client import connect
 
 from robot_program.remote_ik_control import motion_delta
 from scripts import main_mobile_teleop as launcher
-from scripts.mobile_teleop_gateway import ADVANCE, DEADMAN, FRESHNESS_S, INPUT_FRAME, INPUT_PATH, MobileGateway, MobileInput
+from scripts.mobile_teleop_gateway import (
+    ADVANCE, DEADMAN, FRESHNESS_S, INPUT_FRAME, INPUT_PATH, POSE_FRAME, POSE_PATH, POSE_STALE_S,
+    TRACKING, MarkerPose, MobileGateway, MobileInput,
+)
 
 
 def test_launcher_reads_the_same_user_token_on_each_start(tmp_path):
@@ -99,3 +102,65 @@ def test_websocket_auth_exclusivity_and_timeout():
                 sleep(.001)
             assert phone.telemetry()["xyz"] == (0., .25, 0.)
     assert not phone.telemetry()["fresh"]
+
+
+def test_marker_pose_preserves_units_and_expires_without_a_new_sequence():
+    now = 1.
+    feed = MarkerPose(clock=lambda: now)
+    feed.begin()
+    frame = POSE_FRAME.pack(5, TRACKING, -12.5, 18, 55, 9.5, -20, 170)
+    assert feed.publish(frame)
+    assert feed.telemetry() == {"state": "Tracking", "seq": 5, "xyz_cm": (-12.5, 18., 55.),
+                                "rpy_deg": (9.5, -20., 170.)}
+
+    now += POSE_STALE_S / 2
+    assert not feed.publish(frame)
+    assert not feed.publish(POSE_FRAME.pack(4, 0, *([0.] * 6)))
+    now += POSE_STALE_S
+    assert feed.telemetry() == {"state": "Pose timed out", "seq": 5, "xyz_cm": None, "rpy_deg": None}
+
+    # A stationary marker can report identical coordinates with a new sequence.
+    assert feed.publish(POSE_FRAME.pack(6, TRACKING, -12.5, 18, 55, 9.5, -20, 170))
+    assert feed.telemetry()["state"] == "Tracking"
+    assert feed.publish(POSE_FRAME.pack(7, 0, *([0.] * 6)))
+    assert feed.telemetry() == {"state": "Marker lost", "seq": 7, "xyz_cm": None, "rpy_deg": None}
+    feed.end()
+    assert feed.telemetry()["state"] == "Disconnected"
+    feed.begin()
+    assert feed.publish(POSE_FRAME.pack(0, TRACKING, -12.5, 18, 55, 9.5, -20, 170))
+
+
+@pytest.mark.parametrize("frame", [INPUT_FRAME.pack(0, 0, 0, 0, 0),
+                                   POSE_FRAME.pack(0, 2, *([0.] * 6)),
+                                   POSE_FRAME.pack(0, TRACKING, float("inf"), 0, 0, 0, 0, 0)])
+def test_marker_pose_rejects_invalid_frames(frame):
+    feed = MarkerPose()
+    feed.begin()
+    with pytest.raises(ValueError):
+        feed.publish(frame)
+    assert feed.telemetry()["seq"] is None
+
+
+def test_marker_websocket_keeps_pose_out_of_control_input():
+    phone = MobileInput()
+    initial_input = phone.sample
+    headers = {"Authorization": "Bearer mobile-test-token"}
+    with MobileGateway("127.0.0.1", 0, phone, "mobile-test-token") as gateway:
+        base_url = f"ws://127.0.0.1:{gateway.port}"
+        with pytest.raises(InvalidStatus) as rejected:
+            connect(base_url + POSE_PATH, open_timeout=2, proxy=None)
+        assert rejected.value.response.status_code == 401
+
+        with connect(base_url + POSE_PATH, additional_headers=headers, open_timeout=2, proxy=None) as client:
+            client.send(POSE_FRAME.pack(0, TRACKING, 15, -12, 50, 30, 9, -45))
+            deadline = monotonic() + 1
+            while gateway.marker_pose.telemetry()["seq"] is None and monotonic() < deadline:
+                sleep(.001)
+            assert gateway.marker_pose.telemetry()["rpy_deg"] == (30., 9., -45.)
+            sleep(FRESHNESS_S + .025)
+            # The monitoring stream stays open across a velocity watchdog interval.
+            assert client.ping().wait(1)
+            assert phone.sample is initial_input
+            with pytest.raises(InvalidStatus) as rejected:
+                connect(base_url + INPUT_PATH, additional_headers=headers, open_timeout=2, proxy=None)
+            assert rejected.value.response.status_code == 409

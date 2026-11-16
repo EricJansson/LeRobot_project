@@ -46,6 +46,21 @@
       </div>
       <p class="details muted"><span id="deadman">Deadman released</span><span id="sequence">No samples yet</span></p>
     </section>
+    <section aria-labelledby="pose-heading">
+      <div class="section-top">
+        <h2 id="pose-heading">ArUco pose · camera frame</h2>
+        <span id="pose-status" class="connection" role="status">Waiting for marker pose</span>
+      </div>
+      <table aria-label="Marker position in centimeters">
+        <thead><tr><th scope="col">Position (cm)</th><th scope="col">X</th><th scope="col">Y</th><th scope="col">Z</th></tr></thead>
+        <tbody><tr id="pose-xyz"><th scope="row">Measured</th><td>—</td><td>—</td><td>—</td></tr></tbody>
+      </table>
+      <table aria-label="Marker orientation in degrees">
+        <thead><tr><th scope="col">Orientation (°)</th><th scope="col">Roll</th><th scope="col">Pitch</th><th scope="col">Yaw</th></tr></thead>
+        <tbody><tr id="pose-rpy"><th scope="row">Measured</th><td>—</td><td>—</td><td>—</td></tr></tbody>
+      </table>
+      <p id="pose-sequence" class="details muted">No samples yet</p>
+    </section>
     <section id="simulation" aria-labelledby="sim-heading" hidden>
       <div class="section-top"><h2 id="sim-heading">Simulated arm XYZ (mm)</h2><span id="state" class="muted"></span></div>
       <p id="reason" class="muted" hidden></p>
@@ -64,9 +79,9 @@
     const axes = document.querySelectorAll('.axis');
     const signed = value => `${value > 0 ? '+' : ''}${value.toFixed(2)}`;
 
-    function showPosition(row, xyz) {
+    function showValues(row, values, scale = 1, decimals = 2) {
       byId(row).querySelectorAll('td').forEach((cell, axis) => {
-        cell.textContent = Number.isFinite(xyz?.[axis]) ? (xyz[axis] * 1000).toFixed(1) : '—';
+        cell.textContent = Number.isFinite(values?.[axis]) ? (values[axis] * scale).toFixed(decimals) : '—';
       });
     }
 
@@ -85,13 +100,20 @@
         fill.style.width = `${50 * Math.abs(value)}%`;
         row.querySelector('output').textContent = signed(value);
       });
+      const pose = remote.marker_pose;
+      const poseStatus = byId('pose-status');
+      poseStatus.textContent = offline ? 'Dashboard offline' : pose?.state ?? 'Waiting for marker pose';
+      poseStatus.dataset.fresh = pose?.state === 'Tracking';
+      byId('pose-sequence').textContent = pose?.seq != null ? `Sequence ${pose.seq}` : 'No samples yet';
+      showValues('pose-xyz', pose?.xyz_cm);
+      showValues('pose-rpy', pose?.rpy_deg);
       byId('simulation').hidden = remote.mode !== 'Local simulation';
       byId('state').textContent = remote.state || '';
       byId('reason').textContent = remote.reason || '';
       byId('reason').hidden = !remote.reason;
-      showPosition('requested', remote.requested_xyz_m);
-      showPosition('desired', remote.desired_xyz_m);
-      showPosition('measured', remote.xyz_m);
+      showValues('requested', remote.requested_xyz_m, 1000, 1);
+      showValues('desired', remote.desired_xyz_m, 1000, 1);
+      showValues('measured', remote.xyz_m, 1000, 1);
     }
 
     async function poll() {
