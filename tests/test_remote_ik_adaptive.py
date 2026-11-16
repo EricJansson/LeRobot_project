@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, Mock
 import numpy as np
 import pytest
 
-from robot_program.lerobot_ik_controller import ARM_JOINTS, LeRobotPoseSolver
-from robot_program.remote_ik_control import ControlLoop, LatestInput
+from robot_program.lerobot_ik_controller import ARM_JOINTS, DEFAULT_URDF, LeRobotPoseSolver
+from robot_program.remote_ik_control import ControlLoop, LatestInput, motion_delta
 from robot_program.remote_ik_protocol import (PROTOCOL_VERSION, calibrated_follower, channel_limits,
                                             command_limits, kinematic_urdf, limit_excess)
 from scripts.remote_ik_motor_service import MotorSession
@@ -340,14 +340,20 @@ def test_watchdog_is_not_masked_by_new_operating_limit_excursion():
     assert "watchdog" in fb["reason"]
 
 
-@pytest.mark.skipif(version("lerobot") != "0.6.1", reason="Real solver requires WSL LeRobot 0.6.1")
-@pytest.mark.parametrize("axis,expected", [(0, "Adapting path"), (1, "Adapting pitch")])
-def test_real_solver_has_useful_adaptive_escape_at_joint_limit_corner(tmp_path, axis, expected):
-    from robot_program.lerobot_ik_controller import DEFAULT_URDF
+@pytest.fixture
+def real_solver(tmp_path):
+    if version("lerobot") != "0.6.1":
+        pytest.skip("Real solver requires WSL LeRobot 0.6.1")
+    pytest.importorskip("placo")
     limits = command_limits(channel_limits(calibrated_follower("unused", DEFAULT_URDF.parent / "calibration")))
     path = tmp_path / "model.urdf"
     path.write_text(kinematic_urdf())
-    solver = LeRobotPoseSolver(limits[:5], urdf_path=path)
+    return LeRobotPoseSolver(limits[:5], urdf_path=path), limits
+
+
+@pytest.mark.parametrize("axis,expected", [(0, "Adapting path"), (1, "Adapting pitch")])
+def test_real_solver_has_useful_adaptive_escape_at_joint_limit_corner(real_solver, axis, expected):
+    solver, limits = real_solver
     q = [limits[0][0], limits[1][1], limits[2][1], limits[3][1], limits[4][0], 3.4]
     xyz = solver.kinematics.forward_kinematics(np.array(q[:5]))[:3, 3].copy()
     delta = [0.] * 6
@@ -359,6 +365,67 @@ def test_real_solver_has_useful_adaptive_escape_at_joint_limit_corner(tmp_path, 
     assert movement[axis] < -.0001
     assert np.linalg.norm(movement) <= .002 + 1e-8
     assert -movement[axis] >= np.linalg.norm(movement) * np.sqrt(.5) - 1e-10
+
+
+@pytest.mark.parametrize("wrist_roll", [-135., -90., 0., 90., 135.])
+@pytest.mark.parametrize("trigger,pitch_deg", [("LT", -8.), ("RT", 8.)])
+def test_real_trigger_pitch_is_independent_of_wrist_roll(real_solver, wrist_roll, trigger, pitch_deg):
+    solver, limits = real_solver
+    seed = [35., -65.7, 53.8, 68.4, wrist_roll, 10.]
+    sent = seed
+    axes = dict(LX=0., LY=0., RX=0., RY=0., LT=0., RT=0.)
+    axes[trigger] = 1.
+    delta = motion_delta({"axes": axes, "dpad": (0, 0)})
+    forward = solver.kinematics.forward_kinematics
+    original = forward(np.array(seed[:5])).copy()
+    pitch_frame = forward(np.array([*seed[:4], 0.]))[:3, :3].copy()
+    xyz = original[:3, 3].tolist()
+    steps = [4.] * 5 + [.6]
+    for _ in range(20):
+        result = solve(solver, measured=sent, delta=delta, desired=xyz, steps=steps)
+        target = result["target"]
+        assert target is not None, result["reason"]
+        assert np.all(np.abs(np.subtract(target, sent)) <= np.array(steps) + 1e-8)
+        assert all(lo <= joint <= hi for joint, (lo, hi) in zip(target, limits))
+        assert np.linalg.norm(np.subtract(result["candidate_xyz_m"], xyz)) <= .0005 + 1e-8
+        assert result["accepted_xyz_m"] == xyz
+        sent = target
+
+    achieved = forward(np.array(sent[:5]))
+    relative = pitch_frame.T @ achieved[:3, :3] @ original[:3, :3].T @ pitch_frame
+    assert np.rad2deg(np.arctan2(relative[0, 2], relative[0, 0])) == pytest.approx(pitch_deg, abs=.15)
+    assert sent[4] == pytest.approx(wrist_roll, abs=.05)
+    assert sent[5] == seed[5]
+
+
+@pytest.mark.parametrize("pitch", [0., .4])
+def test_real_roll_responds_with_or_without_pitch(real_solver, pitch):
+    solver, _ = real_solver
+    sent = [-35., -65.7, 53.8, 68.4, 90., 10.]
+    forward = solver.kinematics.forward_kinematics
+    original = forward(np.array(sent[:5])).copy()
+    pitch_frame = forward(np.array([*sent[:4], 0.]))[:3, :3].copy()
+    result = solve(solver, measured=sent, delta=[0., 0., 0., pitch, .75, 0.])
+    target = result["target"]
+    assert target is not None, result["reason"]
+    assert target[4] - sent[4] == pytest.approx(-.75, abs=.02)
+    # Compare at the same wrist roll to measure just the pitch contribution.
+    achieved = forward(np.array([*target[:4], sent[4]]))
+    relative = pitch_frame.T @ achieved[:3, :3] @ original[:3, :3].T @ pitch_frame
+    assert np.rad2deg(np.arctan2(relative[0, 2], relative[0, 0])) == pytest.approx(pitch, abs=.02)
+
+
+def test_real_rolled_pitch_near_joint_limit_obeys_rate_allowance(real_solver):
+    solver, limits = real_solver
+    sent = [0., -65.7, 53.8, limits[3][1], 90., 10.]
+    steps = [.02] * 5 + [.6]
+    result = solve(solver, measured=sent, delta=[0., 0., 0., .4, 0., 0.], steps=steps)
+    target = result["target"]
+    assert target is not None, result["reason"]
+    assert 0. < result["progress_fraction"] < 1.
+    assert np.all(np.abs(np.subtract(target, sent)) <= np.array(steps) + 1e-8)
+    assert all(lo <= joint <= hi for joint, (lo, hi) in zip(target, limits))
+    assert np.linalg.norm(np.subtract(result["candidate_xyz_m"], result["baseline_xyz_m"])) <= .0005
 
 
 def test_recovery_ignores_analog_noise_but_retries_after_measured_progress():

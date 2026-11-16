@@ -69,8 +69,8 @@ def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_
     arm_input = any(delta[:5]) or correction
     if joint_step_limits is not None and hasattr(solver, "orientation_weight"):
         # A five-joint arm cannot keep an arbitrary six-DOF orientation during
-        # lateral translation. Prioritize XYZ then retain the existing local
-        # pitch/roll behavior for explicit orientation-only input.
+        # lateral translation. Prioritize XYZ during translation and give
+        # orientation more weight when the operator requests only pitch/roll.
         orientation_only = any(delta[3:5]) and not any(delta[:3])
         solver.orientation_weight = .01 if orientation_only else .0001
         solver.position_tolerance_m = .0005 if orientation_only else .00005
@@ -78,6 +78,15 @@ def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_
     if not arm_input:
         response["target"] = [*joints.tolist(), jaw] if jaw != reference[5] else None
         return response
+    pitch_frame = pose[:3, :3]
+    tool_in_pitch_frame = np.eye(3)
+    if delta[3] and joints[4]:
+        # Pitch follows the zero-roll gripper frame. Retain the actual wrist
+        # roll as a relative rotation to apply after pitch.
+        zero_roll_joints = joints.copy()
+        zero_roll_joints[4] = 0.
+        pitch_frame = solver.kinematics.forward_kinematics(zero_roll_joints)[:3, :3].copy()
+        tool_in_pitch_frame = pitch_frame.T @ pose[:3, :3]
     recovery = baseline - pose[:3, 3]
     length = float(np.linalg.norm(recovery))
     if joint_step_limits is not None and length > recovery_step_m:
@@ -92,8 +101,9 @@ def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_
         target[:3, 3] += fraction * (recovery + np.asarray(delta[:3]))
         pitch, roll = np.deg2rad(np.asarray(delta[3:5]) * fraction)
         cp, sp, cr, sr = np.cos(pitch), np.sin(pitch), np.cos(roll), np.sin(roll)
-        target[:3, :3] = pose[:3, :3] @ np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]]) @ np.array(
-            [[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]])
+        pitch_rotation = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+        roll_rotation = np.array([[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]])
+        target[:3, :3] = pitch_frame @ pitch_rotation @ tool_in_pitch_frame @ roll_rotation
         result = solver.solve_pose(target, joints)
         if not result.accepted:
             response["reason"] = result.reason
