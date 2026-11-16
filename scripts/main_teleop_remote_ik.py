@@ -378,6 +378,26 @@ def save_trace(path, payload):
                 temporary.unlink(missing_ok=True)
 
 
+def local_simulated_link(stack, worker, stop):
+    listener = stack.enter_context(socket.socket())
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(4)
+    token = secrets.token_hex(32)
+    limits = worker.metadata["limits"]
+    motor = MotorSession(SimulatedBus(limits), limits=limits, model=worker.metadata["model"], token=token,
+                         calibrated_limits=worker.metadata["calibrated_limits"],
+                         watchdog=OFFLINE_WATCHDOG, hz=RATE_HZ, arm_rate=120, gripper_rate=50)
+    server = Thread(target=serve, args=(listener, motor, stop), daemon=True)
+    server.start()
+    stack.callback(server.join, 1)
+    stack.callback(stop.set)
+
+    def connect(metadata):
+        return MotorLink(listener.getsockname()[1], token, metadata, True)
+
+    return connect
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
@@ -439,21 +459,7 @@ def main():
             worker = stack.enter_context(Worker(args.wsl_distro, args.wsl_python))
             trace_model = worker.metadata["model"]
             if mode == "dry-run":
-                listener = stack.enter_context(socket.socket())
-                listener.bind(("127.0.0.1", 0))
-                listener.listen(4)
-                token = secrets.token_hex(32)
-                limits = worker.metadata["limits"]
-                motor = MotorSession(SimulatedBus(limits), limits=limits, model=worker.metadata["model"], token=token,
-                                     calibrated_limits=worker.metadata["calibrated_limits"],
-                                     watchdog=OFFLINE_WATCHDOG, hz=RATE_HZ, arm_rate=120, gripper_rate=50)
-                server = Thread(target=serve, args=(listener, motor, stop), daemon=True)
-                server.start()
-                stack.callback(server.join, 1)
-                stack.callback(stop.set)
-
-                def connect(metadata):
-                    return MotorLink(listener.getsockname()[1], token, metadata, True)
+                connect = local_simulated_link(stack, worker, stop)
             else:
                 fingerprint = ensure_installed(args.pi)
                 tunnel = stack.enter_context(PiTunnel(args.pi, mode == "pi-sim", relax_on_exit=args.relax_on_exit,

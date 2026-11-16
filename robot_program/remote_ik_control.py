@@ -104,12 +104,13 @@ def issued_arm_matches(issued, target, *, rel_tol=0.):
 
 class ControlLoop:
     def __init__(self, worker, connect, latest_input, stop, speed, mode, *, trace=None,
-                 correction_profile=None, clock=monotonic):
+                 correction_profile=None, clock=monotonic, input_name="gamepad"):
         self.worker, self.connect, self.latest_input, self.stop = worker, connect, latest_input, stop
         self.speed, self.mode = speed, mode
         self.clock = clock
         self.trace = trace
         self.correction_profile = correction_profile
+        self.input_name = input_name
         self.status = {"connection": "Connecting", "state": "Unavailable", "reason": "", "mode": mode}
         self.error = None
 
@@ -302,7 +303,8 @@ class ControlLoop:
         if not reason and result.get("path_bound_deg") == 75.:
             reason = "75° path escape"
         if not fresh and not reason:
-            reason = "Connect a gamepad" if sample.gamepad is None else "Gamepad sample expired"
+            reason = (f"Connect a {self.input_name}" if sample.gamepad is None
+                      else f"{self.input_name.capitalize()} sample expired")
         torque = feedback.get("arm_torque", "holding")
         control_state = ("Released" if torque == "released" else "Holding" if torque == "holding" else "Unavailable")
         display_state = ("Fault" if feedback["fault"] else "Moving" if feedback["moving"]

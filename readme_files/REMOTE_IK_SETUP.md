@@ -2,6 +2,8 @@
 
 Windows samples a gamepad through native XInput or Pygame's SDL controller API and shows a read-only dashboard on loopback. Ubuntu WSL2 runs Hugging Face LeRobot 0.6.1 `RobotKinematics` with PlaCo. The worker strips visual and collision elements from the URDF and preserves the kinematics. This implementation has no self-collision or environment collision checks.
 
+For the separate Android input prototype, see [mobile teleop development](MOBILE_TELEOP.md).
+
 ## Set up and run a simulation
 
 Use the Windows project `.venv`. The launcher defaults to `Ubuntu` and `~/.local/share/lerobot-phase0/venv/bin/python` inside WSL2. Override those with `--wsl-distro` and `--wsl-python` if needed. To reproduce the verified WSL2 environment in Ubuntu with Python 3.12 available, run the following.

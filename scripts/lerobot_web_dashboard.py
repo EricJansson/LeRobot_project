@@ -64,8 +64,8 @@ class WebDashboard(ThreadingHTTPServer):
     allow_reuse_address = sys.platform != "win32"
     daemon_threads = False  # Flush the exit event before the process ends.
 
-    def __init__(self, host, port):
-        self.page = Path(__file__).with_suffix(".html").read_bytes()
+    def __init__(self, host, port, *, page=None):
+        self.page = (page or Path(__file__).with_suffix(".html")).read_bytes()
         self._sample = None
         self.session_id = uuid4().hex
         self.exit_reason = None

@@ -68,6 +68,9 @@ htmlcov/
 # Project runtime IPC files (dashboard <-> teleop communication)
 .runtime/
 
+# Mobile teleop credential
+/mobile-teleop.token
+
 # Dashboard log output
 scripts/dashboard_log.txt
 scripts/dashboard_plan_log.txt
