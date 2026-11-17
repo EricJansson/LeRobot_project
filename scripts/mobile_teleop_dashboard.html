@@ -88,10 +88,10 @@
         <tbody><tr id="pose-rpy"><th scope="row">Measured</th><td>—</td><td>—</td><td>—</td></tr></tbody>
       </table>
     </section>
-    <section id="simulation" aria-labelledby="sim-heading" hidden>
+    <section id="arm-panel" aria-labelledby="arm-heading" hidden>
       <div class="section-top">
-        <h2 id="sim-heading">Simulated arm</h2>
-        <span id="arm-connection" class="connection" role="status">Connecting to simulator</span>
+        <h2 id="arm-heading">Arm feedback</h2>
+        <span id="arm-connection" class="connection" role="status">Waiting for arm feedback</span>
       </div>
       <div id="status-card" class="status-card" data-tone="neutral" role="status" aria-atomic="true">
         <!-- include: control_status.html -->
@@ -122,10 +122,11 @@
   <script>
     <!-- include: dashboard.js -->
     const axes = document.querySelectorAll('.axis');
-    const simulation = byId('simulation');
+    const armPanel = byId('arm-panel');
+    const physicalModes = new Set(['Real arm', 'Observe only', 'Real arm enabled']);
+    const simulationModes = new Set(['Local simulation', 'Pi simulation']);
     const poseFrameLabels = {camera: 'camera frame', 'robot-axes': 'robot axes'};
-    const simulatorConnections = {Connected: 'Simulator connected', Connecting: 'Connecting to simulator',
-      Disconnected: 'Simulator disconnected'};
+    const armConnections = {Connected: 'Connected', Connecting: 'Connecting', Disconnected: 'Disconnected'};
     const activeArmStates = new Set(['Armed', 'Moving', 'Control enabled', 'Following path', 'Adapting pitch', 'Adapting path', 'Recovering']);
     const signed = value => `${value > 0 ? '+' : ''}${value.toFixed(2)}`;
     const poseXyzView = byId('pose-xyz-view');
@@ -133,9 +134,6 @@
     const poseSection = byId('marker-pose');
     const poseRowLabels = poseSection.querySelectorAll('.pose-table tbody th');
     let markerPose;
-
-    setText(byId('bus-read-label'), 'Longest simulator bus read');
-    setText(byId('bus-write-label'), 'Longest simulator bus write');
 
     function showValues(row, values, scale = 1, decimals = 1) {
       byId(row).querySelectorAll('td').forEach((cell, axis) => {
@@ -155,7 +153,8 @@
     poseXyzView.addEventListener('change', showPosePosition);
 
     function renderPhoneInput(phone, armControls, armStatus) {
-      setText(byId('input-heading'), armControls ? 'Phone arm input' : 'Phone XYZ input');
+      const joysticksOnly = armControls && phone?.joysticks_only;
+      setText(byId('input-heading'), joysticksOnly ? 'Phone joystick input' : armControls ? 'Phone arm input' : 'Phone XYZ input');
       const connection = byId('connection');
       setText(connection, phone?.fresh ? 'Receiving' : phone?.seq != null ? 'Input stale' : 'Waiting for input');
       connection.dataset.fresh = Boolean(phone?.fresh);
@@ -163,10 +162,11 @@
       byId('sequence').textContent = phone?.seq != null ? `Sequence ${phone.seq}` : 'No samples yet';
       byId('arm-input-details').hidden = !armControls;
       setText(byId('phone-arm-status'), armStatus ?? 'Unavailable');
+      byId('gripper-input').hidden = joysticksOnly;
       setText(byId('gripper-input'), phone?.gripper > 0 ? 'Open gripper requested'
         : phone?.gripper < 0 ? 'Close gripper requested' : 'Gripper idle');
       axes.forEach((row, axis) => {
-        if (axis >= 3) row.hidden = !armControls;
+        if (axis >= 3) row.hidden = !armControls || (axis === 4 && joysticksOnly);
         const value = (axis < 3 ? phone?.xyz?.[axis] : phone?.wrist?.[axis - 3]) ?? 0;
         const fill = row.querySelector('.fill');
         fill.style.left = `${50 + 50 * Math.min(0, value)}%`;
@@ -195,7 +195,7 @@
     function renderArm(sample, remote) {
       const connected = remote.connection === 'Connected';
       const connection = byId('arm-connection');
-      setText(connection, simulatorConnections[remote.connection] ?? 'Telemetry unavailable');
+      setText(connection, armConnections[remote.connection] ?? 'Telemetry unavailable');
       connection.dataset.fresh = connected;
       const state = connected ? remote.state || 'Control unavailable' : 'Control unavailable';
       const tone = state === 'Fault' ? 'red' : state === 'Released' || state === 'Releasing' ? 'blue'
@@ -227,8 +227,17 @@
       if (showInput) renderPhoneInput(remote.phone, showArm, remote.arm_status);
       if (showPose) renderPose(remote.marker_pose);
 
-      if (!offline) simulation.hidden = remote.mode !== 'Local simulation';
-      if (!simulation.hidden) renderArm(sample, remote);
+      if (!offline) {
+        const physical = physicalModes.has(remote.mode);
+        armPanel.hidden = !physical && !simulationModes.has(remote.mode);
+        if (!armPanel.hidden) {
+          setText(byId('arm-heading'), physical ? 'Physical arm' : 'Simulated arm');
+          const bus = physical ? 'Pi motor bus' : 'simulator bus';
+          setText(byId('bus-read-label'), `Longest ${bus} read`);
+          setText(byId('bus-write-label'), `Longest ${bus} write`);
+        }
+      }
+      if (!armPanel.hidden) renderArm(sample, remote);
     }
 
     async function poll() {

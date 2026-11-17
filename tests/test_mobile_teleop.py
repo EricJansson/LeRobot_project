@@ -1,9 +1,10 @@
 import asyncio
 from contextlib import nullcontext
 import sys
+from threading import Event
 from time import monotonic, sleep
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -11,13 +12,13 @@ pytest.importorskip("websockets", minversion="16")
 from websockets.exceptions import ConnectionClosedError, InvalidStatus
 from websockets.sync.client import connect
 
-from robot_program.remote_ik_control import motion_delta
+from robot_program.remote_ik_control import ControlLoop, motion_delta
 from scripts import main_mobile_teleop as launcher
 from scripts import mobile_teleop_gateway as gateway_module
 from scripts.mobile_teleop_gateway import (
-    ADVANCE, ARM_INPUT_FRAME, ARM_INPUT_PATH, DEADMAN, FRESHNESS_S, INPUT_FRAME, INPUT_PATH,
+    ADVANCE, ARM_CONTROLS_HEADER, ARM_INPUT_FRAME, ARM_INPUT_PATH, DEADMAN, FRESHNESS_S, INPUT_FRAME, INPUT_PATH,
     POSE_FRAME, POSE_PATH, POSE_STALE_S, STOP, TOUCHSCREEN_IDLE_S, TOUCHSCREEN_PATH, TOUCHSCREEN_STALE_S,
-    TRACKING, MarkerPose, MobileGateway, MobileInput, TouchscreenInput,
+    TRACKING, MarkerPose, MobileGateway, MobileInput, TouchscreenInput, mobile_arm_status,
 )
 
 
@@ -41,35 +42,144 @@ def test_launcher_defaults_to_the_private_route_address(monkeypatch, route_ip, e
     probe.__enter__.return_value.send.assert_not_called()
 
 
-def test_launcher_publishes_simulator_metrics_and_active_phone_mode(monkeypatch):
-    status = {"mode": "Local simulation", "connection": "Connected", "state": "Holding", "control_state": "Holding",
+@pytest.mark.parametrize("flags,mode,arm_status,speed", [
+    ([], "Observe only", "Unavailable", 1.),
+    (["--real-arm"], "Observe only", "Unavailable", 1.),
+    (["--speed", "0.1"], "Observe only", "Unavailable", .1),
+    (["--dry-run"], "Local simulation", "Holding", 1.),
+    (["--pi-sim"], "Pi simulation", "Holding", .1),
+])
+def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, flags, mode, arm_status, speed):
+    status = {"mode": mode, "connection": "Connected", "state": "Holding", "control_state": "Holding",
               "measured": [1., 2., 3., 4., 5., 0.], "xyz_m": [.1, -.2, .3], "feedback_hz": 50.}
     gateway = MagicMock(address="127.0.0.1", port=18744)
     phone = {"phone_mode": "aruco", "phone": {}, "marker_pose": {"state": "Waiting for marker pose"}}
     gateway.telemetry.return_value = phone
     dashboard = MagicMock(port=18745)
     keys = iter([0, -1])
-    monkeypatch.setattr(sys, "argv", ["mobile-teleop", "--listen", "127.0.0.1"])
+    tunnel = SimpleNamespace(connect=Mock())
+    open_tunnel = Mock(return_value=nullcontext(tunnel))
+    deploy = Mock(return_value="test-fingerprint")
+    local = Mock(return_value=Mock())
+    loop = Mock(return_value=SimpleNamespace(status=status, run=lambda: None, error=None))
+    monkeypatch.setattr(sys, "argv", ["mobile-teleop", "--listen", "127.0.0.1", *flags])
     monkeypatch.setattr(launcher, "load_phone_token", lambda _: "mobile-test-token")
     monkeypatch.setattr(launcher, "load_key_state", lambda: lambda _: next(keys))
     monkeypatch.setattr(launcher, "MobileGateway", lambda *args, **kwargs: nullcontext(gateway))
     monkeypatch.setattr(launcher, "WebDashboard", lambda *args, **kwargs: nullcontext(dashboard))
     monkeypatch.setattr(launcher, "Worker", lambda *args: nullcontext(None))
-    monkeypatch.setattr(launcher, "local_simulated_link", lambda *args: None)
-    monkeypatch.setattr(launcher, "ControlLoop", lambda *args, **kwargs:
-                        SimpleNamespace(status=status, run=lambda: None, error=None))
+    monkeypatch.setattr(launcher, "local_simulated_link", local)
+    monkeypatch.setattr(launcher, "ensure_installed", deploy)
+    monkeypatch.setattr(launcher, "PiTunnel", open_tunnel)
+    monkeypatch.setattr(launcher, "ControlLoop", loop)
 
     launcher.main()
 
+    assert loop.call_args.args[4] == speed
+    if mode != "Local simulation":
+        deploy.assert_called_once_with("eric@rpi")
+        open_tunnel.assert_called_once_with("eric@rpi", flags == ["--pi-sim"], fingerprint="test-fingerprint")
+        assert loop.call_args.args[1] is tunnel.connect
+        assert loop.call_args.args[2].joysticks_only
+        assert not loop.call_args.kwargs["allow_limit_recovery"]
+        assert loop.call_args.kwargs["on_link_lost"] == loop.call_args.args[2].end
+        local.assert_not_called()
+    else:
+        deploy.assert_not_called()
+        open_tunnel.assert_not_called()
+        assert loop.call_args.args[1] is local.return_value
     dashboard.publish.assert_called_once_with(
         {"shoulder_pan": 1., "shoulder_lift": 2., "elbow_flex": 3., "wrist_flex": 4., "wrist_roll": 5.},
         0., {"x": .1, "y": -.2, "z": .3}, False, gamepad=None,
-        remote={**status, **phone, "arm_status": "Holding"},
+        remote={**status, **phone, "arm_status": arm_status},
     )
+
+
+@pytest.mark.parametrize("flags", [[], ["--real-arm"]])
+def test_launcher_restricts_real_arm_listen_address(monkeypatch, capsys, flags):
+    monkeypatch.setattr(sys, "argv", ["mobile-teleop", "--listen", "0.0.0.0", *flags])
+    with pytest.raises(SystemExit) as error:
+        launcher.main()
+    assert error.value.code == 2
+    assert "Use a private LAN IPv4 address or 127.0.0.1 in real-arm mode" in capsys.readouterr().err
 
 
 def arm_frame(seq, flags=0, x=0., y=0., z=0., roll=0., pitch=0., gripper=0):
     return ARM_INPUT_FRAME.pack(seq, flags, x, y, z, roll, pitch, gripper)
+
+
+def test_pi_gateway_advertises_joysticks_and_invalidation_retires_the_socket():
+    phone = MobileInput(joysticks_only=True)
+    headers = {"Authorization": "Bearer test-token"}
+    with MobileGateway("127.0.0.1", 0, phone, "test-token", arm_status=lambda: "Holding") as gateway:
+        base_url = f"ws://127.0.0.1:{gateway.port}"
+        with pytest.raises(InvalidStatus) as refused:
+            connect(base_url + INPUT_PATH, additional_headers=headers, proxy=None)
+        assert refused.value.response.status_code == 404
+        with connect(base_url + ARM_INPUT_PATH, additional_headers=headers, proxy=None) as client:
+            assert client.response.headers[ARM_CONTROLS_HEADER] == "joysticks"
+            assert client.recv(timeout=.5) == "arm-status:Holding"
+            phone.end()  # Motor connection dropped before the first phone frame.
+            client.send(arm_frame(0))
+            with pytest.raises(ConnectionClosedError, match="Input expired"):
+                client.recv(timeout=.5)
+        with connect(base_url + ARM_INPUT_PATH, additional_headers=headers, proxy=None) as client:
+            client.send(arm_frame(0))
+            client.send(arm_frame(1, DEADMAN, roll=.5))
+            wait_for_telemetry(gateway, lambda status: status["phone"]["seq"] == 1)
+            assert not phone.sample.lb
+
+
+def test_pi_joysticks_drive_four_axes_and_hold_on_either_release():
+    now = 1.
+    phone = MobileInput(clock=lambda: now, joysticks_only=True)
+    phone.begin(arm_controls=True)
+    phone.publish(arm_frame(0))
+    stop = Event()
+    measured = [0.] * 6
+    feedback = {"armed": False, "moving": False, "measured": measured, "sent": measured,
+                "hz": 50, "watchdog_s": .2, "fault": False, "reason": ""}
+    frames = iter((arm_frame(1, ADVANCE),
+                   arm_frame(2, DEADMAN, .25, -.5, .25, .5, .5, 1),
+                   arm_frame(3, DEADMAN), arm_frame(4, DEADMAN, roll=.5),
+                   arm_frame(5, roll=.5), arm_frame(6, STOP), arm_frame(7, DEADMAN, x=.5)))
+    operations, deltas = [], []
+
+    def solve(_measured, delta, **_):
+        if not any(delta):
+            return {}
+        deltas.append(delta)
+        return {"target": [1.] * 5 + [0.], "accepted_xyz_m": [0., 0., 0.]}
+
+    def request(op, **values):
+        nonlocal now
+        operations.append(op)
+        if op == "arm":
+            feedback["armed"] = True
+        elif op == "move":
+            feedback.update(moving=True, sent=values["target"])
+        elif op in ("hold", "disarm"):
+            feedback["moving"] = False
+            if op == "disarm":
+                feedback["armed"] = False
+        frame = next(frames, None)
+        if frame is None:
+            stop.set()
+        else:
+            now += .02
+            assert phone.publish(frame)
+        return dict(feedback)
+
+    loop = ControlLoop(SimpleNamespace(solve=solve), None, phone, stop, .1, "Pi simulation",
+                       clock=lambda: now, allow_limit_recovery=False)
+    loop.session(SimpleNamespace(feedback=dict(feedback), request=request))
+    assert operations == ["poll", "arm", "move", "hold", "move", "hold", "disarm", "poll"]
+    assert deltas[0] == pytest.approx([.000005, -.00001, .000005, 0., .00375, 0.])
+    assert deltas[1] == pytest.approx([0., 0., 0., 0., .00375, 0.])
+
+
+def test_limit_handoff_disables_phone_start():
+    assert mobile_arm_status({"control_state": "Holding", "limit_handoff": True}) == "Unavailable"
 
 
 def test_arm_receive_deadline_rechecks_an_early_timer_and_rejects_late_frames(monkeypatch):

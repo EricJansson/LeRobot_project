@@ -242,6 +242,35 @@ def test_control_loop_prioritizes_recovery_over_active_input_and_lb(lb, active):
     assert loop.status["state"] == "Recovering"
 
 
+def test_phone_disarms_at_an_operating_limit_and_blocks_rearming():
+    motor, bus, now, feedback, command = rig()
+    bus.measured[3] = 95.1209
+    command("poll")
+    latest, stop = LatestInput(clock=lambda: now[0]), Event()
+    pad = {"axes": dict(LX=0., LY=0., RX=0., RY=0., LT=0., RT=0.),
+           "buttons": dict(Start=False, Back=False, LB=False), "dpad": (0, 0)}
+    latest.publish(pad)
+    operations = []
+
+    def request(op, **values):
+        operations.append(op)
+        result = command(op, **values)
+        if len(operations) == 1:
+            latest.publish({**pad, "buttons": {**pad["buttons"], "Start": True}})
+        else:
+            stop.set()
+        return result
+
+    worker = SimpleNamespace(solve=lambda measured, delta, **_: {"xyz_m": [0.] * 3})
+    loop = ControlLoop(worker, None, latest, stop, .1, "Pi simulation", clock=lambda: now[0],
+                       allow_limit_recovery=False)
+    loop.session(SimpleNamespace(feedback=feedback[0], request=request))
+    assert operations == ["disarm", "poll"]
+    assert loop.status["state"] == "Holding"
+    assert loop.status["limit_handoff"]
+    assert "Use the gamepad to recover" in loop.status["reason"]
+
+
 def test_normal_targets_reserve_half_degree_margin():
     motor, bus, now, feedback, command = rig()
     target = [0.] * 6

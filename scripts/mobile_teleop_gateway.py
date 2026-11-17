@@ -23,6 +23,7 @@ INPUT_FRAME = Struct("!IBfff")  # uint32 sequence, uint8 flags, float32 X/Y/Z
 TOUCHSCREEN_PATH = "/api/v1/touchscreen"
 ARM_INPUT_PATH = "/api/v2/input"
 ARM_INPUT_FRAME = Struct("!IBfffffb")  # Sequence, flags, XYZ, roll, pitch, gripper.
+ARM_CONTROLS_HEADER = "X-LeRobot-Arm-Controls"
 POSE_PATH = "/api/v1/marker-pose"
 PHONE_MODES = {INPUT_PATH: "xyz", TOUCHSCREEN_PATH: "xyz", ARM_INPUT_PATH: "arm", POSE_PATH: "aruco"}
 POSE_FRAME = Struct("!IBffffff")  # uint32 sequence, uint8 flags, XYZ cm or normalized, RPY degrees
@@ -48,13 +49,16 @@ def mobile_arm_status(control_status):
         return "Monitoring only"
     if control_status.get("state") == "Fault":
         return "Fault"
+    if control_status.get("mode") == "Observe only" or control_status.get("limit_handoff"):
+        return "Unavailable"
     state = control_status.get("control_state")
     return state if state in ("Holding", "Control enabled", "Released") else "Unavailable"
 
 
 class MobileInput:
-    def __init__(self, *, clock=monotonic):
+    def __init__(self, *, clock=monotonic, joysticks_only=False):
         self.clock = clock
+        self.joysticks_only = joysticks_only
         self.latest = LatestInput(clock=clock, allow_torque_release=False)
         self.lock = Lock()
         self.seq = None
@@ -63,17 +67,20 @@ class MobileInput:
         self.gripper = 0
         self.arm_controls = False
         self.started = False
+        self.invalidated = False
 
     def begin(self, *, arm_controls=False):
         with self.lock:
             self.seq = None
             self.arm_controls = arm_controls
             self.started = False
+            self.invalidated = False
 
     def end(self):
         with self.lock:
             self.latest.publish(None)
             self.started = False
+            self.invalidated = True
 
     def _expire(self):
         sample = self.latest.sample
@@ -95,6 +102,8 @@ class MobileInput:
                       "xyz": self.xyz if fresh else (0., 0., 0.)}
             if self.arm_controls:
                 result.update(wrist=self.wrist if fresh else (0., 0.), gripper=self.gripper if fresh else 0)
+                if self.joysticks_only:
+                    result["joysticks_only"] = True
             return result
 
     def publish(self, frame):
@@ -116,6 +125,8 @@ class MobileInput:
 
         with self.lock:
             self._expire()
+            if self.invalidated:
+                raise TimeoutError("Input expired")
             if self.seq is not None:
                 if self.latest.sample.gamepad is None:
                     raise TimeoutError("Input expired")
@@ -130,6 +141,8 @@ class MobileInput:
                 elif advance:
                     self.started = True
                 deadman = deadman and self.started
+            if self.joysticks_only:
+                pitch, gripper = 0., 0
             magnitude = max(1., hypot(*xyz))
             x, y, z = (axis / magnitude for axis in xyz)
             # Adapt Cartesian input to the existing IK control loop's input boundary.
@@ -260,7 +273,7 @@ class MobileGateway:
                     "marker_pose": self.marker_pose.telemetry()}
 
     def _authorize(self, connection, request):
-        if request.path not in PHONE_MODES:
+        if request.path not in PHONE_MODES or self.feed.joysticks_only and request.path == INPUT_PATH:
             return connection.respond(HTTPStatus.NOT_FOUND, "Unknown endpoint\n")
         headers = request.headers.get_all("Authorization")
         if len(headers) != 1 or not compare_digest(headers[0].encode(), self.authorization):
@@ -275,6 +288,11 @@ class MobileGateway:
         if self.active:
             return connection.respond(HTTPStatus.CONFLICT, "Phone input already connected\n")
         return None
+
+    def _advertise_arm_controls(self, _connection, request, response):
+        if (self.feed.joysticks_only and request.path == ARM_INPUT_PATH
+                and response.status_code == HTTPStatus.SWITCHING_PROTOCOLS):
+            response.headers[ARM_CONTROLS_HEADER] = "joysticks"
 
     async def _receive(self, connection):
         if self.active:
@@ -344,7 +362,8 @@ class MobileGateway:
         self.stop = asyncio.Event()
         async with serve(self._receive, self.host, self.port, family=socket.AF_INET, origins=[None],
                          compression=None, max_size=POSE_FRAME.size, max_queue=1,
-                         open_timeout=2, close_timeout=.1, process_request=self._authorize) as server:
+                         open_timeout=2, close_timeout=.1, process_request=self._authorize,
+                         process_response=self._advertise_arm_controls) as server:
             self.address, self.port = server.sockets[0].getsockname()
             self.ready.set_result(None)
             await self.stop.wait()

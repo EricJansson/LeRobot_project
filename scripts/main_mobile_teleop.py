@@ -1,4 +1,4 @@
-"""Receive phone control and marker poses on Windows with local IK simulation."""
+"""Receive phone input on Windows for monitoring, IK simulation, or Pi arm control."""
 
 import argparse
 from contextlib import ExitStack
@@ -11,12 +11,13 @@ from threading import Event, Thread
 from robot_program.remote_ik_control import ControlLoop
 from scripts.lerobot_web_dashboard import WebDashboard
 from scripts.main_teleop_remote_ik import (
-    DEFAULT_WSL_PYTHON, TELEOP_ERRORS, VK_ESCAPE, Worker, load_key_state, local_simulated_link,
+    DEFAULT_WSL_PYTHON, TELEOP_ERRORS, VK_ESCAPE, PiTunnel, Worker, load_key_state, local_simulated_link,
     publish_remote_dashboard,
 )
 from scripts.mobile_teleop_gateway import (
     ARM_INPUT_PATH, INPUT_PATH, POSE_PATH, TOUCHSCREEN_PATH, MobileGateway, MobileInput, mobile_arm_status,
 )
+from scripts.remote_ik_deploy import ensure_installed
 
 
 TOKEN_PATH = Path(__file__).resolve().parents[1] / "mobile-teleop.token"
@@ -50,8 +51,12 @@ def default_input_address():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
-    modes.add_argument("--dry-run", action="store_true", help="Use WSL2 IK and a local simulated arm (default)")
+    modes.add_argument("--dry-run", action="store_true", help="Use WSL2 IK and a local simulated arm")
     modes.add_argument("--input-only", action="store_true", help="Show phone input without starting WSL2")
+    modes.add_argument("--pi-sim", action="store_true", help="Use the Pi's simulated motor bus over SSH")
+    modes.add_argument("--real-arm", action="store_true", help="Connect to the physical arm on the Pi (default)")
+    parser.add_argument("--pi", default="eric@rpi", help="SSH destination")
+    parser.add_argument("--speed", type=float, help="Joystick motion scale (default: 0.1 for --pi-sim, 1 otherwise)")
     parser.add_argument("--listen", help="Override the automatically selected LAN IPv4 address")
     parser.add_argument("--input-port", type=int, default=18744, help="Phone WebSocket port (default %(default)s)")
     parser.add_argument("--dashboard-port", type=int, default=18745, help="Local dashboard port (default %(default)s)")
@@ -60,11 +65,27 @@ def main():
     args = parser.parse_args()
     if any(not 0 <= port <= 65535 for port in (args.input_port, args.dashboard_port)):
         parser.error("Ports must be between 0 and 65535")
+    if not re.fullmatch(r"[a-zA-Z0-9_][a-zA-Z0-9_.-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*", args.pi):
+        parser.error("--pi must be user@host")
+    real_arm = args.real_arm or not (args.dry_run or args.input_only or args.pi_sim)
+    uses_pi = args.pi_sim or real_arm
+    speed = args.speed if args.speed is not None else (.1 if args.pi_sim else 1.)
+    if not 0 < speed <= 1:
+        parser.error("--speed must be greater than 0 and at most 1")
+    if real_arm and args.listen:
+        try:
+            address = IPv4Address(args.listen)
+        except ValueError:
+            parser.error("Use a private LAN IPv4 address or 127.0.0.1 in real-arm mode")
+        if address != IPv4Address(LOOPBACK) and not any(address in network for network in LAN_NETWORKS):
+            parser.error("Use a private LAN IPv4 address or 127.0.0.1 in real-arm mode")
 
-    phone = MobileInput()
+    phone = MobileInput(joysticks_only=uses_pi)
     stop = Event()
     page = Path(__file__).with_name("mobile_teleop_dashboard.html")
     control = None
+    mode = ("Input only" if args.input_only else "Real arm" if real_arm else
+            "Pi simulation" if args.pi_sim else "Local simulation")
 
     def arm_status():
         if args.input_only:
@@ -78,11 +99,17 @@ def main():
         with ExitStack() as stack:
             gateway = stack.enter_context(MobileGateway(host, args.input_port, phone, token, arm_status=arm_status))
             dashboard = stack.enter_context(WebDashboard(LOOPBACK, args.dashboard_port, page=page))
-            mode = "Input only" if args.input_only else "Local simulation"
             if not args.input_only:
                 worker = stack.enter_context(Worker(args.wsl_distro, args.wsl_python))
-                connect = local_simulated_link(stack, worker, stop)
-                control = ControlLoop(worker, connect, phone, stop, 1., mode, input_name="phone")
+                if uses_pi:
+                    fingerprint = ensure_installed(args.pi)
+                    tunnel = stack.enter_context(PiTunnel(args.pi, args.pi_sim, fingerprint=fingerprint))
+                    connect = tunnel.connect
+                else:
+                    connect = local_simulated_link(stack, worker, stop)
+                control = ControlLoop(worker, connect, phone, stop, speed, mode, input_name="phone",
+                                      allow_limit_recovery=not uses_pi,
+                                      on_link_lost=phone.end if uses_pi else None)
                 thread = Thread(target=control.run, daemon=True)
                 thread.start()
                 stack.callback(thread.join, 2)
@@ -94,6 +121,7 @@ def main():
                 print("Phone access requires the PC's LAN IPv4 address. Restart with --listen <PC-LAN-IPv4>.",
                       flush=True)
             ws_address = f"ws://{gateway.address}:{gateway.port}"
+            legacy_endpoint = "" if uses_pi else f"Legacy joystick / XYZ velocity input\n  {ws_address}{INPUT_PATH}\n"
             print(f"{pose_heading}\n"
                   f"  {ws_address}{POSE_PATH}\n"
                   f"  In the app's bearer token field, enter the value from {TOKEN_PATH.name}.\n"
@@ -103,8 +131,7 @@ def main():
                   f"  {ws_address}{TOUCHSCREEN_PATH}\n"
                   "Touchscreen arm control\n"
                   f"  {ws_address}{ARM_INPUT_PATH}\n"
-                  "Legacy joystick / XYZ velocity input\n"
-                  f"  {ws_address}{INPUT_PATH}\n"
+                  f"{legacy_endpoint}"
                   "Esc or Ctrl+C exits.", flush=True)
             while not stop.is_set():
                 if get_key_state(VK_ESCAPE) < 0:

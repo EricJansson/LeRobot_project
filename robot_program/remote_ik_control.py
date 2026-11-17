@@ -106,13 +106,16 @@ def issued_arm_matches(issued, target, *, rel_tol=0.):
 
 class ControlLoop:
     def __init__(self, worker, connect, latest_input, stop, speed, mode, *, trace=None,
-                 correction_profile=None, clock=monotonic, input_name="gamepad"):
+                 correction_profile=None, clock=monotonic, input_name="gamepad",
+                 allow_limit_recovery=True, on_link_lost=None):
         self.worker, self.connect, self.latest_input, self.stop = worker, connect, latest_input, stop
         self.speed, self.mode = speed, mode
         self.clock = clock
         self.trace = trace
         self.correction_profile = correction_profile
         self.input_name = input_name
+        self.allow_limit_recovery = allow_limit_recovery
+        self.on_link_lost = on_link_lost
         self.status = {"connection": "Connecting", "state": "Unavailable", "reason": "", "mode": mode}
         self.error = None
 
@@ -123,6 +126,8 @@ class ControlLoop:
                     try:
                         self.session(link)
                     finally:
+                        if self.on_link_lost is not None:
+                            self.on_link_lost()
                         with suppress(OSError, ValueError):
                             link.request("disarm")
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
@@ -302,6 +307,9 @@ class ControlLoop:
                         measured, feedback_count, received, connected_at, max_gap_ms):
         reason = ("Pi shortened the validated Cartesian target" if issuance_diverged
                   else feedback["reason"] or result.get("reason", ""))
+        limit_handoff = not self.allow_limit_recovery and bool(feedback.get("recovery_required"))
+        if limit_handoff and not feedback["fault"]:
+            reason = "Joint limit reached. Use the gamepad to recover."
         if not reason and result.get("path_bound_deg") == 75.:
             reason = "75° path escape"
         if not fresh and not reason:
@@ -321,6 +329,7 @@ class ControlLoop:
                 display_state = motion_status
         self.status = {"connection": "Connected", "mode": mode, "state": display_state,
                        "control_state": "Control enabled" if feedback["armed"] else control_state,
+                       "limit_handoff": limit_handoff,
                        "release_progress": state.release_progress if not feedback["fault"] and control_state == "Holding" else 0.,
                        "reason": reason, "measured": measured, "sent": feedback["sent"],
                        "xyz_m": result.get("xyz_m"), "desired_xyz_m": state.desired_xyz_m,
@@ -363,7 +372,12 @@ class ControlLoop:
                 state, feedback, sample, seen, arm_interrupted=arm_interrupted,
                 fresh=fresh, elapsed=elapsed, period=period, started=started)
             seen = sample
-            recovering = feedback["armed"] and feedback.get("recovery_required") and op not in ("disarm", "release_arm", "capture") and fresh
+            limit_handoff = not self.allow_limit_recovery and feedback.get("recovery_required")
+            if limit_handoff:
+                op = "disarm" if feedback["armed"] else "poll"
+                delta, sent, arm_input, ramp_scale = [0.] * 6, None, False, None
+            recovering = (self.allow_limit_recovery and feedback["armed"] and feedback.get("recovery_required")
+                          and op not in ("disarm", "release_arm", "capture") and fresh)
             if recovering:
                 op, delta, sent, arm_input, ramp_scale = "recover", [0.] * 6, None, False, None
                 state.arm_started = None
@@ -377,14 +391,14 @@ class ControlLoop:
                     automatic=feedback["recovery_target"], anchor=feedback["recovery_anchor"],
                     goal=feedback["recovery_goal"],
                     steps=recovery_step_limits(feedback["rates"], period))
-            if not recovering and state.was_correcting and fresh and sample.lb and not any(delta) and op not in ("disarm", "release_arm", "capture"):
+            if not (recovering or limit_handoff) and state.was_correcting and fresh and sample.lb and not any(delta) and op not in ("disarm", "release_arm", "capture"):
                 op = "poll"
             if finite_vector(measured, 6) and (op in ("poll", "arm") or any(delta)):
                 reference = sent if any(delta) else feedback["sent"] if feedback.get("recovery_holding") else None
                 result = self.worker.solve(measured, delta, sent=reference,
                                            desired_xyz_m=state.desired_xyz_m, joint_step_limits=joint_step_limits,
                                            correction=correcting, recovery_step_m=recovery_step_m)
-            if not recovering:
+            if not (recovering or limit_handoff):
                 op, result, correcting = self._select_correction(
                     state, feedback, sample, result, op=op, delta=delta, arm_input=arm_input,
                     fresh=fresh, started=started, period=period, joint_step_limits=joint_step_limits, measured=measured)
@@ -393,8 +407,9 @@ class ControlLoop:
             current = self.latest_input.sample
             if feedback["armed"] and current.stop != sample.stop:
                 state.blocked_release_press = current.stop
-            op = self._validate_input(op, result, sample, current, arm_input=arm_input,
-                                      correcting=correcting, freshness=freshness)
+            if not limit_handoff:
+                op = self._validate_input(op, result, sample, current, arm_input=arm_input,
+                                          correcting=correcting, freshness=freshness)
 
             values = {"target": result["target"]} if op == "move" else {}
             if op == "recover":
