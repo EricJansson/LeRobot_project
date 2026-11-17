@@ -22,8 +22,11 @@ INPUT_FRAME = Struct("!IBfff")  # uint32 sequence, uint8 flags, float32 X/Y/Z
 POSE_PATH = "/api/v1/marker-pose"
 POSE_FRAME = Struct("!IBffffff")  # uint32 sequence, uint8 flags, XYZ cm or normalized, RPY degrees
 POSE_FRAME_HEADER = "X-Marker-Pose-Frame"
+POSE_XYZ_UNITS_HEADER = "X-Marker-Pose-XYZ-Units"
 CAMERA_AXES = "camera"
 ROBOT_AXES = "robot-axes"
+XYZ_CM = "cm"
+XYZ_NORMALIZED = "normalized"
 DEADMAN = 1
 ADVANCE = 2
 TRACKING = 1
@@ -101,18 +104,20 @@ class MarkerPose:
         self.clock = clock
         self.lock = Lock()
         self.coordinate_frame = None
+        self.xyz_units = None
         self.seq = None
         self.received_at = None
         self.pose = None
 
-    def begin(self, coordinate_frame=CAMERA_AXES):
+    def begin(self, coordinate_frame=CAMERA_AXES, xyz_units=XYZ_CM):
         with self.lock:
             self.coordinate_frame = coordinate_frame
+            self.xyz_units = xyz_units
             self.seq = self.received_at = self.pose = None
 
     def end(self):
         with self.lock:
-            self.coordinate_frame = self.pose = None
+            self.coordinate_frame = self.xyz_units = self.pose = None
 
     def publish(self, frame):
         if not isinstance(frame, bytes) or len(frame) != POSE_FRAME.size:
@@ -139,7 +144,7 @@ class MarkerPose:
             else:
                 state = "Tracking" if self.pose is not None else "Marker lost"
             pose = self.pose if state == "Tracking" else None
-            return {"state": state, "seq": self.seq, "frame": self.coordinate_frame,
+            return {"state": state, "seq": self.seq, "frame": self.coordinate_frame, "xyz_units": self.xyz_units,
                     "xyz_cm": pose[:3] if pose else None, "rpy_deg": pose[3:] if pose else None}
 
 
@@ -162,6 +167,9 @@ class MobileGateway:
             frames = request.headers.get_all(POSE_FRAME_HEADER)
             if frames and frames != [ROBOT_AXES]:
                 return connection.respond(HTTPStatus.BAD_REQUEST, "Invalid marker pose frame header\n")
+            units = request.headers.get_all(POSE_XYZ_UNITS_HEADER)
+            if units and units not in ([XYZ_CM], [XYZ_NORMALIZED]):
+                return connection.respond(HTTPStatus.BAD_REQUEST, "Invalid marker pose XYZ units header\n")
         if self.active:
             return connection.respond(HTTPStatus.CONFLICT, "Phone input already connected\n")
         return None
@@ -174,7 +182,8 @@ class MobileGateway:
         is_pose = connection.request.path == POSE_PATH
         if is_pose:
             feed = self.marker_pose
-            feed.begin(connection.request.headers.get(POSE_FRAME_HEADER, CAMERA_AXES))
+            headers = connection.request.headers
+            feed.begin(headers.get(POSE_FRAME_HEADER, CAMERA_AXES), headers.get(POSE_XYZ_UNITS_HEADER, XYZ_CM))
         else:
             feed = self.feed
             feed.begin()

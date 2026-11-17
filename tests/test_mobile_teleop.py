@@ -111,6 +111,7 @@ def test_marker_pose_preserves_units_and_expires_without_a_new_sequence():
     frame = POSE_FRAME.pack(5, TRACKING, -12.5, 18, 55, 9.5, -20, 170)
     assert feed.publish(frame)
     assert feed.telemetry() == {"state": "Tracking", "seq": 5, "frame": "camera",
+                                "xyz_units": "cm",
                                 "xyz_cm": (-12.5, 18., 55.), "rpy_deg": (9.5, -20., 170.)}
 
     now += POSE_STALE_S / 2
@@ -118,6 +119,7 @@ def test_marker_pose_preserves_units_and_expires_without_a_new_sequence():
     assert not feed.publish(POSE_FRAME.pack(4, 0, *([0.] * 6)))
     now += POSE_STALE_S
     assert feed.telemetry() == {"state": "Pose timed out", "seq": 5, "frame": "camera",
+                                "xyz_units": "cm",
                                 "xyz_cm": None, "rpy_deg": None}
 
     # A stationary marker can report identical coordinates with a new sequence.
@@ -125,10 +127,12 @@ def test_marker_pose_preserves_units_and_expires_without_a_new_sequence():
     assert feed.telemetry()["state"] == "Tracking"
     assert feed.publish(POSE_FRAME.pack(7, 0, *([0.] * 6)))
     assert feed.telemetry() == {"state": "Marker lost", "seq": 7, "frame": "camera",
+                                "xyz_units": "cm",
                                 "xyz_cm": None, "rpy_deg": None}
     feed.end()
     assert feed.telemetry()["state"] == "Disconnected"
     assert feed.telemetry()["frame"] is None
+    assert feed.telemetry()["xyz_units"] is None
     feed.begin("robot-axes")
     assert feed.telemetry()["frame"] == "robot-axes"
     assert feed.publish(POSE_FRAME.pack(0, TRACKING, -12.5, 18, 55, 9.5, -20, 170))
@@ -145,34 +149,41 @@ def test_marker_pose_rejects_invalid_frames(frame):
     assert feed.telemetry()["seq"] is None
 
 
-def test_marker_websocket_labels_legacy_and_robot_axes_across_reconnect():
+def test_marker_websocket_reports_frame_and_xyz_units_across_reconnect():
     phone = MobileInput()
     auth = ("Authorization", "Bearer mobile-test-token")
     frame_header = "X-Marker-Pose-Frame"
     robot_header = (frame_header, "robot-axes")
+    units_header = "X-Marker-Pose-XYZ-Units"
+    normalized = (units_header, "normalized")
+    centimeters = (units_header, "cm")
     with MobileGateway("127.0.0.1", 0, phone, "mobile-test-token") as gateway:
         url = f"ws://127.0.0.1:{gateway.port}{POSE_PATH}"
 
-        for invalid_headers in ([(frame_header, "unknown")], [robot_header, robot_header]):
+        for invalid_headers in ([(frame_header, "unknown")], [robot_header, robot_header],
+                                [(units_header, "mm")], [normalized, normalized]):
             with pytest.raises(InvalidStatus) as rejected:
                 connect(url, additional_headers=[auth, *invalid_headers], open_timeout=2, proxy=None)
             assert rejected.value.response.status_code == 400
 
-        for headers, expected in (([auth], "camera"), ([auth, robot_header], "robot-axes")):
-            with connect(url, additional_headers=headers, open_timeout=2, proxy=None) as client:
-                client.send(POSE_FRAME.pack(0, TRACKING, 15, -12, 50, 30, 9, -45))
+        for headers, frame, units in (([], "camera", "cm"),
+                                      ([robot_header, normalized], "robot-axes", "normalized"),
+                                      ([robot_header, centimeters], "robot-axes", "cm")):
+            with connect(url, additional_headers=[auth, *headers], open_timeout=2, proxy=None) as client:
+                client.send(POSE_FRAME.pack(0, TRACKING, .125, -.25, .5, 30, 9, -45))
                 deadline = monotonic() + 1
                 while gateway.marker_pose.telemetry()["state"] != "Tracking" and monotonic() < deadline:
                     sleep(.001)
                 assert gateway.marker_pose.telemetry() == {
-                    "state": "Tracking", "seq": 0, "frame": expected,
-                    "xyz_cm": (15., -12., 50.), "rpy_deg": (30., 9., -45.),
+                    "state": "Tracking", "seq": 0, "frame": frame, "xyz_units": units,
+                    "xyz_cm": (.125, -.25, .5), "rpy_deg": (30., 9., -45.),
                 }
 
             deadline = monotonic() + 1
             while gateway.marker_pose.telemetry()["frame"] is not None and monotonic() < deadline:
                 sleep(.001)
             assert gateway.marker_pose.telemetry()["frame"] is None
+            assert gateway.marker_pose.telemetry()["xyz_units"] is None
 
 
 def test_marker_websocket_keeps_pose_out_of_control_input():

@@ -24,6 +24,8 @@
     .fill { position: absolute; inset-block: 0; border-radius: 1rem; background: #73e2b2; }
     output, td { text-align: right; font-variant-numeric: tabular-nums; }
     .details { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin: 0; font-size: .9rem; }
+    .pose-options { margin-top: 1rem; display: flex; align-items: center; gap: .5rem; font-size: .9rem; }
+    .pose-options select { font: inherit; }
     table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
     th, td { padding: .55rem .2rem; font-size: .9rem; border-top: 1px solid #303b46; }
     th { font-weight: 500; text-align: right; }
@@ -54,8 +56,16 @@
         <h2 id="pose-heading">ArUco pose</h2>
         <span id="pose-status" class="connection" role="status">Waiting for marker pose</span>
       </div>
-      <table class="pose-table" aria-label="Marker position in centimeters">
-        <thead><tr><th scope="col">Position (cm)</th><th scope="col">X</th><th scope="col">Y</th><th scope="col">Z</th></tr></thead>
+      <div class="pose-options">
+        <label for="pose-xyz-view">XYZ view</label>
+        <select id="pose-xyz-view" autocomplete="off">
+          <option value="automatic">Automatic</option>
+          <option value="cm">Centimeters</option>
+          <option value="normalized">Normalized</option>
+        </select>
+      </div>
+      <table class="pose-table" aria-labelledby="pose-position-label">
+        <thead><tr><th id="pose-position-label" scope="col">Position (cm)</th><th scope="col">X</th><th scope="col">Y</th><th scope="col">Z</th></tr></thead>
         <tbody><tr id="pose-xyz"><th scope="row">Measured</th><td>—</td><td>—</td><td>—</td></tr></tbody>
       </table>
       <table class="pose-table" aria-label="Marker orientation in degrees">
@@ -82,12 +92,26 @@
     const axes = document.querySelectorAll('.axis');
     const poseFrameLabels = {camera: 'camera frame', 'robot-axes': 'robot axes'};
     const signed = value => `${value > 0 ? '+' : ''}${value.toFixed(2)}`;
+    const poseXyzView = byId('pose-xyz-view');
+    const posePositionLabel = byId('pose-position-label');
+    let markerPose;
 
-    function showValues(row, values, scale = 1) {
+    function showValues(row, values, scale = 1, decimals = 1) {
       byId(row).querySelectorAll('td').forEach((cell, axis) => {
-        cell.textContent = Number.isFinite(values?.[axis]) ? (values[axis] * scale).toFixed(1) : '—';
+        cell.textContent = Number.isFinite(values?.[axis]) ? (values[axis] * scale).toFixed(decimals) : '—';
       });
     }
+
+    function showPosePosition() {
+      const view = poseXyzView.value;
+      const units = view === 'automatic' ? markerPose?.xyz_units : view;
+      const normalized = units === 'normalized';
+      const label = normalized ? 'Position (normalized)' : 'Position (cm)';
+      if (posePositionLabel.textContent !== label) posePositionLabel.textContent = label;
+      showValues('pose-xyz', markerPose?.xyz_cm, 1, normalized ? 3 : 1);
+    }
+
+    poseXyzView.addEventListener('change', showPosePosition);
 
     function render(remote, offline = false) {
       const phone = remote.phone;
@@ -105,13 +129,14 @@
         row.querySelector('output').textContent = signed(value);
       });
       const pose = remote.marker_pose;
+      markerPose = pose;
       const frameLabel = poseFrameLabels[pose?.frame];
       byId('pose-heading').textContent = frameLabel ? `ArUco pose · ${frameLabel}` : 'ArUco pose';
       const poseStatus = byId('pose-status');
       poseStatus.textContent = offline ? 'Dashboard offline' : pose?.state ?? 'Waiting for marker pose';
       poseStatus.dataset.fresh = pose?.state === 'Tracking';
       byId('pose-sequence').textContent = pose?.seq != null ? `Sequence ${pose.seq}` : 'No samples yet';
-      showValues('pose-xyz', pose?.xyz_cm);
+      showPosePosition();
       showValues('pose-rpy', pose?.rpy_deg);
       byId('simulation').hidden = remote.mode !== 'Local simulation';
       byId('state').textContent = remote.state || '';
