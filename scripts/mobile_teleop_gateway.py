@@ -24,6 +24,7 @@ TOUCHSCREEN_PATH = "/api/v1/touchscreen"
 ARM_INPUT_PATH = "/api/v2/input"
 ARM_INPUT_FRAME = Struct("!IBfffffb")  # Sequence, flags, XYZ, roll, pitch, gripper.
 ARM_CONTROLS_HEADER = "X-LeRobot-Arm-Controls"
+ARM_RELEASE_HEADER = "X-LeRobot-Arm-Release"
 POSE_PATH = "/api/v1/marker-pose"
 PHONE_MODES = {INPUT_PATH: "xyz", TOUCHSCREEN_PATH: "xyz", ARM_INPUT_PATH: "arm", POSE_PATH: "aruco"}
 POSE_FRAME = Struct("!IBffffff")  # uint32 sequence, uint8 flags, XYZ cm or normalized, RPY degrees
@@ -36,6 +37,7 @@ XYZ_NORMALIZED = "normalized"
 DEADMAN = 1
 ADVANCE = 2
 STOP = 4
+RELEASE = 8
 TRACKING = 1
 FRESHNESS_S = min(.1, OFFLINE_WATCHDOG / 2)
 TOUCHSCREEN_STALE_S = .5
@@ -59,7 +61,7 @@ class MobileInput:
     def __init__(self, *, clock=monotonic, joysticks_only=False):
         self.clock = clock
         self.joysticks_only = joysticks_only
-        self.latest = LatestInput(clock=clock, allow_torque_release=False)
+        self.latest = LatestInput(clock=clock)
         self.lock = Lock()
         self.seq = None
         self.xyz = (0., 0., 0.)
@@ -113,15 +115,15 @@ class MobileInput:
         seq, flags, x, y, z, *extra = codec.unpack(frame)
         xyz = (x, y, z)
         roll, pitch, gripper = extra if self.arm_controls else (0., 0., 0)
-        if flags & ~(DEADMAN | ADVANCE | (STOP if self.arm_controls else 0)):
+        if flags & ~(DEADMAN | ADVANCE | ((STOP | RELEASE) if self.arm_controls else 0)):
             raise ValueError("Unknown input flags")
         if not all(-1 <= axis <= 1 for axis in (*xyz, roll, pitch)) or gripper not in (-1, 0, 1):
             raise ValueError("Input axes must contain finite values in [-1, 1]")
         deadman, advance = bool(flags & DEADMAN), bool(flags & ADVANCE)
-        stop = bool(flags & STOP)
+        stop = bool(flags & (STOP | RELEASE))
         moving = any((*xyz, roll, pitch, gripper))
-        if (advance or stop) and (flags not in (ADVANCE, STOP) or moving):
-            raise ValueError("Start and Stop require a neutral input frame")
+        if (advance or stop) and (flags not in (ADVANCE, STOP, RELEASE) or moving):
+            raise ValueError("Arm state changes require a neutral input frame")
 
         with self.lock:
             self._expire()
@@ -149,7 +151,7 @@ class MobileInput:
             self.latest.publish({"name": "Phone", "axes": {"LY": -x, "LX": -y, "RY": -z,
                                                           "LT": max(0., -pitch), "RT": max(0., pitch), "RX": roll},
                                  "buttons": {"LB": deadman, "Start": advance, "Back": stop},
-                                 "dpad": (0, gripper)})
+                                 "dpad": (0, gripper)}, release_requested=flags == RELEASE)
             self.seq, self.xyz, self.wrist, self.gripper = seq, xyz, (roll, pitch), gripper
             return True
 
@@ -250,13 +252,14 @@ class MarkerPose:
 
 
 class MobileGateway:
-    def __init__(self, host, port, feed, token, *, arm_status=lambda: "Monitoring only"):
+    def __init__(self, host, port, feed, token, *, arm_status=lambda: "Monitoring only", release_progress=lambda: 0.):
         self.host, self.port = host, port
         self.feed = feed
         self.touchscreen = TouchscreenInput()
         self.marker_pose = MarkerPose()
         self.authorization = f"Bearer {token}".encode()
         self.arm_status = arm_status
+        self.release_progress = release_progress
         self._session_lock = Lock()
         self._phone_path = None
         self.ready = Future()
@@ -290,9 +293,10 @@ class MobileGateway:
         return None
 
     def _advertise_arm_controls(self, _connection, request, response):
-        if (self.feed.joysticks_only and request.path == ARM_INPUT_PATH
-                and response.status_code == HTTPStatus.SWITCHING_PROTOCOLS):
-            response.headers[ARM_CONTROLS_HEADER] = "joysticks"
+        if request.path == ARM_INPUT_PATH and response.status_code == HTTPStatus.SWITCHING_PROTOCOLS:
+            response.headers[ARM_RELEASE_HEADER] = "hold"
+            if self.feed.joysticks_only:
+                response.headers[ARM_CONTROLS_HEADER] = "joysticks"
 
     async def _receive(self, connection):
         if self.active:
@@ -353,8 +357,14 @@ class MobileGateway:
             await connection.close(1008, close_reason)
 
     async def _report_arm_status(self, connection):
+        previous_progress = 0.
         while True:
-            await connection.send(f"arm-status:{self.arm_status()}")
+            state = self.arm_status()
+            progress = self.release_progress() if state == "Holding" else 0.
+            await connection.send(f"arm-status:{state}")
+            if progress != previous_progress:
+                await connection.send(f"arm-release-progress:{progress:.3f}")
+                previous_progress = progress
             await asyncio.sleep(ARM_STATUS_INTERVAL_S)
 
     async def _serve(self):

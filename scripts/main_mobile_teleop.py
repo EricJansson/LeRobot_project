@@ -92,12 +92,16 @@ def main():
             return mobile_arm_status(None)
         return mobile_arm_status(control.status if control is not None else {})
 
+    def release_progress():
+        return control.status.get("release_progress", 0.) if control is not None else 0.
+
     try:
         token = load_phone_token(TOKEN_PATH)
         host = args.listen or default_input_address()
         get_key_state = load_key_state()
         with ExitStack() as stack:
-            gateway = stack.enter_context(MobileGateway(host, args.input_port, phone, token, arm_status=arm_status))
+            gateway = stack.enter_context(MobileGateway(host, args.input_port, phone, token, arm_status=arm_status,
+                                                       release_progress=release_progress))
             dashboard = stack.enter_context(WebDashboard(LOOPBACK, args.dashboard_port, page=page))
             if not args.input_only:
                 worker = stack.enter_context(Worker(args.wsl_distro, args.wsl_python))

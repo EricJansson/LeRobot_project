@@ -12,12 +12,13 @@ pytest.importorskip("websockets", minversion="16")
 from websockets.exceptions import ConnectionClosedError, InvalidStatus
 from websockets.sync.client import connect
 
-from robot_program.remote_ik_control import ControlLoop, motion_delta
+from robot_program.remote_ik_control import ControlLoop, MotionState, motion_delta
 from scripts import main_mobile_teleop as launcher
 from scripts import mobile_teleop_gateway as gateway_module
 from scripts.mobile_teleop_gateway import (
-    ADVANCE, ARM_CONTROLS_HEADER, ARM_INPUT_FRAME, ARM_INPUT_PATH, DEADMAN, FRESHNESS_S, INPUT_FRAME, INPUT_PATH,
-    POSE_FRAME, POSE_PATH, POSE_STALE_S, STOP, TOUCHSCREEN_IDLE_S, TOUCHSCREEN_PATH, TOUCHSCREEN_STALE_S,
+    ADVANCE, ARM_CONTROLS_HEADER, ARM_INPUT_FRAME, ARM_INPUT_PATH, ARM_RELEASE_HEADER, DEADMAN, FRESHNESS_S,
+    INPUT_FRAME, INPUT_PATH, POSE_FRAME, POSE_PATH, POSE_STALE_S, RELEASE, STOP,
+    TOUCHSCREEN_IDLE_S, TOUCHSCREEN_PATH, TOUCHSCREEN_STALE_S,
     TRACKING, MarkerPose, MobileGateway, MobileInput, TouchscreenInput, mobile_arm_status,
 )
 
@@ -118,6 +119,7 @@ def test_pi_gateway_advertises_joysticks_and_invalidation_retires_the_socket():
         assert refused.value.response.status_code == 404
         with connect(base_url + ARM_INPUT_PATH, additional_headers=headers, proxy=None) as client:
             assert client.response.headers[ARM_CONTROLS_HEADER] == "joysticks"
+            assert client.response.headers[ARM_RELEASE_HEADER] == "hold"
             assert client.recv(timeout=.5) == "arm-status:Holding"
             phone.end()  # Motor connection dropped before the first phone frame.
             client.send(arm_frame(0))
@@ -264,7 +266,8 @@ def test_arm_input_mapping_and_fresh_start_after_stopping_or_reconnecting():
 @pytest.mark.parametrize("frame", [
     INPUT_FRAME.pack(1, 0, 0, 0, 0), arm_frame(1, DEADMAN | ADVANCE), arm_frame(1, STOP | ADVANCE),
     arm_frame(1, STOP, gripper=1), arm_frame(1, ADVANCE, roll=.1), arm_frame(1, pitch=float("nan")),
-    arm_frame(1, roll=1.1), arm_frame(1, gripper=2), arm_frame(1, flags=8),
+    arm_frame(1, roll=1.1), arm_frame(1, gripper=2), arm_frame(1, flags=16),
+    arm_frame(1, RELEASE | DEADMAN), arm_frame(1, RELEASE | STOP), arm_frame(1, RELEASE, roll=.1),
 ])
 def test_arm_input_rejects_invalid_frames_without_refreshing(frame):
     phone = MobileInput()
@@ -301,6 +304,50 @@ def test_arm_socket_reports_simulator_feedback_without_adding_messages_on_v1():
             client.send(INPUT_FRAME.pack(0, 0, 0, 0, 0))
             with pytest.raises(TimeoutError):
                 client.recv(timeout=.02)
+
+
+def test_phone_torque_release_uses_a_fresh_two_second_hold_from_holding():
+    now, seq = 0., 0
+    phone = MobileInput(clock=lambda: now)
+    phone.begin(arm_controls=True)
+    phone.publish(arm_frame(seq))
+    seen, state = phone.sample, MotionState()
+    feedback = {"armed": True, "moving": True, "arm_torque": "holding", "fault": False}
+    loop = ControlLoop(None, None, phone, Event(), 1., "Sim", clock=lambda: now)
+
+    def step(flags=0, interval=.02):
+        nonlocal now, seq, seen
+        now += interval
+        seq += 1
+        phone.publish(arm_frame(seq, flags))
+        current = phone.sample
+        op, *_ = loop._prepare_input(state, feedback, current, seen, arm_interrupted=False,
+                                     fresh=True, elapsed=.02, period=.02, started=now)
+        seen = current
+        if op == "disarm":
+            feedback.update(armed=False, moving=False)
+        if op == "release_arm":
+            feedback["arm_torque"] = "released"
+        return op
+
+    assert step(RELEASE) == "disarm"
+    assert all(step(RELEASE) == "poll" for _ in range(120))
+    step()
+    assert all(step(RELEASE) == "poll" for _ in range(50))
+    assert state.release_progress == pytest.approx(.49)
+    assert step(RELEASE, interval=.06) == "poll"
+    assert all(step(RELEASE) == "poll" for _ in range(120))
+    assert state.release_progress == 0.
+    step()
+    assert all(step(RELEASE) == "poll" for _ in range(100))
+    assert state.release_progress == pytest.approx(.99)
+    assert "release_arm" in [step(RELEASE), step(RELEASE)]
+    assert all(step(RELEASE) == "poll" for _ in range(102))
+    step()
+    assert step(ADVANCE) == "capture"
+    feedback["arm_torque"] = "holding"
+    step()
+    assert step(ADVANCE) == "arm"
 
 
 def test_expiry_between_ik_samples_requires_new_connection_and_advance():

@@ -61,7 +61,7 @@
         <div class="axis" data-arm-axis hidden><strong>Roll</strong><div class="track" aria-hidden="true"><div class="fill"></div></div><output aria-label="Wrist roll input">0.00</output></div>
         <div class="axis" data-arm-axis hidden><strong>Pitch</strong><div class="track" aria-hidden="true"><div class="fill"></div></div><output aria-label="Wrist pitch input">0.00</output></div>
       </div>
-      <p class="details muted"><span id="deadman">Deadman released</span><span id="sequence">No samples yet</span></p>
+      <p class="details muted"><span id="motion-input">Motion input idle</span><span id="sequence">No samples yet</span></p>
       <p id="arm-input-details" class="details muted" hidden>
         <span id="phone-arm-status" role="status">Unavailable</span><span id="gripper-input">Gripper idle</span>
       </p>
@@ -158,7 +158,7 @@
       const connection = byId('connection');
       setText(connection, phone?.fresh ? 'Receiving' : phone?.seq != null ? 'Input stale' : 'Waiting for input');
       connection.dataset.fresh = Boolean(phone?.fresh);
-      byId('deadman').textContent = phone?.deadman ? 'Deadman held' : 'Deadman released';
+      byId('motion-input').textContent = phone?.deadman ? 'Motion input active' : 'Motion input idle';
       byId('sequence').textContent = phone?.seq != null ? `Sequence ${phone.seq}` : 'No samples yet';
       byId('arm-input-details').hidden = !armControls;
       setText(byId('phone-arm-status'), armStatus ?? 'Unavailable');

@@ -61,7 +61,7 @@ class LatestInput:
         self.raw_gamepad = None
         self.sample = GamepadSample(self.clock(), None)
 
-    def publish(self, gamepad):
+    def publish(self, gamepad, *, release_requested=True):
         self.raw_gamepad = gamepad
         if gamepad is not None:
             # Keep motion logic in semantic Start/Back order; raw display stays physical.
@@ -80,7 +80,7 @@ class LatestInput:
                         and any(motion_delta(previous.gamepad)[:5])
                         and not any(motion_delta(gamepad)[:5]))
         stop_edge = bool(before) and not before.get("Back", False) and after.get("Back", False)
-        eligible = (self.allow_torque_release and gamepad is not None
+        eligible = (self.allow_torque_release and release_requested and gamepad is not None
                     and after["Back"] and not after["Start"] and not after["LB"]
                     and not any(gamepad["axes"].values()) and gamepad["dpad"] == (0, 0))
         stop_since = (now if stop_edge else previous.stop_since) if eligible else None
