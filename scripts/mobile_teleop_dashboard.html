@@ -51,7 +51,7 @@
     </section>
     <section aria-labelledby="pose-heading">
       <div class="section-top">
-        <h2 id="pose-heading">ArUco pose · camera frame</h2>
+        <h2 id="pose-heading">ArUco pose</h2>
         <span id="pose-status" class="connection" role="status">Waiting for marker pose</span>
       </div>
       <table class="pose-table" aria-label="Marker position in centimeters">
@@ -80,6 +80,7 @@
   <script>
     const byId = id => document.getElementById(id);
     const axes = document.querySelectorAll('.axis');
+    const poseFrameLabels = {camera: 'camera frame', 'robot-axes': 'robot axes'};
     const signed = value => `${value > 0 ? '+' : ''}${value.toFixed(2)}`;
 
     function showValues(row, values, scale = 1) {
@@ -104,6 +105,8 @@
         row.querySelector('output').textContent = signed(value);
       });
       const pose = remote.marker_pose;
+      const frameLabel = poseFrameLabels[pose?.frame];
+      byId('pose-heading').textContent = frameLabel ? `ArUco pose · ${frameLabel}` : 'ArUco pose';
       const poseStatus = byId('pose-status');
       poseStatus.textContent = offline ? 'Dashboard offline' : pose?.state ?? 'Waiting for marker pose';
       poseStatus.dataset.fresh = pose?.state === 'Tracking';

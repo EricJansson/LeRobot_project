@@ -1,4 +1,4 @@
-"""Receive Android Cartesian intent and camera-frame marker poses on Windows."""
+"""Receive Android Cartesian intent and marker poses on Windows."""
 
 import asyncio
 from concurrent.futures import Future
@@ -20,7 +20,10 @@ from robot_program.remote_ik_protocol import OFFLINE_WATCHDOG
 INPUT_PATH = "/api/v1/input"
 INPUT_FRAME = Struct("!IBfff")  # uint32 sequence, uint8 flags, float32 X/Y/Z
 POSE_PATH = "/api/v1/marker-pose"
-POSE_FRAME = Struct("!IBffffff")  # uint32 sequence, uint8 flags, XYZ cm, roll/pitch/yaw degrees
+POSE_FRAME = Struct("!IBffffff")  # uint32 sequence, uint8 flags, XYZ cm or normalized, RPY degrees
+POSE_FRAME_HEADER = "X-Marker-Pose-Frame"
+CAMERA_AXES = "camera"
+ROBOT_AXES = "robot-axes"
 DEADMAN = 1
 ADVANCE = 2
 TRACKING = 1
@@ -97,20 +100,19 @@ class MarkerPose:
     def __init__(self, *, clock=monotonic):
         self.clock = clock
         self.lock = Lock()
-        self.connected = False
+        self.coordinate_frame = None
         self.seq = None
         self.received_at = None
         self.pose = None
 
-    def begin(self):
+    def begin(self, coordinate_frame=CAMERA_AXES):
         with self.lock:
-            self.connected = True
+            self.coordinate_frame = coordinate_frame
             self.seq = self.received_at = self.pose = None
 
     def end(self):
         with self.lock:
-            self.connected = False
-            self.pose = None
+            self.coordinate_frame = self.pose = None
 
     def publish(self, frame):
         if not isinstance(frame, bytes) or len(frame) != POSE_FRAME.size:
@@ -130,15 +132,15 @@ class MarkerPose:
 
     def telemetry(self):
         with self.lock:
-            if not self.connected or self.received_at is None:
+            if self.coordinate_frame is None or self.received_at is None:
                 state = "Disconnected" if self.seq is not None else "Waiting for marker pose"
             elif self.clock() - self.received_at >= POSE_STALE_S:
                 state = "Pose timed out"
             else:
                 state = "Tracking" if self.pose is not None else "Marker lost"
             pose = self.pose if state == "Tracking" else None
-            return {"state": state, "seq": self.seq, "xyz_cm": pose[:3] if pose else None,
-                    "rpy_deg": pose[3:] if pose else None}
+            return {"state": state, "seq": self.seq, "frame": self.coordinate_frame,
+                    "xyz_cm": pose[:3] if pose else None, "rpy_deg": pose[3:] if pose else None}
 
 
 class MobileGateway:
@@ -156,6 +158,10 @@ class MobileGateway:
         headers = request.headers.get_all("Authorization")
         if len(headers) != 1 or not compare_digest(headers[0].encode(), self.authorization):
             return connection.respond(HTTPStatus.UNAUTHORIZED, "Bearer token required\n")
+        if request.path == POSE_PATH:
+            frames = request.headers.get_all(POSE_FRAME_HEADER)
+            if frames and frames != [ROBOT_AXES]:
+                return connection.respond(HTTPStatus.BAD_REQUEST, "Invalid marker pose frame header\n")
         if self.active:
             return connection.respond(HTTPStatus.CONFLICT, "Phone input already connected\n")
         return None
@@ -166,8 +172,12 @@ class MobileGateway:
             return
         self.active = True
         is_pose = connection.request.path == POSE_PATH
-        feed = self.marker_pose if is_pose else self.feed
-        feed.begin()
+        if is_pose:
+            feed = self.marker_pose
+            feed.begin(connection.request.headers.get(POSE_FRAME_HEADER, CAMERA_AXES))
+        else:
+            feed = self.feed
+            feed.begin()
         loop = asyncio.get_running_loop()
         # A pose viewer can wait for the marker. Only control has a receive deadline.
         deadline = None if is_pose else loop.time() + 2
