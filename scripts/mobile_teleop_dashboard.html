@@ -157,7 +157,7 @@
     function renderPhoneInput(phone, armControls, armStatus) {
       setText(byId('input-heading'), armControls ? 'Phone arm input' : 'Phone XYZ input');
       const connection = byId('connection');
-      setText(connection, phone?.fresh ? 'Receiving' : phone?.seq != null ? 'Input expired' : 'Waiting for input');
+      setText(connection, phone?.fresh ? 'Receiving' : phone?.seq != null ? 'Input stale' : 'Waiting for input');
       connection.dataset.fresh = Boolean(phone?.fresh);
       byId('deadman').textContent = phone?.deadman ? 'Deadman held' : 'Deadman released';
       byId('sequence').textContent = phone?.seq != null ? `Sequence ${phone.seq}` : 'No samples yet';

@@ -20,9 +20,11 @@ from robot_program.remote_ik_protocol import OFFLINE_WATCHDOG
 
 INPUT_PATH = "/api/v1/input"
 INPUT_FRAME = Struct("!IBfff")  # uint32 sequence, uint8 flags, float32 X/Y/Z
+TOUCHSCREEN_PATH = "/api/v1/touchscreen"
 ARM_INPUT_PATH = "/api/v2/input"
 ARM_INPUT_FRAME = Struct("!IBfffffb")  # Sequence, flags, XYZ, roll, pitch, gripper.
 POSE_PATH = "/api/v1/marker-pose"
+PHONE_MODES = {INPUT_PATH: "xyz", TOUCHSCREEN_PATH: "xyz", ARM_INPUT_PATH: "arm", POSE_PATH: "aruco"}
 POSE_FRAME = Struct("!IBffffff")  # uint32 sequence, uint8 flags, XYZ cm or normalized, RPY degrees
 POSE_FRAME_HEADER = "X-Marker-Pose-Frame"
 POSE_XYZ_UNITS_HEADER = "X-Marker-Pose-XYZ-Units"
@@ -35,6 +37,8 @@ ADVANCE = 2
 STOP = 4
 TRACKING = 1
 FRESHNESS_S = min(.1, OFFLINE_WATCHDOG / 2)
+TOUCHSCREEN_STALE_S = .5
+TOUCHSCREEN_IDLE_S = 2.
 POSE_STALE_S = .5  # Dashboard receipt age, independent of the motion input deadline.
 ARM_STATUS_INTERVAL_S = .1
 
@@ -137,6 +141,44 @@ class MobileInput:
             return True
 
 
+class TouchscreenInput:
+    """Keep the latest dashboard axes independently of the motion feed."""
+
+    def __init__(self, *, clock=monotonic):
+        self.clock = clock
+        self.lock = Lock()
+        self.begin()
+
+    def begin(self):
+        with self.lock:
+            self.seq = self.received_at = None
+            self.xyz = (0., 0., 0.)
+
+    def end(self):
+        self.begin()
+
+    def publish(self, frame):
+        if not isinstance(frame, bytes) or len(frame) != INPUT_FRAME.size:
+            raise ValueError("Expected a 17-byte binary touchscreen frame")
+        seq, flags, *xyz = INPUT_FRAME.unpack(frame)
+        if flags:
+            raise ValueError("Touchscreen monitoring requires zero flags")
+        if not all(-1 <= axis <= 1 for axis in xyz):
+            raise ValueError("Touchscreen axes must contain finite values in [-1, 1]")
+        with self.lock:
+            if self.seq is not None and seq <= self.seq:
+                return False
+            self.seq, self.xyz = seq, tuple(xyz)
+            self.received_at = self.clock()
+            return True
+
+    def telemetry(self):
+        with self.lock:
+            fresh = self.received_at is not None and self.clock() - self.received_at < TOUCHSCREEN_STALE_S
+            return {"seq": self.seq, "fresh": fresh, "deadman": False,
+                    "xyz": self.xyz if fresh else (0., 0., 0.)}
+
+
 class MarkerPose:
     """Track marker status and retain the last detected pose for display."""
 
@@ -198,25 +240,27 @@ class MobileGateway:
     def __init__(self, host, port, feed, token, *, arm_status=lambda: "Monitoring only"):
         self.host, self.port = host, port
         self.feed = feed
+        self.touchscreen = TouchscreenInput()
         self.marker_pose = MarkerPose()
         self.authorization = f"Bearer {token}".encode()
         self.arm_status = arm_status
         self._session_lock = Lock()
-        self._phone_mode = None
+        self._phone_path = None
         self.ready = Future()
 
     @property
     def active(self):
         with self._session_lock:
-            return self._phone_mode is not None
+            return self._phone_path is not None
 
     def telemetry(self):
         with self._session_lock:
-            return {"phone_mode": self._phone_mode, "phone": self.feed.telemetry(),
+            feed = self.touchscreen if self._phone_path == TOUCHSCREEN_PATH else self.feed
+            return {"phone_mode": PHONE_MODES.get(self._phone_path), "phone": feed.telemetry(),
                     "marker_pose": self.marker_pose.telemetry()}
 
     def _authorize(self, connection, request):
-        if request.path not in (INPUT_PATH, ARM_INPUT_PATH, POSE_PATH):
+        if request.path not in PHONE_MODES:
             return connection.respond(HTTPStatus.NOT_FOUND, "Unknown endpoint\n")
         headers = request.headers.get_all("Authorization")
         if len(headers) != 1 or not compare_digest(headers[0].encode(), self.authorization):
@@ -236,20 +280,26 @@ class MobileGateway:
         if self.active:
             await connection.close(1008, "Phone input already connected")
             return
-        is_pose = connection.request.path == POSE_PATH
-        arm_controls = connection.request.path == ARM_INPUT_PATH
+        path = connection.request.path
+        is_pose = path == POSE_PATH
+        arm_controls = path == ARM_INPUT_PATH
+        is_touchscreen = path == TOUCHSCREEN_PATH
         with self._session_lock:
             if is_pose:
                 feed = self.marker_pose
                 headers = connection.request.headers
                 feed.begin(headers.get(POSE_FRAME_HEADER, CAMERA_AXES), headers.get(POSE_XYZ_UNITS_HEADER, XYZ_CM))
+            elif is_touchscreen:
+                feed = self.touchscreen
+                feed.begin()
             else:
                 feed = self.feed
                 feed.begin(arm_controls=arm_controls)
-            self._phone_mode = "aruco" if is_pose else "arm" if arm_controls else "xyz"
+            self._phone_path = path
         loop = asyncio.get_running_loop()
-        # A pose viewer can wait for the marker. Only control has a receive deadline.
+        # Pose can wait indefinitely. Motion and monitoring have separate receive deadlines.
         deadline = None if is_pose else loop.time() + 2
+        idle_timeout = TOUCHSCREEN_IDLE_S if is_touchscreen else FRESHNESS_S
         close_reason = None
         status_task = asyncio.create_task(self._report_arm_status(connection)) if arm_controls else None
         try:
@@ -259,7 +309,7 @@ class MobileGateway:
                 async with asyncio.timeout_at(deadline):
                     frame = await connection.recv()
                 if feed.publish(frame) and not is_pose:
-                    deadline = loop.time() + FRESHNESS_S
+                    deadline = loop.time() + idle_timeout
         except ConnectionClosed:
             pass
         except (TimeoutError, ValueError) as exc:
@@ -267,7 +317,7 @@ class MobileGateway:
         finally:
             with self._session_lock:
                 feed.end()
-                self._phone_mode = None
+                self._phone_path = None
             if status_task is not None:
                 status_task.cancel()
                 with suppress(asyncio.CancelledError, ConnectionClosed):

@@ -14,7 +14,8 @@ from robot_program.remote_ik_control import motion_delta
 from scripts import main_mobile_teleop as launcher
 from scripts.mobile_teleop_gateway import (
     ADVANCE, ARM_INPUT_FRAME, ARM_INPUT_PATH, DEADMAN, FRESHNESS_S, INPUT_FRAME, INPUT_PATH,
-    POSE_FRAME, POSE_PATH, POSE_STALE_S, STOP, TRACKING, MarkerPose, MobileGateway, MobileInput,
+    POSE_FRAME, POSE_PATH, POSE_STALE_S, STOP, TOUCHSCREEN_IDLE_S, TOUCHSCREEN_PATH, TOUCHSCREEN_STALE_S,
+    TRACKING, MarkerPose, MobileGateway, MobileInput, TouchscreenInput,
 )
 
 
@@ -345,15 +346,79 @@ def test_marker_websocket_keeps_pose_out_of_control_input():
             assert rejected.value.response.status_code == 409
 
 
+@pytest.mark.parametrize("frame", [
+    "{}", b"\x00", arm_frame(0), INPUT_FRAME.pack(2, DEADMAN, 0, 0, 0),
+    INPUT_FRAME.pack(2, ADVANCE, 0, 0, 0), INPUT_FRAME.pack(2, STOP, 0, 0, 0),
+    INPUT_FRAME.pack(2, 0, float("nan"), 0, 0), INPUT_FRAME.pack(2, 0, 0, 1.1, 0),
+])
+def test_touchscreen_rejects_invalid_frames_without_refreshing(frame):
+    now = 1.
+    touchscreen = TouchscreenInput(clock=lambda: now)
+    assert touchscreen.publish(INPUT_FRAME.pack(1, 0, .25, 0, 0))
+    now += TOUCHSCREEN_STALE_S / 2
+    with pytest.raises(ValueError):
+        touchscreen.publish(frame)
+    now += TOUCHSCREEN_STALE_S / 2
+    assert touchscreen.telemetry() == {"seq": 1, "fresh": False, "deadman": False, "xyz": (0., 0., 0.)}
+
+
+def wait_for_telemetry(gateway, predicate):
+    deadline = monotonic() + 1
+    while monotonic() < deadline:
+        readings = gateway.telemetry()
+        if predicate(readings):
+            return readings
+        sleep(.001)
+    pytest.fail(f"Unexpected gateway telemetry {gateway.telemetry()}")
+
+
+def test_touchscreen_socket_recovers_after_stale_input_and_expires_without_a_new_sequence():
+    motion = MobileInput()
+    initial_motion = motion.sample
+    headers = {"Authorization": "Bearer mobile-test-token"}
+    with MobileGateway("127.0.0.1", 0, motion, "mobile-test-token") as gateway:
+        base = f"ws://127.0.0.1:{gateway.port}"
+        with pytest.raises(InvalidStatus) as rejected:
+            connect(base + TOUCHSCREEN_PATH, open_timeout=2, proxy=None)
+        assert rejected.value.response.status_code == 401
+
+        with connect(base + TOUCHSCREEN_PATH, additional_headers=headers, open_timeout=2,
+                     close_timeout=.2, proxy=None) as client:
+            client.send(INPUT_FRAME.pack(0, 0, .25, 0, 0))
+            first = wait_for_telemetry(gateway, lambda readings: readings["phone"]["seq"] == 0)
+            assert first["phone_mode"] == "xyz"
+            assert first["phone"]["xyz"] == (.25, 0., 0.)
+            with pytest.raises(InvalidStatus) as rejected:
+                connect(base + ARM_INPUT_PATH, additional_headers=headers, open_timeout=2, proxy=None)
+            assert rejected.value.response.status_code == 409
+
+            sleep(.15)
+            client.send(INPUT_FRAME.pack(1, 0, 0, .5, 0))
+            receiving = wait_for_telemetry(gateway, lambda readings: readings["phone"]["seq"] == 1)
+            assert receiving["phone"]["fresh"] and receiving["phone"]["xyz"] == (0., .5, 0.)
+
+            stale = wait_for_telemetry(gateway, lambda readings: not readings["phone"]["fresh"])
+            assert stale["phone_mode"] == "xyz"
+            assert stale["phone"] == {"seq": 1, "fresh": False, "deadman": False, "xyz": (0., 0., 0.)}
+
+            client.send(INPUT_FRAME.pack(2, 0, 0, 0, -.5))
+            recovered = wait_for_telemetry(gateway, lambda readings: readings["phone"]["seq"] == 2)
+            assert recovered["phone"]["fresh"] and recovered["phone"]["xyz"] == (0., 0., -.5)
+            assert motion.sample is initial_motion
+
+            wait_for_telemetry(gateway, lambda readings: not readings["phone"]["fresh"])
+            client.send(INPUT_FRAME.pack(2, 0, 1, 0, 0))
+            client.send(INPUT_FRAME.pack(1, 0, 1, 0, 0))
+            with pytest.raises(ConnectionClosedError) as expired:
+                client.recv(timeout=TOUCHSCREEN_IDLE_S - TOUCHSCREEN_STALE_S / 2)
+            assert expired.value.rcvd.code == 1008
+            assert expired.value.rcvd.reason == "Input expired"
+
+        assert not gateway.active
+        assert motion.sample is initial_motion
+
+
 def test_websocket_dashboard_mode_follows_the_active_endpoint():
-    def wait_for(gateway, predicate):
-        deadline = monotonic() + 1
-        while monotonic() < deadline:
-            readings = gateway.telemetry()
-            if predicate(readings):
-                return readings
-            sleep(.001)
-        pytest.fail(f"Unexpected gateway telemetry {gateway.telemetry()}")
 
     headers = {"Authorization": "Bearer mobile-test-token"}
     with MobileGateway("127.0.0.1", 0, MobileInput(), "mobile-test-token") as gateway:
@@ -364,28 +429,28 @@ def test_websocket_dashboard_mode_follows_the_active_endpoint():
 
         assert gateway.telemetry()["phone_mode"] is None
         with dial(POSE_PATH) as pose:
-            waiting = wait_for(gateway, lambda readings: readings["phone_mode"] == "aruco")
+            waiting = wait_for_telemetry(gateway, lambda readings: readings["phone_mode"] == "aruco")
             assert waiting["marker_pose"]["state"] == "Waiting for marker pose"
             pose.send(POSE_FRAME.pack(0, TRACKING, 12., 15., 18., 6., 8., 10.))
             pose.send(POSE_FRAME.pack(1, 0, 0., 0., 0., 0., 0., 0.))
-            lost = wait_for(gateway, lambda readings: readings["marker_pose"]["seq"] == 1)
+            lost = wait_for_telemetry(gateway, lambda readings: readings["marker_pose"]["seq"] == 1)
             assert lost["phone_mode"] == "aruco"
             assert lost["marker_pose"]["state"] == "Marker lost"
             assert lost["marker_pose"]["rpy_deg"] == (6., 8., 10.)
-        wait_for(gateway, lambda readings: readings["phone_mode"] is None)
+        wait_for_telemetry(gateway, lambda readings: readings["phone_mode"] is None)
 
         with dial(INPUT_PATH) as xyz:
-            waiting = wait_for(gateway, lambda readings: readings["phone_mode"] == "xyz")
+            waiting = wait_for_telemetry(gateway, lambda readings: readings["phone_mode"] == "xyz")
             assert waiting["phone"]["seq"] is None
             assert waiting["marker_pose"]["xyz_cm"] is None
             xyz.send(INPUT_FRAME.pack(0, 0, .25, 0., 0.))
-            receiving = wait_for(gateway, lambda readings: readings["phone"]["fresh"])
+            receiving = wait_for_telemetry(gateway, lambda readings: readings["phone"]["fresh"])
             assert receiving["phone_mode"] == "xyz"
             assert receiving["phone"]["xyz"] == (.25, 0., 0.)
-        wait_for(gateway, lambda readings: readings["phone_mode"] is None)
+        wait_for_telemetry(gateway, lambda readings: readings["phone_mode"] is None)
 
         with dial(POSE_PATH):
-            waiting = wait_for(gateway, lambda readings: readings["phone_mode"] == "aruco")
+            waiting = wait_for_telemetry(gateway, lambda readings: readings["phone_mode"] == "aruco")
             assert waiting["marker_pose"]["seq"] is None
             assert waiting["marker_pose"]["xyz_cm"] is None
             assert not waiting["phone"]["fresh"]

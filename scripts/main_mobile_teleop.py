@@ -14,7 +14,9 @@ from scripts.main_teleop_remote_ik import (
     DEFAULT_WSL_PYTHON, TELEOP_ERRORS, VK_ESCAPE, Worker, load_key_state, local_simulated_link,
     publish_remote_dashboard,
 )
-from scripts.mobile_teleop_gateway import ARM_INPUT_PATH, INPUT_PATH, POSE_PATH, MobileGateway, MobileInput, mobile_arm_status
+from scripts.mobile_teleop_gateway import (
+    ARM_INPUT_PATH, INPUT_PATH, POSE_PATH, TOUCHSCREEN_PATH, MobileGateway, MobileInput, mobile_arm_status,
+)
 
 
 TOKEN_PATH = Path(__file__).resolve().parents[1] / "mobile-teleop.token"
@@ -97,6 +99,8 @@ def main():
                   f"  In the app's bearer token field, enter the value from {TOKEN_PATH.name}.\n"
                   f"{mode} dashboard (PC browser)\n"
                   f"  http://{LOOPBACK}:{dashboard.port}/\n"
+                  "Touchscreen monitoring\n"
+                  f"  {ws_address}{TOUCHSCREEN_PATH}\n"
                   "Touchscreen arm control\n"
                   f"  {ws_address}{ARM_INPUT_PATH}\n"
                   "Legacy joystick / XYZ velocity input\n"
