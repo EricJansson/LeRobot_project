@@ -28,6 +28,9 @@
     th, td { padding: .55rem .2rem; font-size: .9rem; border-top: 1px solid #303b46; }
     th { font-weight: 500; text-align: right; }
     th:first-child { text-align: left; }
+    .pose-table { table-layout: fixed; }
+    .pose-table thead th:first-child { width: 38%; }
+    .pose-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #reason { margin: .65rem 0 0; overflow-wrap: anywhere; }
   </style>
 </head>
@@ -51,11 +54,11 @@
         <h2 id="pose-heading">ArUco pose · camera frame</h2>
         <span id="pose-status" class="connection" role="status">Waiting for marker pose</span>
       </div>
-      <table aria-label="Marker position in centimeters">
+      <table class="pose-table" aria-label="Marker position in centimeters">
         <thead><tr><th scope="col">Position (cm)</th><th scope="col">X</th><th scope="col">Y</th><th scope="col">Z</th></tr></thead>
         <tbody><tr id="pose-xyz"><th scope="row">Measured</th><td>—</td><td>—</td><td>—</td></tr></tbody>
       </table>
-      <table aria-label="Marker orientation in degrees">
+      <table class="pose-table" aria-label="Marker orientation in degrees">
         <thead><tr><th scope="col">Orientation (°)</th><th scope="col">Roll</th><th scope="col">Pitch</th><th scope="col">Yaw</th></tr></thead>
         <tbody><tr id="pose-rpy"><th scope="row">Measured</th><td>—</td><td>—</td><td>—</td></tr></tbody>
       </table>
@@ -79,9 +82,9 @@
     const axes = document.querySelectorAll('.axis');
     const signed = value => `${value > 0 ? '+' : ''}${value.toFixed(2)}`;
 
-    function showValues(row, values, scale = 1, decimals = 2) {
+    function showValues(row, values, scale = 1) {
       byId(row).querySelectorAll('td').forEach((cell, axis) => {
-        cell.textContent = Number.isFinite(values?.[axis]) ? (values[axis] * scale).toFixed(decimals) : '—';
+        cell.textContent = Number.isFinite(values?.[axis]) ? (values[axis] * scale).toFixed(1) : '—';
       });
     }
 
@@ -111,9 +114,9 @@
       byId('state').textContent = remote.state || '';
       byId('reason').textContent = remote.reason || '';
       byId('reason').hidden = !remote.reason;
-      showValues('requested', remote.requested_xyz_m, 1000, 1);
-      showValues('desired', remote.desired_xyz_m, 1000, 1);
-      showValues('measured', remote.xyz_m, 1000, 1);
+      showValues('requested', remote.requested_xyz_m, 1000);
+      showValues('desired', remote.desired_xyz_m, 1000);
+      showValues('measured', remote.xyz_m, 1000);
     }
 
     async function poll() {

@@ -79,12 +79,19 @@ def main():
                 stack.callback(thread.join, 2)
                 stack.callback(stop.set)
 
-            print(f"{mode} dashboard: http://{LOOPBACK}:{dashboard.port}/", flush=True)
-            if args.listen is None and host == LOOPBACK:
-                print("No private LAN address detected. Phone input is available on this PC only.", flush=True)
-            print(f"Phone input: ws://{gateway.address}:{gateway.port}{INPUT_PATH}\n"
-                  f"ArUco pose: ws://{gateway.address}:{gateway.port}{POSE_PATH}\n"
-                  f"Phone authentication: use the bearer token from {TOKEN_PATH.name}.\n"
+            pose_heading = "Phone Vision (ArUco) - paste this URL into the phone app"
+            if gateway.address == LOOPBACK:
+                pose_heading = "ArUco pose (PC-local testing)"
+                print("Phone access requires the PC's LAN IPv4 address. Restart with --listen <PC-LAN-IPv4>.",
+                      flush=True)
+            ws_address = f"ws://{gateway.address}:{gateway.port}"
+            print(f"{pose_heading}\n"
+                  f"  {ws_address}{POSE_PATH}\n"
+                  f"  In the app's bearer token field, enter the value from {TOKEN_PATH.name}.\n"
+                  f"{mode} dashboard (PC browser)\n"
+                  f"  http://{LOOPBACK}:{dashboard.port}/\n"
+                  "Optional joystick / XYZ velocity input\n"
+                  f"  {ws_address}{INPUT_PATH}\n"
                   "Esc or Ctrl+C exits.", flush=True)
             while not stop.is_set():
                 if get_key_state(VK_ESCAPE) < 0:
