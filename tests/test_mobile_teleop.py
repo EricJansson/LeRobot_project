@@ -1,4 +1,7 @@
+from contextlib import nullcontext
+import sys
 from time import monotonic, sleep
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -33,6 +36,32 @@ def test_launcher_defaults_to_the_private_route_address(monkeypatch, route_ip, e
     monkeypatch.setattr(launcher.socket, "socket", lambda *_: probe)
     assert launcher.default_input_address() == expected
     probe.__enter__.return_value.send.assert_not_called()
+
+
+def test_launcher_publishes_simulator_metrics_and_active_phone_mode(monkeypatch):
+    status = {"mode": "Local simulation", "connection": "Connected", "state": "Holding",
+              "measured": [1., 2., 3., 4., 5., 0.], "xyz_m": [.1, -.2, .3], "feedback_hz": 50.}
+    gateway = MagicMock(address="127.0.0.1", port=18744)
+    phone = {"phone_mode": "aruco", "phone": {}, "marker_pose": {"state": "Waiting for marker pose"}}
+    gateway.telemetry.return_value = phone
+    dashboard = MagicMock(port=18745)
+    keys = iter([0, -1])
+    monkeypatch.setattr(sys, "argv", ["mobile-teleop", "--listen", "127.0.0.1"])
+    monkeypatch.setattr(launcher, "load_phone_token", lambda _: "mobile-test-token")
+    monkeypatch.setattr(launcher, "load_key_state", lambda: lambda _: next(keys))
+    monkeypatch.setattr(launcher, "MobileGateway", lambda *args: nullcontext(gateway))
+    monkeypatch.setattr(launcher, "WebDashboard", lambda *args, **kwargs: nullcontext(dashboard))
+    monkeypatch.setattr(launcher, "Worker", lambda *args: nullcontext(None))
+    monkeypatch.setattr(launcher, "local_simulated_link", lambda *args: None)
+    monkeypatch.setattr(launcher, "ControlLoop", lambda *args, **kwargs:
+                        SimpleNamespace(status=status, run=lambda: None, error=None))
+
+    launcher.main()
+
+    dashboard.publish.assert_called_once_with(
+        {"shoulder_pan": 1., "shoulder_lift": 2., "elbow_flex": 3., "wrist_flex": 4., "wrist_roll": 5.},
+        0., {"x": .1, "y": -.2, "z": .3}, False, gamepad=None, remote={**status, **phone},
+    )
 
 
 def test_expiry_between_ik_samples_requires_new_connection_and_advance():
@@ -231,3 +260,49 @@ def test_marker_websocket_keeps_pose_out_of_control_input():
             with pytest.raises(InvalidStatus) as rejected:
                 connect(base_url + INPUT_PATH, additional_headers=headers, open_timeout=2, proxy=None)
             assert rejected.value.response.status_code == 409
+
+
+def test_websocket_dashboard_mode_follows_the_active_endpoint():
+    def wait_for(gateway, predicate):
+        deadline = monotonic() + 1
+        while monotonic() < deadline:
+            readings = gateway.telemetry()
+            if predicate(readings):
+                return readings
+            sleep(.001)
+        pytest.fail(f"Unexpected gateway telemetry {gateway.telemetry()}")
+
+    headers = {"Authorization": "Bearer mobile-test-token"}
+    with MobileGateway("127.0.0.1", 0, MobileInput(), "mobile-test-token") as gateway:
+        base = f"ws://127.0.0.1:{gateway.port}"
+
+        def dial(path):
+            return connect(base + path, additional_headers=headers, open_timeout=2, close_timeout=.2, proxy=None)
+
+        assert gateway.telemetry()["phone_mode"] is None
+        with dial(POSE_PATH) as pose:
+            waiting = wait_for(gateway, lambda readings: readings["phone_mode"] == "aruco")
+            assert waiting["marker_pose"]["state"] == "Waiting for marker pose"
+            pose.send(POSE_FRAME.pack(0, TRACKING, 12., 15., 18., 6., 8., 10.))
+            pose.send(POSE_FRAME.pack(1, 0, 0., 0., 0., 0., 0., 0.))
+            lost = wait_for(gateway, lambda readings: readings["marker_pose"]["seq"] == 1)
+            assert lost["phone_mode"] == "aruco"
+            assert lost["marker_pose"]["state"] == "Marker lost"
+            assert lost["marker_pose"]["rpy_deg"] == (6., 8., 10.)
+        wait_for(gateway, lambda readings: readings["phone_mode"] is None)
+
+        with dial(INPUT_PATH) as xyz:
+            waiting = wait_for(gateway, lambda readings: readings["phone_mode"] == "xyz")
+            assert waiting["phone"]["seq"] is None
+            assert waiting["marker_pose"]["xyz_cm"] is None
+            xyz.send(INPUT_FRAME.pack(0, 0, .25, 0., 0.))
+            receiving = wait_for(gateway, lambda readings: readings["phone"]["fresh"])
+            assert receiving["phone_mode"] == "xyz"
+            assert receiving["phone"]["xyz"] == (.25, 0., 0.)
+        wait_for(gateway, lambda readings: readings["phone_mode"] is None)
+
+        with dial(POSE_PATH):
+            waiting = wait_for(gateway, lambda readings: readings["phone_mode"] == "aruco")
+            assert waiting["marker_pose"]["seq"] is None
+            assert waiting["marker_pose"]["xyz_cm"] is None
+            assert not waiting["phone"]["fresh"]

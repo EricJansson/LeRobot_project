@@ -5,23 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mobile teleop</title>
   <style>
-    :root { color-scheme: dark; font-family: "Inter", system-ui, sans-serif; background: #101419; color: #eef2f6; }
-    * { box-sizing: border-box; }
-    body { margin: 0; }
-    main { max-width: 52rem; margin: auto; padding: clamp(1rem, 5vw, 3.5rem); }
-    header, .section-top { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
-    header { margin-bottom: 1.5rem; }
-    h1 { margin: 0; font-size: clamp(1.75rem, 5vw, 2.4rem); letter-spacing: -.04em; }
-    h2 { margin: 0; font-size: 1.05rem; }
-    .muted, th { color: #aebac8; }
-    section { margin-top: 1rem; padding: clamp(1rem, 3vw, 1.5rem); border: 1px solid #303b46; border-radius: .85rem; background: #181f27; }
+    <!-- include: dashboard.css -->
+    .mobile-teleop > * + * { margin-top: 16px; }
+    .section-top { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+    .muted, th { color: #aaaab0; }
     .connection { color: #f0bf78; }
-    .connection[data-fresh="true"] { color: #73e2b2; }
+    .connection[data-fresh="true"] { color: var(--ok); }
     .axes { display: grid; gap: .85rem; margin: 1.35rem 0; }
     .axis { display: grid; grid-template-columns: 1.25rem 1fr 4.2rem; gap: .75rem; align-items: center; }
     .track { height: .75rem; position: relative; border-radius: 1rem; background: #2c3844; }
     .track::after { content: ""; position: absolute; left: 50%; top: -.18rem; bottom: -.18rem; width: 1px; background: #b1bdca; }
-    .fill { position: absolute; inset-block: 0; border-radius: 1rem; background: #73e2b2; }
+    .fill { position: absolute; inset-block: 0; border-radius: 1rem; background: var(--ok); }
     output, td { text-align: right; font-variant-numeric: tabular-nums; }
     .details { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin: 0; font-size: .9rem; }
     .pose-options { margin-top: 1rem; display: flex; align-items: center; gap: .5rem; font-size: .9rem; }
@@ -34,16 +28,30 @@
     .pose-table thead th:first-child { width: 38%; }
     .pose-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #marker-pose[data-stale="true"] .pose-table tbody tr > * { background: #3d2b1f; color: #f0bf78; }
-    #reason { margin: .65rem 0 0; overflow-wrap: anywhere; }
+    .arm-readings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+    .arm-readings > .panel { min-width: 0; }
+    .references { margin-top: 8px; }
+    .references div { grid-template-columns: minmax(0, 122px) minmax(0, 1fr); gap: 8px; }
+    .references dd { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+    @media (max-width: 639px) {
+      .arm-readings { grid-template-columns: minmax(0, 1fr); }
+    }
   </style>
 </head>
 <body>
-  <main>
-    <header><h1>Mobile teleop</h1><span id="mode" class="muted">Connecting</span></header>
-    <section aria-labelledby="input-heading">
+  <main class="mobile-teleop">
+    <header>
+      <div class="title-row">
+        <h1>Mobile teleop</h1>
+        <!-- include: connectivity.html -->
+      </div>
+      <p id="arm-mode" hidden></p>
+    </header>
+    <p id="phone-waiting" class="muted" role="status">Waiting for phone</p>
+    <section id="phone-input" class="panel" aria-labelledby="input-heading" hidden>
       <div class="section-top">
         <h2 id="input-heading">Phone XYZ input</h2>
-        <span id="connection" class="connection" role="status">Waiting for phone</span>
+        <span id="connection" class="connection" role="status">Waiting for input</span>
       </div>
       <div class="axes">
         <div class="axis"><strong>X</strong><div class="track" aria-hidden="true"><div class="fill"></div></div><output aria-label="X input">0.00</output></div>
@@ -52,7 +60,7 @@
       </div>
       <p class="details muted"><span id="deadman">Deadman released</span><span id="sequence">No samples yet</span></p>
     </section>
-    <section id="marker-pose" aria-labelledby="pose-heading">
+    <section id="marker-pose" class="panel" aria-labelledby="pose-heading" hidden>
       <div class="section-top">
         <h2 id="pose-heading">ArUco pose</h2>
         <span id="pose-status" class="connection" role="status">Waiting for marker pose</span>
@@ -75,28 +83,53 @@
       </table>
     </section>
     <section id="simulation" aria-labelledby="sim-heading" hidden>
-      <div class="section-top"><h2 id="sim-heading">Simulated arm XYZ (mm)</h2><span id="state" class="muted"></span></div>
-      <p id="reason" class="muted" hidden></p>
-      <table>
-        <thead><tr><th scope="col">Position</th><th scope="col">X</th><th scope="col">Y</th><th scope="col">Z</th></tr></thead>
-        <tbody>
-          <tr id="requested"><th scope="row">Requested by controller</th><td>—</td><td>—</td><td>—</td></tr>
-          <tr id="desired"><th scope="row">Accepted reference</th><td>—</td><td>—</td><td>—</td></tr>
-          <tr id="measured"><th scope="row">FK from feedback</th><td>—</td><td>—</td><td>—</td></tr>
-        </tbody>
-      </table>
+      <div class="section-top">
+        <h2 id="sim-heading">Simulated arm</h2>
+        <span id="arm-connection" class="connection" role="status">Connecting to simulator</span>
+      </div>
+      <div id="status-card" class="status-card" data-tone="neutral" role="status" aria-atomic="true">
+        <!-- include: control_status.html -->
+      </div>
+      <div class="arm-readings">
+        <section class="panel" aria-labelledby="xyz-heading">
+          <!-- include: end_effector.html -->
+          <dl class="rows references">
+            <div><dt>Requested XYZ (mm)</dt><dd id="requested-xyz">—</dd></div>
+            <div><dt>Accepted XYZ (mm)</dt><dd id="accepted-xyz">—</dd></div>
+          </dl>
+        </section>
+        <section class="panel motors" aria-labelledby="motors-heading">
+          <!-- include: motor_positions.html -->
+        </section>
+      </div>
+      <details id="diagnostics" class="panel diagnostics">
+        <summary>Diagnostics</summary>
+        <h3>Targets</h3>
+        <p class="muted">Motor order as listed above. Arm joints in degrees, gripper normalized.</p>
+        <dl class="rows">
+          <!-- include: motor_targets.html -->
+        </dl>
+        <!-- include: feedback_timing.html -->
+      </details>
     </section>
   </main>
   <script>
-    const byId = id => document.getElementById(id);
+    <!-- include: dashboard.js -->
     const axes = document.querySelectorAll('.axis');
+    const simulation = byId('simulation');
     const poseFrameLabels = {camera: 'camera frame', 'robot-axes': 'robot axes'};
+    const simulatorConnections = {Connected: 'Simulator connected', Connecting: 'Connecting to simulator',
+      Disconnected: 'Simulator disconnected'};
+    const activeArmStates = new Set(['Armed', 'Moving', 'Control enabled', 'Following path', 'Adapting pitch', 'Adapting path', 'Recovering']);
     const signed = value => `${value > 0 ? '+' : ''}${value.toFixed(2)}`;
     const poseXyzView = byId('pose-xyz-view');
     const posePositionLabel = byId('pose-position-label');
     const poseSection = byId('marker-pose');
     const poseRowLabels = poseSection.querySelectorAll('.pose-table tbody th');
     let markerPose;
+
+    setText(byId('bus-read-label'), 'Longest simulator bus read');
+    setText(byId('bus-write-label'), 'Longest simulator bus write');
 
     function showValues(row, values, scale = 1, decimals = 1) {
       byId(row).querySelectorAll('td').forEach((cell, axis) => {
@@ -115,45 +148,74 @@
 
     poseXyzView.addEventListener('change', showPosePosition);
 
-    function render(remote, offline = false) {
-      const phone = remote.phone;
+    function renderPhoneInput(phone) {
       const connection = byId('connection');
-      connection.textContent = offline ? 'Dashboard offline' : phone?.fresh ? 'Receiving' : phone?.seq != null ? 'Input expired' : 'Waiting for phone';
+      setText(connection, phone?.fresh ? 'Receiving' : phone?.seq != null ? 'Input expired' : 'Waiting for input');
       connection.dataset.fresh = Boolean(phone?.fresh);
-      byId('mode').textContent = remote.mode || (offline ? 'Disconnected' : 'Connecting');
       byId('deadman').textContent = phone?.deadman ? 'Deadman held' : 'Deadman released';
       byId('sequence').textContent = phone?.seq != null ? `Sequence ${phone.seq}` : 'No samples yet';
       axes.forEach((row, axis) => {
-        const value = phone?.xyz[axis] ?? 0;
+        const value = phone?.xyz?.[axis] ?? 0;
         const fill = row.querySelector('.fill');
         fill.style.left = `${50 + 50 * Math.min(0, value)}%`;
         fill.style.width = `${50 * Math.abs(value)}%`;
         row.querySelector('output').textContent = signed(value);
       });
-      const pose = remote.marker_pose;
+    }
+
+    function renderPose(pose) {
       markerPose = pose;
       const frameLabel = poseFrameLabels[pose?.frame];
       byId('pose-heading').textContent = frameLabel ? `ArUco pose · ${frameLabel}` : 'ArUco pose';
       const poseStatus = byId('pose-status');
-      const status = offline ? 'Dashboard offline' : pose?.state ?? 'Waiting for marker pose';
-      if (poseStatus.textContent !== status) poseStatus.textContent = status;
+      const status = pose?.state ?? 'Waiting for marker pose';
+      setText(poseStatus, status);
       const tracking = status === 'Tracking';
       poseStatus.dataset.fresh = tracking;
       const stalePose = !tracking && pose?.xyz_cm != null;
       poseSection.dataset.stale = stalePose;
       const rowLabel = stalePose ? 'Last detected' : 'Measured';
-      poseRowLabels.forEach(label => {
-        if (label.textContent !== rowLabel) label.textContent = rowLabel;
-      });
+      poseRowLabels.forEach(label => setText(label, rowLabel));
       showPosePosition();
       showValues('pose-rpy', pose?.rpy_deg);
-      byId('simulation').hidden = remote.mode !== 'Local simulation';
-      byId('state').textContent = remote.state || '';
-      byId('reason').textContent = remote.reason || '';
-      byId('reason').hidden = !remote.reason;
-      showValues('requested', remote.requested_xyz_m, 1000);
-      showValues('desired', remote.desired_xyz_m, 1000);
-      showValues('measured', remote.xyz_m, 1000);
+    }
+
+    function renderArm(sample, remote) {
+      const connected = remote.connection === 'Connected';
+      const connection = byId('arm-connection');
+      setText(connection, simulatorConnections[remote.connection] ?? 'Telemetry unavailable');
+      connection.dataset.fresh = connected;
+      const state = connected ? remote.state || 'Control unavailable' : 'Control unavailable';
+      const tone = state === 'Fault' ? 'red' : state === 'Released' || state === 'Releasing' ? 'blue'
+        : activeArmStates.has(state) ? 'green' : 'neutral';
+      renderArmStatus(tone, state, remote.reason);
+
+      const feedback = connected ? remote : null;
+      const progress = releaseProgress(feedback?.release_progress);
+      renderRelease(progress, `Release progress · ${Math.round(progress * 100)}%`, progress > 0);
+      renderReadings(connected ? sample : null);
+      renderDiagnostics(feedback);
+      setText(byId('accepted-xyz'), formatVector(feedback?.desired_xyz_m, 1000));
+    }
+
+    function render(sample, offline = false) {
+      const remote = offline ? {} : sample?.remote ?? {};
+      renderConnectivity(offline ? 'Telemetry unavailable' : sample ? '' : 'Waiting for telemetry', 'Dashboard offline');
+      if (!offline) {
+        const mode = byId('arm-mode');
+        mode.hidden = !remote.mode;
+        setText(mode, remote.mode === 'Local simulation' ? 'Arm mode: Simulation · Local' : remote.mode ?? '');
+      }
+      const showXyz = remote.phone_mode === 'xyz';
+      const showPose = remote.phone_mode === 'aruco';
+      byId('phone-waiting').hidden = offline || showXyz || showPose;
+      byId('phone-input').hidden = !showXyz;
+      poseSection.hidden = !showPose;
+      if (showXyz) renderPhoneInput(remote.phone);
+      if (showPose) renderPose(remote.marker_pose);
+
+      if (!offline) simulation.hidden = remote.mode !== 'Local simulation';
+      if (!simulation.hidden) renderArm(sample, remote);
     }
 
     async function poll() {
@@ -161,9 +223,10 @@
         const response = await fetch('/api/telemetry', {cache: 'no-store', signal: AbortSignal.timeout(1000)});
         if (!response.ok) throw new Error('Telemetry unavailable');
         const data = await response.json();
-        render(data?.age_s > 1 ? {} : data?.remote || {}, data?.age_s > 1);
+        const stale = data !== null && (!Number.isFinite(data?.age_s) || data.age_s < 0 || data.age_s > 1);
+        render(data, stale);
       } catch {
-        render({}, true);
+        render(null, true);
       } finally {
         setTimeout(poll, 75);
       }

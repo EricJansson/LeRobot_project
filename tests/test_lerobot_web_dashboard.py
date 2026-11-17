@@ -8,7 +8,19 @@ import subprocess
 
 import pytest
 
-from scripts.lerobot_web_dashboard import WebDashboard
+from scripts.lerobot_web_dashboard import WebDashboard, render_dashboard_page
+
+
+@pytest.mark.parametrize("mobile", [False, True])
+def test_dashboard_renders_shared_components(mobile):
+    template = Path(__file__).resolve().parents[1] / "scripts" / "mobile_teleop_dashboard.html" if mobile else None
+    page = render_dashboard_page(template)
+    assert b"<!-- include:" not in page
+    for markup in (b"var(--accent)", b'id="connectivity"', b'id="release-gesture"', b'data-value="x"',
+                   b'data-value="gripper"', b'id="ik-candidate"', b'id="feedback-rate"', b"function renderReadings"):
+        assert markup in page
+    assert (b'id="gamepad"' in page) is not mobile
+    assert (b'id="marker-pose"' in page) is mobile
 
 
 def test_dashboard_restart_on_same_port():
@@ -38,7 +50,8 @@ def test_dashboard_frontend_reconnect():
     if node is None:
         pytest.skip("Node.js is needed for the frontend lifecycle check")
     result = subprocess.run([node, str(Path(__file__).with_name("dashboard_reconnect.cjs"))],
-                            capture_output=True, text=True, timeout=15)
+                            input=render_dashboard_page().decode("utf-8"), capture_output=True,
+                            encoding="utf-8", timeout=15)
     assert result.returncode == 0, result.stdout + result.stderr
 
 

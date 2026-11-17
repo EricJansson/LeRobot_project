@@ -67,6 +67,15 @@ def dashboard_hardware_settings(config):
     return settings
 
 
+def publish_remote_dashboard(dashboard, status, *, gamepad_enabled=False, gamepad=None):
+    measured = status.get("measured")
+    xyz = status.get("xyz_m")
+    dashboard.publish(dict(zip(CHANNELS[:5], measured[:5])) if measured else {},
+                      measured[5] if measured else None,
+                      dict(zip("xyz", xyz)) if xyz else {}, gamepad_enabled,
+                      gamepad=gamepad, remote=status)
+
+
 class Worker:
     def __init__(self, distro, python):
         self.command = [
@@ -505,12 +514,8 @@ def main():
                         status["stop_button"] = stop_button
                         if real_arm:
                             status["hardware_settings"] = tunnel.hardware_settings
-                        measured = status.get("measured")
-                        xyz = status.get("xyz_m")
-                        dashboard.publish(dict(zip(CHANNELS[:5], measured[:5])) if measured else {},
-                                          measured[5] if measured else None,
-                                          dict(zip("xyz", xyz)) if xyz else {}, sample.lb,
-                                          gamepad=latest.raw_gamepad, remote=status)
+                        publish_remote_dashboard(dashboard, status, gamepad_enabled=sample.lb,
+                                                 gamepad=latest.raw_gamepad)
                         next_dashboard = now + .1
                     # Sample faster than the motor loop to catch short gaps between taps.
                     next_gamepad = max(now, next_gamepad + GAMEPAD_POLL_S)

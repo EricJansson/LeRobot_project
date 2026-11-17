@@ -12,6 +12,7 @@ from robot_program.remote_ik_control import ControlLoop
 from scripts.lerobot_web_dashboard import WebDashboard
 from scripts.main_teleop_remote_ik import (
     DEFAULT_WSL_PYTHON, TELEOP_ERRORS, VK_ESCAPE, Worker, load_key_state, local_simulated_link,
+    publish_remote_dashboard,
 )
 from scripts.mobile_teleop_gateway import INPUT_PATH, POSE_PATH, MobileGateway, MobileInput
 
@@ -98,9 +99,8 @@ def main():
                     dashboard.exit_reason = "Esc pressed"
                     break
                 status = dict(control.status) if control else {"mode": mode, "state": "Monitoring"}
-                status["phone"] = phone.telemetry()
-                status["marker_pose"] = gateway.marker_pose.telemetry()
-                dashboard.publish({}, None, {}, False, remote=status)
+                status.update(gateway.telemetry())
+                publish_remote_dashboard(dashboard, status)
                 stop.wait(.05)
             if control and control.error:
                 dashboard.exit_reason = str(control.error)

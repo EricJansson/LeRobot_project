@@ -4,11 +4,22 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import socket
 import sys
 from threading import Event, Thread
 from time import monotonic
 from uuid import uuid4
+
+
+COMPONENTS = Path(__file__).with_name("dashboard_components")
+COMPONENT_INCLUDE = re.compile(rb"<!-- include: ([a-z][a-z_]*\.(?:html|css|js)) -->")
+
+
+def render_dashboard_page(page=None):
+    """Assemble the dashboard and its shared local components."""
+    template = (page or Path(__file__).with_suffix(".html")).read_bytes()
+    return COMPONENT_INCLUDE.sub(lambda match: (COMPONENTS / match[1].decode()).read_bytes(), template)
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -65,7 +76,7 @@ class WebDashboard(ThreadingHTTPServer):
     daemon_threads = False  # Flush the exit event before the process ends.
 
     def __init__(self, host, port, *, page=None):
-        self.page = (page or Path(__file__).with_suffix(".html")).read_bytes()
+        self.page = render_dashboard_page(page)
         self._sample = None
         self.session_id = uuid4().hex
         self.exit_reason = None

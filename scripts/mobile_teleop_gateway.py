@@ -160,8 +160,19 @@ class MobileGateway:
         self.feed = feed
         self.marker_pose = MarkerPose()
         self.authorization = f"Bearer {token}".encode()
-        self.active = False
+        self._session_lock = Lock()
+        self._phone_mode = None
         self.ready = Future()
+
+    @property
+    def active(self):
+        with self._session_lock:
+            return self._phone_mode is not None
+
+    def telemetry(self):
+        with self._session_lock:
+            return {"phone_mode": self._phone_mode, "phone": self.feed.telemetry(),
+                    "marker_pose": self.marker_pose.telemetry()}
 
     def _authorize(self, connection, request):
         if request.path not in (INPUT_PATH, POSE_PATH):
@@ -184,15 +195,16 @@ class MobileGateway:
         if self.active:
             await connection.close(1008, "Phone input already connected")
             return
-        self.active = True
         is_pose = connection.request.path == POSE_PATH
-        if is_pose:
-            feed = self.marker_pose
-            headers = connection.request.headers
-            feed.begin(headers.get(POSE_FRAME_HEADER, CAMERA_AXES), headers.get(POSE_XYZ_UNITS_HEADER, XYZ_CM))
-        else:
-            feed = self.feed
-            feed.begin()
+        with self._session_lock:
+            if is_pose:
+                feed = self.marker_pose
+                headers = connection.request.headers
+                feed.begin(headers.get(POSE_FRAME_HEADER, CAMERA_AXES), headers.get(POSE_XYZ_UNITS_HEADER, XYZ_CM))
+            else:
+                feed = self.feed
+                feed.begin()
+            self._phone_mode = "aruco" if is_pose else "xyz"
         loop = asyncio.get_running_loop()
         # A pose viewer can wait for the marker. Only control has a receive deadline.
         deadline = None if is_pose else loop.time() + 2
@@ -210,8 +222,9 @@ class MobileGateway:
         except (TimeoutError, ValueError) as exc:
             close_reason = str(exc) or "Input expired"
         finally:
-            feed.end()
-            self.active = False
+            with self._session_lock:
+                feed.end()
+                self._phone_mode = None
         if close_reason is not None:
             await connection.close(1008, close_reason)
 

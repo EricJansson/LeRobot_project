@@ -1,7 +1,6 @@
 // Execute the shipped dashboard script with a small DOM and deterministic network.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const path = require('node:path');
 const vm = require('node:vm');
 
 const elements = new Map();
@@ -45,7 +44,7 @@ const context = vm.createContext({
     return { ok: true, headers: { get: () => session }, json: async () => readings };
   },
 });
-const html = fs.readFileSync(path.join(__dirname, '../scripts/lerobot_web_dashboard.html'), 'utf8');
+const html = fs.readFileSync(0, 'utf8');
 assert.doesNotMatch(html, /Last sample|id="age"|ageLabel|#age\s*\{/);
 assert.doesNotMatch(html, /Motion allowed|id="remote-status"|id="remote-target"|id="remote-timing"|SO-101 · LeRobot IK · Read-only/);
 assert.match(html, /<details id="diagnostics"[^>]*hidden>/);
