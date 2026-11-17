@@ -1,8 +1,9 @@
+import asyncio
 from contextlib import nullcontext
 import sys
 from time import monotonic, sleep
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -12,6 +13,7 @@ from websockets.sync.client import connect
 
 from robot_program.remote_ik_control import motion_delta
 from scripts import main_mobile_teleop as launcher
+from scripts import mobile_teleop_gateway as gateway_module
 from scripts.mobile_teleop_gateway import (
     ADVANCE, ARM_INPUT_FRAME, ARM_INPUT_PATH, DEADMAN, FRESHNESS_S, INPUT_FRAME, INPUT_PATH,
     POSE_FRAME, POSE_PATH, POSE_STALE_S, STOP, TOUCHSCREEN_IDLE_S, TOUCHSCREEN_PATH, TOUCHSCREEN_STALE_S,
@@ -68,6 +70,49 @@ def test_launcher_publishes_simulator_metrics_and_active_phone_mode(monkeypatch)
 
 def arm_frame(seq, flags=0, x=0., y=0., z=0., roll=0., pitch=0., gripper=0):
     return ARM_INPUT_FRAME.pack(seq, flags, x, y, z, roll, pitch, gripper)
+
+
+def test_arm_receive_deadline_rechecks_an_early_timer_and_rejects_late_frames(monkeypatch):
+    now = 10.
+    timeouts = []
+    frames = iter(((10., 0), (10.070, 1), (10.146, 2)))
+
+    class Timer:
+        def __init__(self, delay):
+            timeouts.append(delay)
+            self.early = len(timeouts) == 2
+
+        async def __aenter__(self):
+            nonlocal now
+            if self.early:
+                now = 10.066
+                raise TimeoutError
+
+        async def __aexit__(self, *_):
+            pass
+
+        def expired(self):
+            return self.early
+
+    async def recv():
+        nonlocal now
+        now, seq = next(frames)
+        return arm_frame(seq)
+
+    monkeypatch.setattr(gateway_module, "monotonic", lambda: now)
+    monkeypatch.setattr(asyncio, "timeout", Timer)
+    monkeypatch.setattr(asyncio, "timeout_at", Timer)
+    phone = MobileInput(clock=lambda: now)
+    gateway = MobileGateway("127.0.0.1", 0, phone, "test-token")
+    connection = SimpleNamespace(request=SimpleNamespace(path=ARM_INPUT_PATH), recv=recv,
+                                 send=AsyncMock(), close=AsyncMock())
+
+    asyncio.run(gateway._receive(connection))
+
+    assert timeouts == pytest.approx([2., FRESHNESS_S, FRESHNESS_S - .066, FRESHNESS_S])
+    assert phone.telemetry()["seq"] == 1
+    assert not gateway.active
+    connection.close.assert_awaited_once_with(1008, "Input expired")
 
 
 def test_arm_input_mapping_and_fresh_start_after_stopping_or_reconnecting():

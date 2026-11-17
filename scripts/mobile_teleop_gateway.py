@@ -296,20 +296,29 @@ class MobileGateway:
                 feed = self.feed
                 feed.begin(arm_controls=arm_controls)
             self._phone_path = path
-        loop = asyncio.get_running_loop()
         # Pose can wait indefinitely. Motion and monitoring have separate receive deadlines.
-        deadline = None if is_pose else loop.time() + 2
+        deadline = None if is_pose else monotonic() + 2
         idle_timeout = TOUCHSCREEN_IDLE_S if is_touchscreen else FRESHNESS_S
         close_reason = None
         status_task = asyncio.create_task(self._report_arm_status(connection)) if arm_controls else None
         try:
             while True:
-                if deadline is not None and loop.time() >= deadline:
+                remaining = None if deadline is None else deadline - monotonic()
+                if remaining is not None and remaining <= 0:
                     raise TimeoutError("Input expired")
-                async with asyncio.timeout_at(deadline):
-                    frame = await connection.recv()
+                timeout = asyncio.timeout(remaining)
+                try:
+                    async with timeout:
+                        frame = await connection.recv()
+                except TimeoutError:
+                    if not timeout.expired():
+                        raise
+                    # The Windows event loop timer can wake before the high-resolution deadline.
+                    continue
+                if deadline is not None and monotonic() >= deadline:
+                    raise TimeoutError("Input expired")
                 if feed.publish(frame) and not is_pose:
-                    deadline = loop.time() + idle_timeout
+                    deadline = monotonic() + idle_timeout
         except ConnectionClosed:
             pass
         except (TimeoutError, ValueError) as exc:
