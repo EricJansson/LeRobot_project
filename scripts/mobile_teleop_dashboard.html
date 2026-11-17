@@ -12,12 +12,13 @@
     .connection { color: #f0bf78; }
     .connection[data-fresh="true"] { color: var(--ok); }
     .axes { display: grid; gap: .85rem; margin: 1.35rem 0; }
-    .axis { display: grid; grid-template-columns: 1.25rem 1fr 4.2rem; gap: .75rem; align-items: center; }
+    .axis { display: grid; grid-template-columns: 2.5rem 1fr 4.2rem; gap: .75rem; align-items: center; }
     .track { height: .75rem; position: relative; border-radius: 1rem; background: #2c3844; }
     .track::after { content: ""; position: absolute; left: 50%; top: -.18rem; bottom: -.18rem; width: 1px; background: #b1bdca; }
     .fill { position: absolute; inset-block: 0; border-radius: 1rem; background: var(--ok); }
     output, td { text-align: right; font-variant-numeric: tabular-nums; }
     .details { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin: 0; font-size: .9rem; }
+    .axis[hidden], .details[hidden] { display: none; }
     .pose-options { margin-top: 1rem; display: flex; align-items: center; gap: .5rem; font-size: .9rem; }
     .pose-options select { font: inherit; }
     table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
@@ -57,8 +58,13 @@
         <div class="axis"><strong>X</strong><div class="track" aria-hidden="true"><div class="fill"></div></div><output aria-label="X input">0.00</output></div>
         <div class="axis"><strong>Y</strong><div class="track" aria-hidden="true"><div class="fill"></div></div><output aria-label="Y input">0.00</output></div>
         <div class="axis"><strong>Z</strong><div class="track" aria-hidden="true"><div class="fill"></div></div><output aria-label="Z input">0.00</output></div>
+        <div class="axis" data-arm-axis hidden><strong>Roll</strong><div class="track" aria-hidden="true"><div class="fill"></div></div><output aria-label="Wrist roll input">0.00</output></div>
+        <div class="axis" data-arm-axis hidden><strong>Pitch</strong><div class="track" aria-hidden="true"><div class="fill"></div></div><output aria-label="Wrist pitch input">0.00</output></div>
       </div>
       <p class="details muted"><span id="deadman">Deadman released</span><span id="sequence">No samples yet</span></p>
+      <p id="arm-input-details" class="details muted" hidden>
+        <span id="phone-arm-status" role="status">Unavailable</span><span id="gripper-input">Gripper idle</span>
+      </p>
     </section>
     <section id="marker-pose" class="panel" aria-labelledby="pose-heading" hidden>
       <div class="section-top">
@@ -148,14 +154,20 @@
 
     poseXyzView.addEventListener('change', showPosePosition);
 
-    function renderPhoneInput(phone) {
+    function renderPhoneInput(phone, armControls, armStatus) {
+      setText(byId('input-heading'), armControls ? 'Phone arm input' : 'Phone XYZ input');
       const connection = byId('connection');
       setText(connection, phone?.fresh ? 'Receiving' : phone?.seq != null ? 'Input expired' : 'Waiting for input');
       connection.dataset.fresh = Boolean(phone?.fresh);
       byId('deadman').textContent = phone?.deadman ? 'Deadman held' : 'Deadman released';
       byId('sequence').textContent = phone?.seq != null ? `Sequence ${phone.seq}` : 'No samples yet';
+      byId('arm-input-details').hidden = !armControls;
+      setText(byId('phone-arm-status'), armStatus ?? 'Unavailable');
+      setText(byId('gripper-input'), phone?.gripper > 0 ? 'Open gripper requested'
+        : phone?.gripper < 0 ? 'Close gripper requested' : 'Gripper idle');
       axes.forEach((row, axis) => {
-        const value = phone?.xyz?.[axis] ?? 0;
+        if (axis >= 3) row.hidden = !armControls;
+        const value = (axis < 3 ? phone?.xyz?.[axis] : phone?.wrist?.[axis - 3]) ?? 0;
         const fill = row.querySelector('.fill');
         fill.style.left = `${50 + 50 * Math.min(0, value)}%`;
         fill.style.width = `${50 * Math.abs(value)}%`;
@@ -206,12 +218,13 @@
         mode.hidden = !remote.mode;
         setText(mode, remote.mode === 'Local simulation' ? 'Arm mode: Simulation · Local' : remote.mode ?? '');
       }
-      const showXyz = remote.phone_mode === 'xyz';
+      const showArm = remote.phone_mode === 'arm';
+      const showInput = remote.phone_mode === 'xyz' || showArm;
       const showPose = remote.phone_mode === 'aruco';
-      byId('phone-waiting').hidden = offline || showXyz || showPose;
-      byId('phone-input').hidden = !showXyz;
+      byId('phone-waiting').hidden = offline || showInput || showPose;
+      byId('phone-input').hidden = !showInput;
       poseSection.hidden = !showPose;
-      if (showXyz) renderPhoneInput(remote.phone);
+      if (showInput) renderPhoneInput(remote.phone, showArm, remote.arm_status);
       if (showPose) renderPose(remote.marker_pose);
 
       if (!offline) simulation.hidden = remote.mode !== 'Local simulation';

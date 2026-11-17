@@ -14,7 +14,7 @@ from scripts.main_teleop_remote_ik import (
     DEFAULT_WSL_PYTHON, TELEOP_ERRORS, VK_ESCAPE, Worker, load_key_state, local_simulated_link,
     publish_remote_dashboard,
 )
-from scripts.mobile_teleop_gateway import INPUT_PATH, POSE_PATH, MobileGateway, MobileInput
+from scripts.mobile_teleop_gateway import ARM_INPUT_PATH, INPUT_PATH, POSE_PATH, MobileGateway, MobileInput, mobile_arm_status
 
 
 TOKEN_PATH = Path(__file__).resolve().parents[1] / "mobile-teleop.token"
@@ -62,15 +62,21 @@ def main():
     phone = MobileInput()
     stop = Event()
     page = Path(__file__).with_name("mobile_teleop_dashboard.html")
+    control = None
+
+    def arm_status():
+        if args.input_only:
+            return mobile_arm_status(None)
+        return mobile_arm_status(control.status if control is not None else {})
+
     try:
         token = load_phone_token(TOKEN_PATH)
         host = args.listen or default_input_address()
         get_key_state = load_key_state()
         with ExitStack() as stack:
-            gateway = stack.enter_context(MobileGateway(host, args.input_port, phone, token))
+            gateway = stack.enter_context(MobileGateway(host, args.input_port, phone, token, arm_status=arm_status))
             dashboard = stack.enter_context(WebDashboard(LOOPBACK, args.dashboard_port, page=page))
             mode = "Input only" if args.input_only else "Local simulation"
-            control = None
             if not args.input_only:
                 worker = stack.enter_context(Worker(args.wsl_distro, args.wsl_python))
                 connect = local_simulated_link(stack, worker, stop)
@@ -91,7 +97,9 @@ def main():
                   f"  In the app's bearer token field, enter the value from {TOKEN_PATH.name}.\n"
                   f"{mode} dashboard (PC browser)\n"
                   f"  http://{LOOPBACK}:{dashboard.port}/\n"
-                  "Optional joystick / XYZ velocity input\n"
+                  "Touchscreen arm control\n"
+                  f"  {ws_address}{ARM_INPUT_PATH}\n"
+                  "Legacy joystick / XYZ velocity input\n"
                   f"  {ws_address}{INPUT_PATH}\n"
                   "Esc or Ctrl+C exits.", flush=True)
             while not stop.is_set():
@@ -99,6 +107,7 @@ def main():
                     dashboard.exit_reason = "Esc pressed"
                     break
                 status = dict(control.status) if control else {"mode": mode, "state": "Monitoring"}
+                status["arm_status"] = mobile_arm_status(None if args.input_only else status)
                 status.update(gateway.telemetry())
                 publish_remote_dashboard(dashboard, status)
                 stop.wait(.05)

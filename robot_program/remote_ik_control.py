@@ -52,11 +52,12 @@ def motion_delta(gamepad, scale=1.):
 
 
 class LatestInput:
-    def __init__(self, *, clock=monotonic, advance_button="Start", stop_button="Back"):
+    def __init__(self, *, clock=monotonic, advance_button="Start", stop_button="Back", allow_torque_release=True):
         self.clock = clock
         if advance_button == stop_button or {advance_button, stop_button} != {"Start", "Back"}:
             raise ValueError("Advance and stop must use distinct Start/Back buttons")
         self.advance_button, self.stop_button = advance_button, stop_button
+        self.allow_torque_release = allow_torque_release
         self.raw_gamepad = None
         self.sample = GamepadSample(self.clock(), None)
 
@@ -79,7 +80,8 @@ class LatestInput:
                         and any(motion_delta(previous.gamepad)[:5])
                         and not any(motion_delta(gamepad)[:5]))
         stop_edge = bool(before) and not before.get("Back", False) and after.get("Back", False)
-        eligible = (gamepad is not None and after["Back"] and not after["Start"] and not after["LB"]
+        eligible = (self.allow_torque_release and gamepad is not None
+                    and after["Back"] and not after["Start"] and not after["LB"]
                     and not any(gamepad["axes"].values()) and gamepad["dpad"] == (0, 0))
         stop_since = (now if stop_edge else previous.stop_since) if eligible else None
         if not stop_edge and now - previous.sampled_at >= .05:

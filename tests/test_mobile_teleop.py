@@ -13,8 +13,8 @@ from websockets.sync.client import connect
 from robot_program.remote_ik_control import motion_delta
 from scripts import main_mobile_teleop as launcher
 from scripts.mobile_teleop_gateway import (
-    ADVANCE, DEADMAN, FRESHNESS_S, INPUT_FRAME, INPUT_PATH, POSE_FRAME, POSE_PATH, POSE_STALE_S,
-    TRACKING, MarkerPose, MobileGateway, MobileInput,
+    ADVANCE, ARM_INPUT_FRAME, ARM_INPUT_PATH, DEADMAN, FRESHNESS_S, INPUT_FRAME, INPUT_PATH,
+    POSE_FRAME, POSE_PATH, POSE_STALE_S, STOP, TRACKING, MarkerPose, MobileGateway, MobileInput,
 )
 
 
@@ -39,7 +39,7 @@ def test_launcher_defaults_to_the_private_route_address(monkeypatch, route_ip, e
 
 
 def test_launcher_publishes_simulator_metrics_and_active_phone_mode(monkeypatch):
-    status = {"mode": "Local simulation", "connection": "Connected", "state": "Holding",
+    status = {"mode": "Local simulation", "connection": "Connected", "state": "Holding", "control_state": "Holding",
               "measured": [1., 2., 3., 4., 5., 0.], "xyz_m": [.1, -.2, .3], "feedback_hz": 50.}
     gateway = MagicMock(address="127.0.0.1", port=18744)
     phone = {"phone_mode": "aruco", "phone": {}, "marker_pose": {"state": "Waiting for marker pose"}}
@@ -49,7 +49,7 @@ def test_launcher_publishes_simulator_metrics_and_active_phone_mode(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["mobile-teleop", "--listen", "127.0.0.1"])
     monkeypatch.setattr(launcher, "load_phone_token", lambda _: "mobile-test-token")
     monkeypatch.setattr(launcher, "load_key_state", lambda: lambda _: next(keys))
-    monkeypatch.setattr(launcher, "MobileGateway", lambda *args: nullcontext(gateway))
+    monkeypatch.setattr(launcher, "MobileGateway", lambda *args, **kwargs: nullcontext(gateway))
     monkeypatch.setattr(launcher, "WebDashboard", lambda *args, **kwargs: nullcontext(dashboard))
     monkeypatch.setattr(launcher, "Worker", lambda *args: nullcontext(None))
     monkeypatch.setattr(launcher, "local_simulated_link", lambda *args: None)
@@ -60,8 +60,91 @@ def test_launcher_publishes_simulator_metrics_and_active_phone_mode(monkeypatch)
 
     dashboard.publish.assert_called_once_with(
         {"shoulder_pan": 1., "shoulder_lift": 2., "elbow_flex": 3., "wrist_flex": 4., "wrist_roll": 5.},
-        0., {"x": .1, "y": -.2, "z": .3}, False, gamepad=None, remote={**status, **phone},
+        0., {"x": .1, "y": -.2, "z": .3}, False, gamepad=None,
+        remote={**status, **phone, "arm_status": "Holding"},
     )
+
+
+def arm_frame(seq, flags=0, x=0., y=0., z=0., roll=0., pitch=0., gripper=0):
+    return ARM_INPUT_FRAME.pack(seq, flags, x, y, z, roll, pitch, gripper)
+
+
+def test_arm_input_mapping_and_fresh_start_after_stopping_or_reconnecting():
+    now = 1.
+    phone = MobileInput(clock=lambda: now)
+    phone.begin(arm_controls=True)
+    assert phone.publish(arm_frame(0))
+    assert phone.publish(arm_frame(1, DEADMAN, x=.25))
+    assert not phone.sample.lb
+    assert phone.publish(arm_frame(2, ADVANCE))
+    assert phone.sample.start == 1
+    wire = bytes.fromhex("00000003 01 3e800000 bf000000 3e800000 3f000000 be800000 ff")
+    assert phone.publish(wire)
+    assert phone.sample.lb
+    assert motion_delta(phone.sample.gamepad) == pytest.approx([.0005, -.001, .0005, -.1, .375, -1.])
+    assert phone.telemetry()["wrist"] == (.5, -.25)
+    assert phone.telemetry()["gripper"] == -1
+    assert phone.publish(arm_frame(4, STOP))
+    assert phone.sample.stop == 1 and phone.sample.neutral and not phone.sample.lb
+    for seq in range(5, 125):
+        now += .02
+        assert phone.publish(arm_frame(seq, STOP))
+        assert phone.sample.stop_since is None
+    assert phone.publish(arm_frame(125, DEADMAN, gripper=1))
+    assert not phone.sample.lb
+    assert phone.publish(arm_frame(126, ADVANCE))
+    assert phone.publish(arm_frame(127, DEADMAN, gripper=1))
+    assert phone.sample.lb and motion_delta(phone.sample.gamepad)[5] == 1
+    now += FRESHNESS_S + .01
+    with pytest.raises(TimeoutError, match="Input expired"):
+        phone.publish(arm_frame(128, DEADMAN))
+    phone.end()
+    phone.begin(arm_controls=True)
+    assert phone.publish(arm_frame(0))
+    assert phone.publish(arm_frame(1, DEADMAN, pitch=1))
+    assert not phone.sample.lb and phone.sample.start == 2
+
+
+@pytest.mark.parametrize("frame", [
+    INPUT_FRAME.pack(1, 0, 0, 0, 0), arm_frame(1, DEADMAN | ADVANCE), arm_frame(1, STOP | ADVANCE),
+    arm_frame(1, STOP, gripper=1), arm_frame(1, ADVANCE, roll=.1), arm_frame(1, pitch=float("nan")),
+    arm_frame(1, roll=1.1), arm_frame(1, gripper=2), arm_frame(1, flags=8),
+])
+def test_arm_input_rejects_invalid_frames_without_refreshing(frame):
+    phone = MobileInput()
+    phone.begin(arm_controls=True)
+    with pytest.raises(ValueError, match="sequence-zero"):
+        phone.publish(arm_frame(1, DEADMAN))
+    assert phone.publish(arm_frame(0))
+    before = phone.sample
+    with pytest.raises(ValueError):
+        phone.publish(frame)
+    assert phone.sample is before
+
+
+def test_arm_socket_reports_simulator_feedback_without_adding_messages_on_v1():
+    phone = MobileInput()
+    arm_state = "Holding"
+    headers = {"Authorization": "Bearer test-token"}
+    with MobileGateway("127.0.0.1", 0, phone, "test-token", arm_status=lambda: arm_state) as gateway:
+        base_url = f"ws://127.0.0.1:{gateway.port}"
+        with connect(base_url + ARM_INPUT_PATH, additional_headers=headers, close_timeout=.2, proxy=None) as client:
+            client.send(arm_frame(0))
+            assert client.recv(timeout=.5) == "arm-status:Holding"
+            arm_state = "Control enabled"
+            for seq in range(1, 15):
+                client.send(arm_frame(seq))
+                sleep(.012)
+            assert client.recv(timeout=.5) == "arm-status:Control enabled"
+            assert gateway.telemetry()["phone_mode"] == "arm"
+        deadline = monotonic() + 1
+        while gateway.active and monotonic() < deadline:
+            sleep(.001)
+        assert not gateway.active
+        with connect(base_url + INPUT_PATH, additional_headers=headers, close_timeout=.2, proxy=None) as client:
+            client.send(INPUT_FRAME.pack(0, 0, 0, 0, 0))
+            with pytest.raises(TimeoutError):
+                client.recv(timeout=.02)
 
 
 def test_expiry_between_ik_samples_requires_new_connection_and_advance():
