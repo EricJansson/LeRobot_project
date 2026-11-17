@@ -23,7 +23,6 @@ INPUT_FRAME = Struct("!IBfff")  # uint32 sequence, uint8 flags, float32 X/Y/Z
 TOUCHSCREEN_PATH = "/api/v1/touchscreen"
 ARM_INPUT_PATH = "/api/v2/input"
 ARM_INPUT_FRAME = Struct("!IBfffffb")  # Sequence, flags, XYZ, roll, pitch, gripper.
-ARM_CONTROLS_HEADER = "X-LeRobot-Arm-Controls"
 ARM_RELEASE_HEADER = "X-LeRobot-Arm-Release"
 POSE_PATH = "/api/v1/marker-pose"
 PHONE_MODES = {INPUT_PATH: "xyz", TOUCHSCREEN_PATH: "xyz", ARM_INPUT_PATH: "arm", POSE_PATH: "aruco"}
@@ -58,9 +57,8 @@ def mobile_arm_status(control_status):
 
 
 class MobileInput:
-    def __init__(self, *, clock=monotonic, joysticks_only=False):
+    def __init__(self, *, clock=monotonic):
         self.clock = clock
-        self.joysticks_only = joysticks_only
         self.latest = LatestInput(clock=clock)
         self.lock = Lock()
         self.seq = None
@@ -104,8 +102,6 @@ class MobileInput:
                       "xyz": self.xyz if fresh else (0., 0., 0.)}
             if self.arm_controls:
                 result.update(wrist=self.wrist if fresh else (0., 0.), gripper=self.gripper if fresh else 0)
-                if self.joysticks_only:
-                    result["joysticks_only"] = True
             return result
 
     def publish(self, frame):
@@ -143,15 +139,20 @@ class MobileInput:
                 elif advance:
                     self.started = True
                 deadman = deadman and self.started
-            if self.joysticks_only:
-                pitch, gripper = 0., 0
+            # Releasing or reversing a button invalidates an in-flight result
+            # even when a stick or another button still requests motion.
+            previous_pitch = self.wrist[1]
+            button_interrupted = (self.arm_controls and self.seq is not None
+                                  and ((previous_pitch != 0 and previous_pitch * pitch <= 0)
+                                       or (self.gripper != 0 and self.gripper != gripper)))
             magnitude = max(1., hypot(*xyz))
             x, y, z = (axis / magnitude for axis in xyz)
             # Adapt Cartesian input to the existing IK control loop's input boundary.
             self.latest.publish({"name": "Phone", "axes": {"LY": -x, "LX": -y, "RY": -z,
                                                           "LT": max(0., -pitch), "RT": max(0., pitch), "RX": roll},
                                  "buttons": {"LB": deadman, "Start": advance, "Back": stop},
-                                 "dpad": (0, gripper)}, release_requested=flags == RELEASE)
+                                 "dpad": (0, gripper)}, release_requested=flags == RELEASE,
+                                motion_interrupted=button_interrupted)
             self.seq, self.xyz, self.wrist, self.gripper = seq, xyz, (roll, pitch), gripper
             return True
 
@@ -252,7 +253,8 @@ class MarkerPose:
 
 
 class MobileGateway:
-    def __init__(self, host, port, feed, token, *, arm_status=lambda: "Monitoring only", release_progress=lambda: 0.):
+    def __init__(self, host, port, feed, token, *, arm_status=lambda: "Monitoring only", release_progress=lambda: 0.,
+                 allow_legacy_input=True):
         self.host, self.port = host, port
         self.feed = feed
         self.touchscreen = TouchscreenInput()
@@ -260,6 +262,7 @@ class MobileGateway:
         self.authorization = f"Bearer {token}".encode()
         self.arm_status = arm_status
         self.release_progress = release_progress
+        self.allow_legacy_input = allow_legacy_input
         self._session_lock = Lock()
         self._phone_path = None
         self.ready = Future()
@@ -276,7 +279,7 @@ class MobileGateway:
                     "marker_pose": self.marker_pose.telemetry()}
 
     def _authorize(self, connection, request):
-        if request.path not in PHONE_MODES or self.feed.joysticks_only and request.path == INPUT_PATH:
+        if request.path not in PHONE_MODES or (request.path == INPUT_PATH and not self.allow_legacy_input):
             return connection.respond(HTTPStatus.NOT_FOUND, "Unknown endpoint\n")
         headers = request.headers.get_all("Authorization")
         if len(headers) != 1 or not compare_digest(headers[0].encode(), self.authorization):
@@ -295,8 +298,6 @@ class MobileGateway:
     def _advertise_arm_controls(self, _connection, request, response):
         if request.path == ARM_INPUT_PATH and response.status_code == HTTPStatus.SWITCHING_PROTOCOLS:
             response.headers[ARM_RELEASE_HEADER] = "hold"
-            if self.feed.joysticks_only:
-                response.headers[ARM_CONTROLS_HEADER] = "joysticks"
 
     async def _receive(self, connection):
         if self.active:

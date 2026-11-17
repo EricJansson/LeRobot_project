@@ -16,7 +16,7 @@ from robot_program.remote_ik_control import ControlLoop, MotionState, motion_del
 from scripts import main_mobile_teleop as launcher
 from scripts import mobile_teleop_gateway as gateway_module
 from scripts.mobile_teleop_gateway import (
-    ADVANCE, ARM_CONTROLS_HEADER, ARM_INPUT_FRAME, ARM_INPUT_PATH, ARM_RELEASE_HEADER, DEADMAN, FRESHNESS_S,
+    ADVANCE, ARM_INPUT_FRAME, ARM_INPUT_PATH, ARM_RELEASE_HEADER, DEADMAN, FRESHNESS_S,
     INPUT_FRAME, INPUT_PATH, POSE_FRAME, POSE_PATH, POSE_STALE_S, RELEASE, STOP,
     TOUCHSCREEN_IDLE_S, TOUCHSCREEN_PATH, TOUCHSCREEN_STALE_S,
     TRACKING, MarkerPose, MobileGateway, MobileInput, TouchscreenInput, mobile_arm_status,
@@ -66,7 +66,8 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, flag
     monkeypatch.setattr(sys, "argv", ["mobile-teleop", "--listen", "127.0.0.1", *flags])
     monkeypatch.setattr(launcher, "load_phone_token", lambda _: "mobile-test-token")
     monkeypatch.setattr(launcher, "load_key_state", lambda: lambda _: next(keys))
-    monkeypatch.setattr(launcher, "MobileGateway", lambda *args, **kwargs: nullcontext(gateway))
+    open_gateway = Mock(return_value=nullcontext(gateway))
+    monkeypatch.setattr(launcher, "MobileGateway", open_gateway)
     monkeypatch.setattr(launcher, "WebDashboard", lambda *args, **kwargs: nullcontext(dashboard))
     monkeypatch.setattr(launcher, "Worker", lambda *args: nullcontext(None))
     monkeypatch.setattr(launcher, "local_simulated_link", local)
@@ -77,11 +78,11 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, flag
     launcher.main()
 
     assert loop.call_args.args[4] == speed
+    assert open_gateway.call_args.kwargs["allow_legacy_input"] == (mode == "Local simulation")
     if mode != "Local simulation":
         deploy.assert_called_once_with("eric@rpi")
         open_tunnel.assert_called_once_with("eric@rpi", flags == ["--pi-sim"], fingerprint="test-fingerprint")
         assert loop.call_args.args[1] is tunnel.connect
-        assert loop.call_args.args[2].joysticks_only
         assert not loop.call_args.kwargs["allow_limit_recovery"]
         assert loop.call_args.kwargs["on_link_lost"] == loop.call_args.args[2].end
         local.assert_not_called()
@@ -109,16 +110,17 @@ def arm_frame(seq, flags=0, x=0., y=0., z=0., roll=0., pitch=0., gripper=0):
     return ARM_INPUT_FRAME.pack(seq, flags, x, y, z, roll, pitch, gripper)
 
 
-def test_pi_gateway_advertises_joysticks_and_invalidation_retires_the_socket():
-    phone = MobileInput(joysticks_only=True)
+def test_pi_gateway_accepts_arm_controls_and_invalidation_retires_the_socket():
+    phone = MobileInput()
     headers = {"Authorization": "Bearer test-token"}
-    with MobileGateway("127.0.0.1", 0, phone, "test-token", arm_status=lambda: "Holding") as gateway:
+    with MobileGateway("127.0.0.1", 0, phone, "test-token", arm_status=lambda: "Holding",
+                       allow_legacy_input=False) as gateway:
         base_url = f"ws://127.0.0.1:{gateway.port}"
         with pytest.raises(InvalidStatus) as refused:
             connect(base_url + INPUT_PATH, additional_headers=headers, proxy=None)
         assert refused.value.response.status_code == 404
         with connect(base_url + ARM_INPUT_PATH, additional_headers=headers, proxy=None) as client:
-            assert client.response.headers[ARM_CONTROLS_HEADER] == "joysticks"
+            assert "X-LeRobot-Arm-Controls" not in client.response.headers
             assert client.response.headers[ARM_RELEASE_HEADER] == "hold"
             assert client.recv(timeout=.5) == "arm-status:Holding"
             phone.end()  # Motor connection dropped before the first phone frame.
@@ -132,9 +134,9 @@ def test_pi_gateway_advertises_joysticks_and_invalidation_retires_the_socket():
             assert not phone.sample.lb
 
 
-def test_pi_joysticks_drive_four_axes_and_hold_on_either_release():
+def test_pi_arm_controls_drive_sticks_and_buttons_and_hold_on_release():
     now = 1.
-    phone = MobileInput(clock=lambda: now, joysticks_only=True)
+    phone = MobileInput(clock=lambda: now)
     phone.begin(arm_controls=True)
     phone.publish(arm_frame(0))
     stop = Event()
@@ -142,9 +144,14 @@ def test_pi_joysticks_drive_four_axes_and_hold_on_either_release():
     feedback = {"armed": False, "moving": False, "measured": measured, "sent": measured,
                 "hz": 50, "watchdog_s": .2, "fault": False, "reason": ""}
     frames = iter((arm_frame(1, ADVANCE),
-                   arm_frame(2, DEADMAN, .25, -.5, .25, .5, .5, 1),
+                   arm_frame(2, DEADMAN, .25, -.5, .25, .5),
                    arm_frame(3, DEADMAN), arm_frame(4, DEADMAN, roll=.5),
-                   arm_frame(5, roll=.5), arm_frame(6, STOP), arm_frame(7, DEADMAN, x=.5)))
+                   arm_frame(5, roll=.5),
+                   arm_frame(6, DEADMAN, pitch=-1), arm_frame(7),
+                   arm_frame(8, DEADMAN, pitch=1), arm_frame(9),
+                   arm_frame(10, DEADMAN, gripper=1), arm_frame(11),
+                   arm_frame(12, DEADMAN, gripper=-1), arm_frame(13),
+                   arm_frame(14, STOP), arm_frame(15, DEADMAN, gripper=1)))
     operations, deltas = [], []
 
     def solve(_measured, delta, **_):
@@ -175,9 +182,34 @@ def test_pi_joysticks_drive_four_axes_and_hold_on_either_release():
     loop = ControlLoop(SimpleNamespace(solve=solve), None, phone, stop, .1, "Pi simulation",
                        clock=lambda: now, allow_limit_recovery=False)
     loop.session(SimpleNamespace(feedback=dict(feedback), request=request))
-    assert operations == ["poll", "arm", "move", "hold", "move", "hold", "disarm", "poll"]
+    assert operations == ["poll", "arm"] + ["move", "hold"] * 6 + ["disarm", "poll"]
+    assert len(deltas) == 6
     assert deltas[0] == pytest.approx([.000005, -.00001, .000005, 0., .00375, 0.])
     assert deltas[1] == pytest.approx([0., 0., 0., 0., .00375, 0.])
+    assert deltas[2] == pytest.approx([0., 0., 0., -.004, 0., 0.])
+    assert deltas[3] == pytest.approx([0., 0., 0., .004, 0., 0.])
+    assert deltas[4] == pytest.approx([0., 0., 0., 0., 0., .1])
+    assert deltas[5] == pytest.approx([0., 0., 0., 0., 0., -.1])
+
+
+@pytest.mark.parametrize("button", ["pitch", "gripper"])
+def test_button_release_invalidates_solve_while_stick_keeps_motion_requested(button):
+    now = 1.
+    phone = MobileInput(clock=lambda: now)
+    phone.begin(arm_controls=True)
+    assert phone.publish(arm_frame(0))
+    assert phone.publish(arm_frame(1, ADVANCE))
+    assert phone.publish(arm_frame(2, DEADMAN, x=.25, **{button: 1}))
+    at_solve_start = phone.sample
+    # Release and re-press before the result returns, with the stick still deflected.
+    assert phone.publish(arm_frame(3, DEADMAN, x=.25))
+    assert phone.publish(arm_frame(4, DEADMAN, x=.25, **{button: 1}))
+    current = phone.sample
+    assert current.lb and current.arm_idle == at_solve_start.arm_idle
+    loop = ControlLoop(None, None, phone, Event(), .1, "Pi simulation", clock=lambda: now)
+    result = {"target": [1.] * 6, "accepted_xyz_m": [0.] * 3}
+    assert loop._validate_input("hold", result, at_solve_start, current, arm_input=True,
+                                correcting=False, freshness=FRESHNESS_S) == "hold"
 
 
 def test_limit_handoff_disables_phone_start():

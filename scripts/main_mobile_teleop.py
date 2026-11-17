@@ -56,7 +56,7 @@ def main():
     modes.add_argument("--pi-sim", action="store_true", help="Use the Pi's simulated motor bus over SSH")
     modes.add_argument("--real-arm", action="store_true", help="Connect to the physical arm on the Pi (default)")
     parser.add_argument("--pi", default="eric@rpi", help="SSH destination")
-    parser.add_argument("--speed", type=float, help="Joystick motion scale (default: 0.1 for --pi-sim, 1 otherwise)")
+    parser.add_argument("--speed", type=float, help="Motion scale (default: 0.1 for --pi-sim, 1 otherwise)")
     parser.add_argument("--listen", help="Override the automatically selected LAN IPv4 address")
     parser.add_argument("--input-port", type=int, default=18744, help="Phone WebSocket port (default %(default)s)")
     parser.add_argument("--dashboard-port", type=int, default=18745, help="Local dashboard port (default %(default)s)")
@@ -80,7 +80,7 @@ def main():
         if address != IPv4Address(LOOPBACK) and not any(address in network for network in LAN_NETWORKS):
             parser.error("Use a private LAN IPv4 address or 127.0.0.1 in real-arm mode")
 
-    phone = MobileInput(joysticks_only=uses_pi)
+    phone = MobileInput()
     stop = Event()
     page = Path(__file__).with_name("mobile_teleop_dashboard.html")
     control = None
@@ -101,7 +101,7 @@ def main():
         get_key_state = load_key_state()
         with ExitStack() as stack:
             gateway = stack.enter_context(MobileGateway(host, args.input_port, phone, token, arm_status=arm_status,
-                                                       release_progress=release_progress))
+                                                       release_progress=release_progress, allow_legacy_input=not uses_pi))
             dashboard = stack.enter_context(WebDashboard(LOOPBACK, args.dashboard_port, page=page))
             if not args.input_only:
                 worker = stack.enter_context(Worker(args.wsl_distro, args.wsl_python))

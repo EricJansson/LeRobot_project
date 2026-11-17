@@ -153,8 +153,7 @@
     poseXyzView.addEventListener('change', showPosePosition);
 
     function renderPhoneInput(phone, armControls, armStatus) {
-      const joysticksOnly = armControls && phone?.joysticks_only;
-      setText(byId('input-heading'), joysticksOnly ? 'Phone joystick input' : armControls ? 'Phone arm input' : 'Phone XYZ input');
+      setText(byId('input-heading'), armControls ? 'Phone arm input' : 'Phone XYZ input');
       const connection = byId('connection');
       setText(connection, phone?.fresh ? 'Receiving' : phone?.seq != null ? 'Input stale' : 'Waiting for input');
       connection.dataset.fresh = Boolean(phone?.fresh);
@@ -162,11 +161,10 @@
       byId('sequence').textContent = phone?.seq != null ? `Sequence ${phone.seq}` : 'No samples yet';
       byId('arm-input-details').hidden = !armControls;
       setText(byId('phone-arm-status'), armStatus ?? 'Unavailable');
-      byId('gripper-input').hidden = joysticksOnly;
       setText(byId('gripper-input'), phone?.gripper > 0 ? 'Open gripper requested'
         : phone?.gripper < 0 ? 'Close gripper requested' : 'Gripper idle');
       axes.forEach((row, axis) => {
-        if (axis >= 3) row.hidden = !armControls || (axis === 4 && joysticksOnly);
+        if (axis >= 3) row.hidden = !armControls;
         const value = (axis < 3 ? phone?.xyz?.[axis] : phone?.wrist?.[axis - 3]) ?? 0;
         const fill = row.querySelector('.fill');
         fill.style.left = `${50 + 50 * Math.min(0, value)}%`;

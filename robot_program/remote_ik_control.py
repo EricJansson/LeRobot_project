@@ -61,7 +61,7 @@ class LatestInput:
         self.raw_gamepad = None
         self.sample = GamepadSample(self.clock(), None)
 
-    def publish(self, gamepad, *, release_requested=True):
+    def publish(self, gamepad, *, release_requested=True, motion_interrupted=False):
         self.raw_gamepad = gamepad
         if gamepad is not None:
             # Keep motion logic in semantic Start/Back order; raw display stays physical.
@@ -90,7 +90,7 @@ class LatestInput:
             now, gamepad,
             previous.start + start,
             previous.stop + (not before.get("Back", False) and after.get("Back", False)),
-            previous.release + (previous.lb and not after.get("LB", False)),
+            previous.release + (motion_interrupted or (previous.lb and not after.get("LB", False))),
             previous.disconnect + (previous.gamepad is not None and gamepad is None),
             previous.arm_idle + arm_centered,
             stop_since,
@@ -402,8 +402,8 @@ class ControlLoop:
                 op, result, correcting = self._select_correction(
                     state, feedback, sample, result, op=op, delta=delta, arm_input=arm_input,
                     fresh=fresh, started=started, period=period, joint_step_limits=joint_step_limits, measured=measured)
-            # Recheck input after IK. A release and re-press while solving also
-            # invalidates this candidate, even when LB is held again now.
+            # Recheck input after IK, including motion interruptions that ended
+            # before the solve completed.
             current = self.latest_input.sample
             if feedback["armed"] and current.stop != sample.stop:
                 state.blocked_release_press = current.stop
