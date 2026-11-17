@@ -98,7 +98,7 @@ class MobileInput:
 
 
 class MarkerPose:
-    """Keep one raw observation for display, separate from motion intent."""
+    """Track marker status and retain the last detected pose for display."""
 
     def __init__(self, *, clock=monotonic):
         self.clock = clock
@@ -107,17 +107,20 @@ class MarkerPose:
         self.xyz_units = None
         self.seq = None
         self.received_at = None
-        self.pose = None
+        self.last_pose = None
+        self.tracking = False
 
     def begin(self, coordinate_frame=CAMERA_AXES, xyz_units=XYZ_CM):
         with self.lock:
             self.coordinate_frame = coordinate_frame
             self.xyz_units = xyz_units
-            self.seq = self.received_at = self.pose = None
+            self.seq = self.received_at = self.last_pose = None
+            self.tracking = False
 
     def end(self):
         with self.lock:
-            self.coordinate_frame = self.xyz_units = self.pose = None
+            self.coordinate_frame = self.xyz_units = self.last_pose = None
+            self.tracking = False
 
     def publish(self, frame):
         if not isinstance(frame, bytes) or len(frame) != POSE_FRAME.size:
@@ -132,7 +135,9 @@ class MarkerPose:
                 return False
             self.seq = seq
             self.received_at = self.clock()
-            self.pose = tuple(values) if flags & TRACKING else None
+            self.tracking = bool(flags & TRACKING)
+            if self.tracking:
+                self.last_pose = tuple(values)
             return True
 
     def telemetry(self):
@@ -142,10 +147,11 @@ class MarkerPose:
             elif self.clock() - self.received_at >= POSE_STALE_S:
                 state = "Pose timed out"
             else:
-                state = "Tracking" if self.pose is not None else "Marker lost"
-            pose = self.pose if state == "Tracking" else None
+                state = "Tracking" if self.tracking else "Marker lost"
+            pose = self.last_pose
             return {"state": state, "seq": self.seq, "frame": self.coordinate_frame, "xyz_units": self.xyz_units,
-                    "xyz_cm": pose[:3] if pose else None, "rpy_deg": pose[3:] if pose else None}
+                    "xyz_cm": pose[:3] if pose is not None else None,
+                    "rpy_deg": pose[3:] if pose is not None else None}
 
 
 class MobileGateway:

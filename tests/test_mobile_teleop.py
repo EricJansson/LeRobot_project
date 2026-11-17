@@ -120,22 +120,44 @@ def test_marker_pose_preserves_units_and_expires_without_a_new_sequence():
     now += POSE_STALE_S
     assert feed.telemetry() == {"state": "Pose timed out", "seq": 5, "frame": "camera",
                                 "xyz_units": "cm",
-                                "xyz_cm": None, "rpy_deg": None}
+                                "xyz_cm": (-12.5, 18., 55.), "rpy_deg": (9.5, -20., 170.)}
 
     # A stationary marker can report identical coordinates with a new sequence.
     assert feed.publish(POSE_FRAME.pack(6, TRACKING, -12.5, 18, 55, 9.5, -20, 170))
     assert feed.telemetry()["state"] == "Tracking"
-    assert feed.publish(POSE_FRAME.pack(7, 0, *([0.] * 6)))
-    assert feed.telemetry() == {"state": "Marker lost", "seq": 7, "frame": "camera",
-                                "xyz_units": "cm",
+
+
+def test_marker_loss_retains_detected_pose_until_reacquisition_or_disconnect():
+    feed = MarkerPose(clock=lambda: 1.)
+    feed.begin("robot-axes", "normalized")
+    assert feed.telemetry()["xyz_cm"] is None
+    assert feed.publish(POSE_FRAME.pack(0, 0, *([0.] * 6)))
+    assert feed.telemetry() == {"state": "Marker lost", "seq": 0, "frame": "robot-axes",
+                                "xyz_units": "normalized",
                                 "xyz_cm": None, "rpy_deg": None}
+
+    assert feed.publish(POSE_FRAME.pack(1, TRACKING, .125, -.25, .5, 9.5, -20, 170))
+    for seq in (2, 3):
+        assert feed.publish(POSE_FRAME.pack(seq, 0, *([0.] * 6)))
+        assert feed.telemetry() == {"state": "Marker lost", "seq": seq, "frame": "robot-axes",
+                                    "xyz_units": "normalized",
+                                    "xyz_cm": (.125, -.25, .5), "rpy_deg": (9.5, -20., 170.)}
+
+    assert feed.publish(POSE_FRAME.pack(4, TRACKING, .25, -.5, .75, 10, -15, 90))
+    assert feed.telemetry() == {"state": "Tracking", "seq": 4, "frame": "robot-axes",
+                                "xyz_units": "normalized",
+                                "xyz_cm": (.25, -.5, .75), "rpy_deg": (10., -15., 90.)}
     feed.end()
     assert feed.telemetry()["state"] == "Disconnected"
     assert feed.telemetry()["frame"] is None
     assert feed.telemetry()["xyz_units"] is None
-    feed.begin("robot-axes")
-    assert feed.telemetry()["frame"] == "robot-axes"
+    assert feed.telemetry()["xyz_cm"] is None
+    assert feed.telemetry()["rpy_deg"] is None
+    feed.begin()
+    assert feed.telemetry() == {"state": "Waiting for marker pose", "seq": None, "frame": "camera",
+                                "xyz_units": "cm", "xyz_cm": None, "rpy_deg": None}
     assert feed.publish(POSE_FRAME.pack(0, TRACKING, -12.5, 18, 55, 9.5, -20, 170))
+    assert feed.telemetry()["xyz_cm"] == (-12.5, 18., 55.)
 
 
 @pytest.mark.parametrize("frame", [INPUT_FRAME.pack(0, 0, 0, 0, 0),

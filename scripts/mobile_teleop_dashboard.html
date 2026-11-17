@@ -33,6 +33,7 @@
     .pose-table { table-layout: fixed; }
     .pose-table thead th:first-child { width: 38%; }
     .pose-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #marker-pose[data-stale="true"] .pose-table tbody tr > * { background: #3d2b1f; color: #f0bf78; }
     #reason { margin: .65rem 0 0; overflow-wrap: anywhere; }
   </style>
 </head>
@@ -51,7 +52,7 @@
       </div>
       <p class="details muted"><span id="deadman">Deadman released</span><span id="sequence">No samples yet</span></p>
     </section>
-    <section aria-labelledby="pose-heading">
+    <section id="marker-pose" aria-labelledby="pose-heading">
       <div class="section-top">
         <h2 id="pose-heading">ArUco pose</h2>
         <span id="pose-status" class="connection" role="status">Waiting for marker pose</span>
@@ -72,7 +73,6 @@
         <thead><tr><th scope="col">Orientation (°)</th><th scope="col">Roll</th><th scope="col">Pitch</th><th scope="col">Yaw</th></tr></thead>
         <tbody><tr id="pose-rpy"><th scope="row">Measured</th><td>—</td><td>—</td><td>—</td></tr></tbody>
       </table>
-      <p id="pose-sequence" class="details muted">No samples yet</p>
     </section>
     <section id="simulation" aria-labelledby="sim-heading" hidden>
       <div class="section-top"><h2 id="sim-heading">Simulated arm XYZ (mm)</h2><span id="state" class="muted"></span></div>
@@ -94,6 +94,8 @@
     const signed = value => `${value > 0 ? '+' : ''}${value.toFixed(2)}`;
     const poseXyzView = byId('pose-xyz-view');
     const posePositionLabel = byId('pose-position-label');
+    const poseSection = byId('marker-pose');
+    const poseRowLabels = poseSection.querySelectorAll('.pose-table tbody th');
     let markerPose;
 
     function showValues(row, values, scale = 1, decimals = 1) {
@@ -133,9 +135,16 @@
       const frameLabel = poseFrameLabels[pose?.frame];
       byId('pose-heading').textContent = frameLabel ? `ArUco pose · ${frameLabel}` : 'ArUco pose';
       const poseStatus = byId('pose-status');
-      poseStatus.textContent = offline ? 'Dashboard offline' : pose?.state ?? 'Waiting for marker pose';
-      poseStatus.dataset.fresh = pose?.state === 'Tracking';
-      byId('pose-sequence').textContent = pose?.seq != null ? `Sequence ${pose.seq}` : 'No samples yet';
+      const status = offline ? 'Dashboard offline' : pose?.state ?? 'Waiting for marker pose';
+      if (poseStatus.textContent !== status) poseStatus.textContent = status;
+      const tracking = status === 'Tracking';
+      poseStatus.dataset.fresh = tracking;
+      const stalePose = !tracking && pose?.xyz_cm != null;
+      poseSection.dataset.stale = stalePose;
+      const rowLabel = stalePose ? 'Last detected' : 'Measured';
+      poseRowLabels.forEach(label => {
+        if (label.textContent !== rowLabel) label.textContent = rowLabel;
+      });
       showPosePosition();
       showValues('pose-rpy', pose?.rpy_deg);
       byId('simulation').hidden = remote.mode !== 'Local simulation';
