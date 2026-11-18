@@ -48,6 +48,7 @@ def test_launcher_defaults_to_the_private_route_address(monkeypatch, route_ip, e
     (["--real-arm"], "Observe only", "Unavailable", 1.),
     (["--speed", "0.1"], "Observe only", "Unavailable", .1),
     (["--dry-run"], "Local simulation", "Holding", 1.),
+    (["--dry-run", "--camera-profile", "balanced"], "Local simulation", "Holding", 1.),
     (["--dry-run", "--no-camera"], "Local simulation", "Holding", 1.),
     (["--pi-sim"], "Pi simulation", "Holding", .1),
     (["--pi-sim", "--no-camera"], "Pi simulation", "Holding", .1),
@@ -97,8 +98,9 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, caps
         open_tunnel.assert_not_called()
         assert loop.call_args.args[1] is local.return_value
     if "--no-camera" not in flags:
-        camera.assert_called_once_with("eric@rpi", None)
-        rpi_camera.assert_called_once_with("eric@rpi")
+        profile = "balanced" if "balanced" in flags else "control"
+        camera.assert_called_once_with("eric@rpi", None, profile=profile)
+        rpi_camera.assert_called_once_with("eric@rpi", profile=profile)
         output = capsys.readouterr().out
         assert camera.return_value in output
         assert rpi_camera.return_value in output
@@ -142,8 +144,8 @@ def test_input_only_camera_failure_keeps_the_launcher_running(monkeypatch, capsy
         rpi_camera.assert_not_called()
         assert not output.err
     else:
-        camera.assert_called_once_with("eric@192.168.0.190", None)
-        rpi_camera.assert_called_once_with("eric@192.168.0.190")
+        camera.assert_called_once_with("eric@192.168.0.190", None, profile="control")
+        rpi_camera.assert_called_once_with("eric@192.168.0.190", profile="control")
         assert f"{failed_camera} unavailable. No video" in output.err
         for name, start in cameras.items():
             assert (start.return_value in output.out) == (name != failed_camera)

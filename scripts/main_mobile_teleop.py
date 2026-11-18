@@ -16,7 +16,7 @@ from scripts.main_teleop_remote_ik import (
     DEFAULT_WSL_PYTHON, TELEOP_ERRORS, VK_ESCAPE, PiTunnel, Worker, load_key_state, local_simulated_link,
     publish_remote_dashboard,
 )
-from scripts.mobile_arm_camera import LAN_NETWORKS, ensure_arm_camera, ensure_rpi_camera
+from scripts.mobile_arm_camera import CAMERA_PROFILES, LAN_NETWORKS, ensure_arm_camera, ensure_rpi_camera
 from scripts.mobile_teleop_gateway import (
     ARM_INPUT_PATH, INPUT_PATH, POSE_PATH, TOUCHSCREEN_PATH, MobileGateway, MobileInput, mobile_arm_status,
 )
@@ -60,6 +60,8 @@ def main():
     parser.add_argument("--pi", default="eric@rpi", help="SSH destination")
     parser.add_argument("--no-camera", action="store_true", help="Skip both Pi camera startup checks")
     parser.add_argument("--camera-device", help="Pi USB camera device (default: detect Innomaker, then /dev/video0)")
+    parser.add_argument("--camera-profile", choices=CAMERA_PROFILES, default="control",
+                        help="Video bandwidth profile (default: %(default)s, 640x480 at 15 fps per camera)")
     parser.add_argument("--speed", type=float, help="Motion scale (default: 0.1 for --pi-sim, 1 otherwise)")
     parser.add_argument("--listen", help="Override the automatically selected LAN IPv4 address")
     parser.add_argument("--input-port", type=int, default=18744, help="Phone WebSocket port (default %(default)s)")
@@ -122,9 +124,9 @@ def main():
                 cameras = (("Arm camera", ensure_arm_camera, (args.pi, args.camera_device)),
                            ("Raspberry Pi camera", ensure_rpi_camera, (args.pi,)))
                 for name, ensure_camera, camera_args in cameras:
-                    print(f"Checking {name} on {args.pi}...", flush=True)
+                    print(f"Checking {name} on {args.pi} ({args.camera_profile} video)...", flush=True)
                     try:
-                        camera_url = ensure_camera(*camera_args)
+                        camera_url = ensure_camera(*camera_args, profile=args.camera_profile)
                     except (OSError, RuntimeError, SubprocessError, ValueError) as exc:
                         print(f"{name} unavailable. {exc}", file=sys.stderr, flush=True)
                     else:

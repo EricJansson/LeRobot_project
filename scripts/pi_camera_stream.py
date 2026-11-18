@@ -11,8 +11,7 @@ from time import monotonic
 FRAME_TIMEOUT = 2
 MAX_FRAME_BYTES = 4 * 1024 * 1024
 BOUNDARY = "lerobot-rpi-camera"
-SIZE = (1296, 972)
-FPS = 45
+SENSOR_SIZE = (1296, 972)
 
 
 class LatestFrame(BufferedIOBase):
@@ -103,7 +102,9 @@ def main():
     from picamera2.encoders import JpegEncoder, MJPEGEncoder
     from picamera2.outputs import FileOutput
 
-    host, port = sys.argv[1:]
+    host, port, width, height, fps = sys.argv[1:]
+    size = (int(width), int(height))
+    fps = int(fps)
     cameras = Picamera2.global_camera_info()
     # Picamera2 uses this ID convention to identify USB cameras in its ordered list.
     camera_index = next((index for index, info in enumerate(cameras) if "/usb" not in info["Id"]), None)
@@ -120,14 +121,14 @@ def main():
         encoder = JpegEncoder()
         pixel_format = "XBGR8888"
     else:
-        encoder.framerate = FPS
+        encoder.framerate = fps
 
     frames = LatestFrame()
     with CameraServer((host, int(port)), frames) as server, Picamera2(camera_index) as camera:
         config = camera.create_video_configuration(
-            main={"size": SIZE, "format": pixel_format},
-            sensor={"output_size": SIZE, "bit_depth": 10},
-            controls={"FrameRate": FPS},
+            main={"size": size, "format": pixel_format},
+            sensor={"output_size": SENSOR_SIZE, "bit_depth": 10},
+            controls={"FrameRate": fps},
             display=None,
         )
         camera.start_recording(encoder, FileOutput(frames), config=config)

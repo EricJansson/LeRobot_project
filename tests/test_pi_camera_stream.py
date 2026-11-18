@@ -5,6 +5,8 @@ from threading import Thread
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock
 
+import pytest
+
 from scripts import mobile_arm_camera, pi_camera_stream
 
 
@@ -45,7 +47,8 @@ def part(boundary, jpeg):
             + jpeg + b"\r\n")
 
 
-def test_camera_module_uses_csi_and_balanced_capture_configuration(monkeypatch):
+@pytest.mark.parametrize("size,fps", [((640, 480), 15), ((1296, 972), 45)])
+def test_camera_module_uses_csi_and_requested_capture_configuration(monkeypatch, size, fps):
     camera_class = MagicMock()
     camera_class.global_camera_info.return_value = [{"Id": "/sys/usb/innomaker"}, {"Id": "/base/i2c/imx219"}]
     camera = camera_class.return_value.__enter__.return_value
@@ -55,18 +58,18 @@ def test_camera_module_uses_csi_and_balanced_capture_configuration(monkeypatch):
     monkeypatch.setitem(sys.modules, "picamera2.outputs", SimpleNamespace(FileOutput=lambda frames: frames))
     server_class = MagicMock()
     monkeypatch.setattr(pi_camera_stream, "CameraServer", server_class)
-    monkeypatch.setattr(sys, "argv", ["pi_camera_stream.py", "192.168.0.190", "8081"])
+    monkeypatch.setattr(sys, "argv", ["pi_camera_stream.py", "192.168.0.190", "8081", *map(str, (*size, fps))])
 
     pi_camera_stream.main()
 
     camera_class.assert_called_once_with(1)
     camera.create_video_configuration.assert_called_once_with(
-        main={"size": (1296, 972), "format": "YUV420"},
+        main={"size": size, "format": "YUV420"},
         sensor={"output_size": (1296, 972), "bit_depth": 10},
-        controls={"FrameRate": 45},
+        controls={"FrameRate": fps},
         display=None,
     )
-    assert encoder.framerate == 45
+    assert encoder.framerate == fps
     address, frames = server_class.call_args.args
     assert address == ("192.168.0.190", 8081)
     camera.start_recording.assert_called_once_with(encoder, frames, config=camera.create_video_configuration.return_value)
