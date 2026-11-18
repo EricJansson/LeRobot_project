@@ -48,9 +48,11 @@ def test_launcher_defaults_to_the_private_route_address(monkeypatch, route_ip, e
     (["--real-arm"], "Observe only", "Unavailable", 1.),
     (["--speed", "0.1"], "Observe only", "Unavailable", .1),
     (["--dry-run"], "Local simulation", "Holding", 1.),
+    (["--dry-run", "--no-camera"], "Local simulation", "Holding", 1.),
     (["--pi-sim"], "Pi simulation", "Holding", .1),
+    (["--pi-sim", "--no-camera"], "Pi simulation", "Holding", .1),
 ])
-def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, flags, mode, arm_status, speed):
+def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, capsys, flags, mode, arm_status, speed):
     status = {"mode": mode, "connection": "Connected", "state": "Holding", "control_state": "Holding",
               "measured": [1., 2., 3., 4., 5., 0.], "xyz_m": [.1, -.2, .3], "feedback_hz": 50.}
     gateway = MagicMock(address="127.0.0.1", port=18744)
@@ -61,6 +63,7 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, flag
     tunnel = SimpleNamespace(connect=Mock())
     open_tunnel = Mock(return_value=nullcontext(tunnel))
     deploy = Mock(return_value="test-fingerprint")
+    camera = Mock(return_value="http://192.168.0.190:8080/stream?extra_headers=1")
     local = Mock(return_value=Mock())
     loop = Mock(return_value=SimpleNamespace(status=status, run=lambda: None, error=None))
     monkeypatch.setattr(sys, "argv", ["mobile-teleop", "--listen", "127.0.0.1", *flags])
@@ -72,6 +75,7 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, flag
     monkeypatch.setattr(launcher, "Worker", lambda *args: nullcontext(None))
     monkeypatch.setattr(launcher, "local_simulated_link", local)
     monkeypatch.setattr(launcher, "ensure_installed", deploy)
+    monkeypatch.setattr(launcher, "ensure_arm_camera", camera)
     monkeypatch.setattr(launcher, "PiTunnel", open_tunnel)
     monkeypatch.setattr(launcher, "ControlLoop", loop)
 
@@ -81,7 +85,7 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, flag
     assert open_gateway.call_args.kwargs["allow_legacy_input"] == (mode == "Local simulation")
     if mode != "Local simulation":
         deploy.assert_called_once_with("eric@rpi")
-        open_tunnel.assert_called_once_with("eric@rpi", flags == ["--pi-sim"], fingerprint="test-fingerprint")
+        open_tunnel.assert_called_once_with("eric@rpi", "--pi-sim" in flags, fingerprint="test-fingerprint")
         assert loop.call_args.args[1] is tunnel.connect
         assert not loop.call_args.kwargs["allow_limit_recovery"]
         assert loop.call_args.kwargs["on_link_lost"] == loop.call_args.args[2].end
@@ -90,11 +94,44 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, flag
         deploy.assert_not_called()
         open_tunnel.assert_not_called()
         assert loop.call_args.args[1] is local.return_value
+    if "--no-camera" not in flags:
+        camera.assert_called_once_with("eric@rpi", "/dev/video0")
+        assert camera.return_value in capsys.readouterr().out
+    else:
+        camera.assert_not_called()
     dashboard.publish.assert_called_once_with(
         {"shoulder_pan": 1., "shoulder_lift": 2., "elbow_flex": 3., "wrist_flex": 4., "wrist_roll": 5.},
         0., {"x": .1, "y": -.2, "z": .3}, False, gamepad=None,
         remote={**status, **phone, "arm_status": arm_status},
     )
+
+
+@pytest.mark.parametrize("camera_flags", [[], ["--no-camera"]])
+def test_input_only_camera_failure_keeps_the_launcher_running(monkeypatch, capsys, camera_flags):
+    monkeypatch.setattr(sys, "argv", ["mobile-teleop", "--input-only", "--pi", "eric@192.168.0.190", *camera_flags])
+    monkeypatch.setattr(launcher, "load_phone_token", lambda _: "mobile-test-token")
+    monkeypatch.setattr(launcher, "load_key_state", lambda: lambda _: -1)
+    monkeypatch.setattr(launcher, "MobileGateway", lambda *args, **kwargs: nullcontext(MagicMock()))
+    monkeypatch.setattr(launcher, "WebDashboard", lambda *args, **kwargs: nullcontext(MagicMock()))
+    worker = Mock()
+    deploy = Mock()
+    camera = Mock(side_effect=RuntimeError("No video"))
+    monkeypatch.setattr(launcher, "Worker", worker)
+    monkeypatch.setattr(launcher, "ensure_installed", deploy)
+    monkeypatch.setattr(launcher, "ensure_arm_camera", camera)
+
+    launcher.main()
+
+    worker.assert_not_called()
+    deploy.assert_not_called()
+    output = capsys.readouterr()
+    if camera_flags:
+        camera.assert_not_called()
+        assert not output.err
+    else:
+        camera.assert_called_once_with("eric@192.168.0.190", "/dev/video0")
+        assert "Arm camera unavailable. No video" in output.err
+    assert "Input only dashboard" in output.out
 
 
 @pytest.mark.parametrize("flags", [[], ["--real-arm"]])

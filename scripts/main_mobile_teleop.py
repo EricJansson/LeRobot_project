@@ -2,10 +2,12 @@
 
 import argparse
 from contextlib import ExitStack
-from ipaddress import IPv4Address, IPv4Network
+from ipaddress import IPv4Address
 from pathlib import Path
 import re
 import socket
+from subprocess import SubprocessError
+import sys
 from threading import Event, Thread
 
 from robot_program.remote_ik_control import ControlLoop
@@ -14,6 +16,7 @@ from scripts.main_teleop_remote_ik import (
     DEFAULT_WSL_PYTHON, TELEOP_ERRORS, VK_ESCAPE, PiTunnel, Worker, load_key_state, local_simulated_link,
     publish_remote_dashboard,
 )
+from scripts.mobile_arm_camera import LAN_NETWORKS, ensure_arm_camera
 from scripts.mobile_teleop_gateway import (
     ARM_INPUT_PATH, INPUT_PATH, POSE_PATH, TOUCHSCREEN_PATH, MobileGateway, MobileInput, mobile_arm_status,
 )
@@ -22,7 +25,6 @@ from scripts.remote_ik_deploy import ensure_installed
 
 TOKEN_PATH = Path(__file__).resolve().parents[1] / "mobile-teleop.token"
 LOOPBACK = "127.0.0.1"
-LAN_NETWORKS = tuple(IPv4Network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 
 
 def load_phone_token(path):
@@ -56,6 +58,9 @@ def main():
     modes.add_argument("--pi-sim", action="store_true", help="Use the Pi's simulated motor bus over SSH")
     modes.add_argument("--real-arm", action="store_true", help="Connect to the physical arm on the Pi (default)")
     parser.add_argument("--pi", default="eric@rpi", help="SSH destination")
+    parser.add_argument("--no-camera", action="store_true", help="Skip Pi arm camera startup and verification")
+    parser.add_argument("--camera-device", default="/dev/video0",
+                        help="Pi V4L2 camera device (default %(default)s)")
     parser.add_argument("--speed", type=float, help="Motion scale (default: 0.1 for --pi-sim, 1 otherwise)")
     parser.add_argument("--listen", help="Override the automatically selected LAN IPv4 address")
     parser.add_argument("--input-port", type=int, default=18744, help="Phone WebSocket port (default %(default)s)")
@@ -114,6 +119,16 @@ def main():
                 control = ControlLoop(worker, connect, phone, stop, speed, mode, input_name="phone",
                                       allow_limit_recovery=not uses_pi,
                                       on_link_lost=phone.end if uses_pi else None)
+            if not args.no_camera:
+                print(f"Checking arm camera on {args.pi}...", flush=True)
+                try:
+                    camera_url = ensure_arm_camera(args.pi, args.camera_device)
+                except (OSError, RuntimeError, SubprocessError, ValueError) as exc:
+                    print(f"Arm camera unavailable. {exc}", file=sys.stderr, flush=True)
+                else:
+                    print(f"Arm camera is live. Set Connection settings > Arm camera URL to\n  {camera_url}",
+                          flush=True)
+            if control is not None:
                 thread = Thread(target=control.run, daemon=True)
                 thread.start()
                 stack.callback(thread.join, 2)

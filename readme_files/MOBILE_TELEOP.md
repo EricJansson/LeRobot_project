@@ -9,6 +9,19 @@ The mobile launcher uses PC-side WSL2 IK. Running it without flags selects `--re
 
 The dashboard follows the phone app's current screen. **ArUco control** opens **ArUco pose**. **Touchscreen control** opens **Phone arm input** with XYZ, roll, pitch and gripper intent. Returning to the app menu shows **Waiting for phone**. In simulation, **Simulated arm** stays visible across screen changes. Open its **Diagnostics** to see the IK candidate, last sent motor target, and feedback timings.
 
+## Innomaker arm camera
+
+With `ustreamer` installed on the Pi and the phone on the same trusted LAN, the launcher automatically starts or reuses the camera in every mode. Windows checks that the camera is producing frames and prints the direct Pi URL for **Connection settings → Arm camera URL**. Camera startup failures are reported in the terminal and teleop continues. The launcher uses the Pi's SSH-side private IPv4 address, port `8080`, and `/dev/video0` at 1280×720 and 30 fps. Use `--camera-device /dev/v4l/by-id/<camera-path>` on a fresh camera service start if the USB device number changes. Use `--no-camera` to skip camera startup and verification for a launch. A camera service already running on the Pi continues to serve video until it is stopped.
+
+1. Stop any earlier FFmpeg capture of the same USB camera. From Windows PowerShell in this checkout with `.venv` active, test video without starting the IK worker or motor service. The command uses the default SSH destination `eric@rpi`. Pass `--pi user@host` if you normally connect using a different trusted SSH destination.
+
+   ```powershell
+   python -m scripts.main_mobile_teleop --input-only
+   ```
+
+2. Expect **Arm camera is live** and a URL ending in `/stream?extra_headers=1`. Save the printed URL on the debug phone app and open **Touchscreen control**. Exit and rerun the launcher to verify it reuses the live feed.
+3. Press Esc or Ctrl+C to exit the launcher. The camera remains reachable on the Pi while its user service is running. To stop the service the launcher started, run `systemctl --user stop lerobot-arm-camera.service` in the Pi shell. If startup fails, run `journalctl --user -u lerobot-arm-camera.service -n 20` there and report the launcher warning and relevant log lines.
+
 ## Pi simulation and supervised touchscreen motion
 
 Both Pi modes reuse the WSL2 worker, Pi motor service and SSH startup from the Windows gamepad workflow. With **Control enabled**, deflect a stick or press and hold a movement button. The left stick controls X/Y. The right stick controls Z vertically and wrist roll horizontally. The gripper buttons open or close the jaws incrementally, and the tilt buttons use the gamepad's wrist pitch axis. Lift your finger to end the corresponding input. ArUco reports telemetry only.
