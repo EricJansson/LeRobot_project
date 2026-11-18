@@ -16,7 +16,7 @@ from scripts.main_teleop_remote_ik import (
     DEFAULT_WSL_PYTHON, TELEOP_ERRORS, VK_ESCAPE, PiTunnel, Worker, load_key_state, local_simulated_link,
     publish_remote_dashboard,
 )
-from scripts.mobile_arm_camera import LAN_NETWORKS, ensure_arm_camera
+from scripts.mobile_arm_camera import LAN_NETWORKS, ensure_arm_camera, ensure_rpi_camera
 from scripts.mobile_teleop_gateway import (
     ARM_INPUT_PATH, INPUT_PATH, POSE_PATH, TOUCHSCREEN_PATH, MobileGateway, MobileInput, mobile_arm_status,
 )
@@ -58,9 +58,8 @@ def main():
     modes.add_argument("--pi-sim", action="store_true", help="Use the Pi's simulated motor bus over SSH")
     modes.add_argument("--real-arm", action="store_true", help="Connect to the physical arm on the Pi (default)")
     parser.add_argument("--pi", default="eric@rpi", help="SSH destination")
-    parser.add_argument("--no-camera", action="store_true", help="Skip Pi arm camera startup and verification")
-    parser.add_argument("--camera-device", default="/dev/video0",
-                        help="Pi V4L2 camera device (default %(default)s)")
+    parser.add_argument("--no-camera", action="store_true", help="Skip both Pi camera startup checks")
+    parser.add_argument("--camera-device", help="Pi USB camera device (default: detect Innomaker, then /dev/video0)")
     parser.add_argument("--speed", type=float, help="Motion scale (default: 0.1 for --pi-sim, 1 otherwise)")
     parser.add_argument("--listen", help="Override the automatically selected LAN IPv4 address")
     parser.add_argument("--input-port", type=int, default=18744, help="Phone WebSocket port (default %(default)s)")
@@ -120,14 +119,17 @@ def main():
                                       allow_limit_recovery=not uses_pi,
                                       on_link_lost=phone.end if uses_pi else None)
             if not args.no_camera:
-                print(f"Checking arm camera on {args.pi}...", flush=True)
-                try:
-                    camera_url = ensure_arm_camera(args.pi, args.camera_device)
-                except (OSError, RuntimeError, SubprocessError, ValueError) as exc:
-                    print(f"Arm camera unavailable. {exc}", file=sys.stderr, flush=True)
-                else:
-                    print(f"Arm camera is live. Set Connection settings > Arm camera URL to\n  {camera_url}",
-                          flush=True)
+                cameras = (("Arm camera", ensure_arm_camera, (args.pi, args.camera_device)),
+                           ("Raspberry Pi camera", ensure_rpi_camera, (args.pi,)))
+                for name, ensure_camera, camera_args in cameras:
+                    print(f"Checking {name} on {args.pi}...", flush=True)
+                    try:
+                        camera_url = ensure_camera(*camera_args)
+                    except (OSError, RuntimeError, SubprocessError, ValueError) as exc:
+                        print(f"{name} unavailable. {exc}", file=sys.stderr, flush=True)
+                    else:
+                        print(f"{name} is live. Set Connection settings > {name} URL to\n  {camera_url}",
+                              flush=True)
             if control is not None:
                 thread = Thread(target=control.run, daemon=True)
                 thread.start()

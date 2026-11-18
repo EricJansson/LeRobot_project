@@ -64,6 +64,7 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, caps
     open_tunnel = Mock(return_value=nullcontext(tunnel))
     deploy = Mock(return_value="test-fingerprint")
     camera = Mock(return_value="http://192.168.0.190:8080/stream?extra_headers=1")
+    rpi_camera = Mock(return_value="http://192.168.0.190:8081/stream")
     local = Mock(return_value=Mock())
     loop = Mock(return_value=SimpleNamespace(status=status, run=lambda: None, error=None))
     monkeypatch.setattr(sys, "argv", ["mobile-teleop", "--listen", "127.0.0.1", *flags])
@@ -76,6 +77,7 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, caps
     monkeypatch.setattr(launcher, "local_simulated_link", local)
     monkeypatch.setattr(launcher, "ensure_installed", deploy)
     monkeypatch.setattr(launcher, "ensure_arm_camera", camera)
+    monkeypatch.setattr(launcher, "ensure_rpi_camera", rpi_camera)
     monkeypatch.setattr(launcher, "PiTunnel", open_tunnel)
     monkeypatch.setattr(launcher, "ControlLoop", loop)
 
@@ -95,10 +97,14 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, caps
         open_tunnel.assert_not_called()
         assert loop.call_args.args[1] is local.return_value
     if "--no-camera" not in flags:
-        camera.assert_called_once_with("eric@rpi", "/dev/video0")
-        assert camera.return_value in capsys.readouterr().out
+        camera.assert_called_once_with("eric@rpi", None)
+        rpi_camera.assert_called_once_with("eric@rpi")
+        output = capsys.readouterr().out
+        assert camera.return_value in output
+        assert rpi_camera.return_value in output
     else:
         camera.assert_not_called()
+        rpi_camera.assert_not_called()
     dashboard.publish.assert_called_once_with(
         {"shoulder_pan": 1., "shoulder_lift": 2., "elbow_flex": 3., "wrist_flex": 4., "wrist_roll": 5.},
         0., {"x": .1, "y": -.2, "z": .3}, False, gamepad=None,
@@ -106,8 +112,9 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, caps
     )
 
 
-@pytest.mark.parametrize("camera_flags", [[], ["--no-camera"]])
-def test_input_only_camera_failure_keeps_the_launcher_running(monkeypatch, capsys, camera_flags):
+@pytest.mark.parametrize("camera_flags,failed_camera", [([], "Arm camera"), ([], "Raspberry Pi camera"),
+                                                       (["--no-camera"], None)])
+def test_input_only_camera_failure_keeps_the_launcher_running(monkeypatch, capsys, camera_flags, failed_camera):
     monkeypatch.setattr(sys, "argv", ["mobile-teleop", "--input-only", "--pi", "eric@192.168.0.190", *camera_flags])
     monkeypatch.setattr(launcher, "load_phone_token", lambda _: "mobile-test-token")
     monkeypatch.setattr(launcher, "load_key_state", lambda: lambda _: -1)
@@ -115,10 +122,15 @@ def test_input_only_camera_failure_keeps_the_launcher_running(monkeypatch, capsy
     monkeypatch.setattr(launcher, "WebDashboard", lambda *args, **kwargs: nullcontext(MagicMock()))
     worker = Mock()
     deploy = Mock()
-    camera = Mock(side_effect=RuntimeError("No video"))
+    camera = Mock(return_value="http://192.168.0.190:8080/stream?extra_headers=1")
+    rpi_camera = Mock(return_value="http://192.168.0.190:8081/stream")
+    cameras = {"Arm camera": camera, "Raspberry Pi camera": rpi_camera}
+    if failed_camera:
+        cameras[failed_camera].side_effect = RuntimeError("No video")
     monkeypatch.setattr(launcher, "Worker", worker)
     monkeypatch.setattr(launcher, "ensure_installed", deploy)
     monkeypatch.setattr(launcher, "ensure_arm_camera", camera)
+    monkeypatch.setattr(launcher, "ensure_rpi_camera", rpi_camera)
 
     launcher.main()
 
@@ -127,10 +139,14 @@ def test_input_only_camera_failure_keeps_the_launcher_running(monkeypatch, capsy
     output = capsys.readouterr()
     if camera_flags:
         camera.assert_not_called()
+        rpi_camera.assert_not_called()
         assert not output.err
     else:
-        camera.assert_called_once_with("eric@192.168.0.190", "/dev/video0")
-        assert "Arm camera unavailable. No video" in output.err
+        camera.assert_called_once_with("eric@192.168.0.190", None)
+        rpi_camera.assert_called_once_with("eric@192.168.0.190")
+        assert f"{failed_camera} unavailable. No video" in output.err
+        for name, start in cameras.items():
+            assert (start.return_value in output.out) == (name != failed_camera)
     assert "Input only dashboard" in output.out
 
 

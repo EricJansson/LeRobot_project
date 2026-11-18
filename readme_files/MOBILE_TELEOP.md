@@ -11,7 +11,7 @@ The dashboard follows the phone app's current screen. **ArUco control** opens **
 
 ## Innomaker arm camera
 
-With `ustreamer` installed on the Pi and the phone on the same trusted LAN, the launcher automatically starts or reuses the camera in every mode. Windows checks that the camera is producing frames and prints the direct Pi URL for **Connection settings → Arm camera URL**. Camera startup failures are reported in the terminal and teleop continues. The launcher uses the Pi's SSH-side private IPv4 address, port `8080`, and `/dev/video0` at 1280×720 and 30 fps. Use `--camera-device /dev/v4l/by-id/<camera-path>` on a fresh camera service start if the USB device number changes. Use `--no-camera` to skip camera startup and verification for a launch. A camera service already running on the Pi continues to serve video until it is stopped.
+With `ustreamer` installed on the Pi and the phone on the same trusted LAN, the launcher automatically starts or reuses the camera in every mode. Windows checks that the camera is producing frames and prints the direct Pi URL for **Connection settings → Arm camera URL**. Camera startup failures are reported in the terminal and teleop continues. The launcher uses the Pi's SSH-side private IPv4 address and port `8080` at 1280×720 and 30 fps. It looks for Innomaker's stable USB capture path, with `/dev/video0` as a fallback. Use `--camera-device <path>` to override detection on a fresh camera service start. Use `--no-camera` to skip startup and verification for both camera feeds. A camera service already running on the Pi continues to serve video until it is stopped.
 
 1. Stop any earlier FFmpeg capture of the same USB camera. From Windows PowerShell in this checkout with `.venv` active, test video without starting the IK worker or motor service. The command uses the default SSH destination `eric@rpi`. Pass `--pi user@host` if you normally connect using a different trusted SSH destination.
 
@@ -21,6 +21,14 @@ With `ustreamer` installed on the Pi and the phone on the same trusted LAN, the 
 
 2. Expect **Arm camera is live** and a URL ending in `/stream?extra_headers=1`. Save the printed URL on the debug phone app and open **Touchscreen control**. Exit and rerun the launcher to verify it reuses the live feed.
 3. Press Esc or Ctrl+C to exit the launcher. The camera remains reachable on the Pi while its user service is running. To stop the service the launcher started, run `systemctl --user stop lerobot-arm-camera.service` in the Pi shell. If startup fails, run `journalctl --user -u lerobot-arm-camera.service -n 20` there and report the launcher warning and relevant log lines.
+
+## Raspberry Pi camera module
+
+The same launcher starts the CSI camera as a separate Picamera2 service on TCP port `8081`. It requests 1296×972 capture at 45 fps and serves MJPEG directly to the phone on the trusted LAN. Devices that can reach the port can view the feed.
+
+1. In the Pi shell, install Picamera2 if needed with `sudo apt install --no-install-recommends python3-picamera2`. Stop any manual `rpicam-vid` capture so the launcher can open the camera module. [Raspberry Pi setup guide](https://www.raspberrypi.com/documentation/accessories/camera-software.html#use-libcamera-from-python-with-picamera2)
+2. In Windows PowerShell with `.venv` active, run `python -m scripts.main_mobile_teleop --input-only`. Expect **Raspberry Pi camera is live** and a URL ending in `:8081/stream`. In the debug phone app, save it under **Connection settings → Raspberry Pi camera URL**. With both URLs saved, **Touchscreen control** shows Innomaker above the camera module.
+3. In the Pi shell, run `systemctl --user stop lerobot-rpi-camera.service` to stop the module feed. The lower preview should clear while Innomaker continues. Exit the Windows launcher with Esc or Ctrl+C and rerun it to restore the feed. For a startup failure, report the launcher warning and `journalctl --user -u lerobot-rpi-camera.service -n 20` output from the Pi.
 
 ## Pi simulation and supervised touchscreen motion
 
