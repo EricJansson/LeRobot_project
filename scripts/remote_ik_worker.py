@@ -46,14 +46,65 @@ class RecoveryCandidate:
     xyz_m: np.ndarray
 
 
+def workspace_path_clear(solver, target, starts, workspace_m):
+    """Sample modeled tool FK along each joint segment, at <= 1 degree intervals.
+
+    This is a tool-box check, not link collision checking or a hardware clearance proof.
+    """
+    if workspace_m is None:
+        return True
+    if (not isinstance(workspace_m, dict) or set(workspace_m) != {"min", "max"}
+            or not finite_vector(workspace_m["min"], 3) or not finite_vector(workspace_m["max"], 3)):
+        raise ValueError("Expected finite workspace min/max XYZ")
+    low, high = np.asarray(workspace_m["min"]), np.asarray(workspace_m["max"])
+    if np.any(low >= high):
+        raise ValueError("Workspace minimum must be less than maximum")
+    target = np.asarray(target[:5], dtype=float)
+    if target.shape != (5,) or not np.isfinite(target).all():
+        return False
+    for start in starts:
+        start = np.asarray(start[:5], dtype=float)
+        if start.shape != (5,) or not np.isfinite(start).all():
+            return False
+        intervals = max(1, int(np.ceil(np.max(np.abs(target - start)))))
+        # Validated joint limits bound this work; reject implausible inputs before allocating.
+        if intervals > 3600:
+            return False
+        for fraction in np.linspace(0., 1., intervals + 1):
+            pose = solver.kinematics.forward_kinematics(start + fraction * (target - start))
+            if pose.shape != (4, 4) or not np.isfinite(pose).all():
+                return False
+            xyz = pose[:3, 3]
+            if np.any(xyz < low) or np.any(xyz > high):
+                return False
+    return True
+
+
+def workspace_motion_clear(solver, target, starts, workspace_m, pose, delta):
+    if workspace_m is None:
+        return True
+    movement = solver.kinematics.forward_kinematics(np.asarray(target[:5]))[:3, 3] - pose[:3, 3]
+    requested = np.asarray(delta[:3])
+    length = np.linalg.norm(requested)
+    # IK tolerance must not turn a short absolute-target step into a faster or
+    # overshooting command. Approximate paths must approach the requested step.
+    if (np.linalg.norm(movement) > length + TRANSLATION_EPS_M
+            or np.linalg.norm(movement - requested) > length + TRANSLATION_EPS_M):
+        return False
+    return workspace_path_clear(solver, target, starts, workspace_m)
+
+
 def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_xyz_m=None,
-                 joint_step_limits=None, recovery_step_m=.001, correction=False):
+                 joint_step_limits=None, recovery_step_m=.001, correction=False, workspace_m=None):
     """Bounded Cartesian search; no pending input is accumulated on rejection.
 
     Recovery from a measured stop is explicitly separated from operator progress.
     Its translation is bounded before applying the same joint-rate feasibility test.
     """
     reference = measured if sent is None else sent
+    starts = (measured, reference)
+    if workspace_m is not None and not workspace_path_clear(solver, reference, starts, workspace_m):
+        return {"target": None, "reason": "Measured or issued tool path is outside the robot workspace"}
     joints = np.asarray(reference[:5], dtype=float)
     pose = solver.kinematics.forward_kinematics(joints).copy()
     measured_pose = (pose.copy() if sent is None else
@@ -113,6 +164,9 @@ def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_
             response["reason"] = "Cartesian increment exceeds Pi rate allowance"
             continue
         achieved = result.pose.copy()
+        if not workspace_motion_clear(solver, result.joints_deg, starts, workspace_m, pose, delta):
+            response["reason"] = "Tool path exceeds workspace or bounded Cartesian step"
+            continue
         translation = np.asarray(delta[:3], dtype=float)
         if (joint_step_limits is not None and not correction and np.linalg.norm(translation) > 0
                 and (achieved[:3, 3] - pose[:3, 3]) @ translation / np.linalg.norm(translation)
@@ -156,7 +210,8 @@ def solve_intent(solver, measured, delta, gripper_limits, *, sent=None, desired_
     # and stationary correction keep their strict Cartesian contract.
     if (joint_step_limits is not None and not correction and any(delta[:3])
             and hasattr(solver, "limits_deg")):
-        adapted = adapt_translation(solver, joints, pose, delta, jaw, joint_step_limits, response)
+        adapted = adapt_translation(solver, joints, pose, delta, jaw, joint_step_limits, response,
+                                    workspace_m=workspace_m, starts=starts)
         if adapted["target"] is not None:
             translation = np.asarray(delta[:3])
             if (precise_candidate is None or
@@ -201,7 +256,7 @@ def _bounded_candidate(solver, result, joints, pose, direction, length, steps, s
     return MotionCandidate(score, q.copy(), achieved.copy(), stage != "pitch", bound_deg)
 
 
-def adapt_translation(solver, joints, pose, delta, jaw, steps, response):
+def adapt_translation(solver, joints, pose, delta, jaw, steps, response, *, workspace_m=None, starts=None):
     """Bounded position-only search, then closest useful nearby translation."""
     direction = np.asarray(delta[:3], dtype=float)
     length = float(np.linalg.norm(direction))
@@ -224,6 +279,8 @@ def adapt_translation(solver, joints, pose, delta, jaw, steps, response):
             attempts += 1
             candidate = _bounded_candidate(solver, result, joints, pose, direction, length, steps, stage, bound_deg)
             if candidate is None:
+                continue
+            if not workspace_motion_clear(solver, candidate.joints_deg, starts or (joints,), workspace_m, pose, delta):
                 continue
             if best is None or candidate.score < best.score:
                 best = candidate
@@ -377,7 +434,7 @@ def main():
                 raise ValueError("Expected six positive joint step limits")
             reply(solve_intent(solver, measured, delta, limits[5], sent=sent, desired_xyz_m=desired_xyz_m,
                                joint_step_limits=steps, recovery_step_m=request.get("recovery_step_m", .001),
-                               correction=request.get("correction", False)))
+                               correction=request.get("correction", False), workspace_m=request.get("workspace_m")))
 
 
 if __name__ == "__main__":

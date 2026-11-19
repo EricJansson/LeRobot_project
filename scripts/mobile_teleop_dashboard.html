@@ -34,6 +34,12 @@
     .references { margin-top: 8px; }
     .references div { grid-template-columns: minmax(0, 122px) minmax(0, 1fr); gap: 8px; }
     .references dd { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+    .workspace-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 16px 0; }
+    .workspace-fields label { display: flex; flex-direction: column; gap: 6px; }
+    .workspace-fields input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; color: inherit; background: #202a35; border: 1px solid #59616b; border-radius: 6px; }
+    #workspace-form button { font: inherit; padding: 8px 14px; cursor: pointer; }
+    .alignment-table tr[data-outside="true"] { color: #f0bf78; }
+    #aruco-reason[data-outside="true"] { color: #f0bf78; }
     @media (max-width: 639px) {
       .arm-readings { grid-template-columns: minmax(0, 1fr); }
     }
@@ -49,6 +55,26 @@
       <p id="arm-mode" hidden></p>
     </header>
     <p id="phone-waiting" class="muted" role="status">Waiting for phone</p>
+    <details id="workspace-editor" class="panel">
+      <summary>Robot workspace</summary>
+      <p class="muted">Tool bounds in centimeters: +X forward, +Y left, +Z up. Height is above the table. These bounds do not check clearance for the elbow or other links.</p>
+      <form id="workspace-form">
+        <div class="workspace-fields">
+          <label>Minimum X (cm)<input name="x_min_cm" type="number" step="any" value="10" required></label>
+          <label>Maximum X (cm)<input name="x_max_cm" type="number" step="any" required></label>
+          <label>Minimum Y (cm)<input name="y_min_cm" type="number" step="any" required></label>
+          <label>Maximum Y (cm)<input name="y_max_cm" type="number" step="any" required></label>
+          <label>Minimum height (cm)<input name="height_min_cm" type="number" step="any" min="0" value="5" required></label>
+          <label>Maximum height (cm)<input name="height_max_cm" type="number" step="any" required></label>
+          <label>Table Z in robot frame (cm)<input name="table_z_cm" type="number" step="any" required></label>
+        </div>
+        <p class="muted">Table Z locates the tabletop in robot coordinates. Height adds clearance above it.</p>
+        <p id="workspace-height-summary" role="status"></p>
+        <p><label><input id="workspace-reviewed" type="checkbox" required> I have reviewed all seven values for this setup.</label></p>
+        <button type="submit" disabled>Save robot workspace</button>
+        <p id="workspace-message" role="status">Loading robot workspace…</p>
+      </form>
+    </details>
     <section id="phone-input" class="panel" aria-labelledby="input-heading" hidden>
       <div class="section-top">
         <h2 id="input-heading">Phone XYZ input</h2>
@@ -83,6 +109,20 @@
         <thead><tr><th id="pose-position-label" scope="col">Position (cm)</th><th scope="col">X</th><th scope="col">Y</th><th scope="col">Z</th></tr></thead>
         <tbody><tr id="pose-xyz"><th scope="row">Measured</th><td>—</td><td>—</td><td>—</td></tr></tbody>
       </table>
+      <dl class="rows references">
+        <div><dt>Mapped target (cm)</dt><dd id="aruco-target">—</dd></div>
+        <div><dt>Alignment distance</dt><dd id="aruco-alignment">—</dd></div>
+      </dl>
+      <table class="alignment-table" aria-label="ArUco alignment in robot centimeters">
+        <thead><tr><th scope="col">Axis</th><th scope="col">Arm (cm)</th><th scope="col">Target (cm)</th><th scope="col">Allowed (cm)</th><th scope="col">Marker adjustment (cm)</th></tr></thead>
+        <tbody>
+          <tr id="alignment-x"><th scope="row">X</th><td id="alignment-x-arm">—</td><td id="alignment-x-target">—</td><td id="alignment-x-bounds">—</td><td id="alignment-x-adjustment">—</td></tr>
+          <tr id="alignment-y"><th scope="row">Y</th><td id="alignment-y-arm">—</td><td id="alignment-y-target">—</td><td id="alignment-y-bounds">—</td><td id="alignment-y-adjustment">—</td></tr>
+          <tr id="alignment-z"><th scope="row">Z</th><td id="alignment-z-arm">—</td><td id="alignment-z-target">—</td><td id="alignment-z-bounds">—</td><td id="alignment-z-adjustment">—</td></tr>
+        </tbody>
+      </table>
+      <p id="alignment-help" class="muted">Adjust the marker toward the arm: +X forward, +Y left, +Z up. Values are robot distances; marker travel depends on calibration.</p>
+      <p id="aruco-reason" role="status"></p>
       <table class="pose-table" aria-label="Marker orientation in degrees">
         <thead><tr><th scope="col">Orientation (°)</th><th scope="col">Roll</th><th scope="col">Pitch</th><th scope="col">Yaw</th></tr></thead>
         <tbody><tr id="pose-rpy"><th scope="row">Measured</th><td>—</td><td>—</td><td>—</td></tr></tbody>
@@ -134,6 +174,58 @@
     const poseSection = byId('marker-pose');
     const poseRowLabels = poseSection.querySelectorAll('.pose-table tbody th');
     let markerPose;
+    const workspaceForm = byId('workspace-form');
+    let dashboardSession;
+    let loadedSession;
+    let workspaceLoaded = false;
+    let workspaceSaving = false;
+    function renderWorkspaceHeight() {
+      const values = ['table_z_cm', 'height_min_cm', 'height_max_cm'].map(name => {
+        const raw = String(workspaceForm.elements.namedItem(name).value);
+        return raw.trim() === '' ? NaN : Number(raw);
+      });
+      const [table, minimum, maximum] = values;
+      setText(byId('workspace-height-summary'), values.every(Number.isFinite)
+        ? `Allowed robot Z: ${(table + minimum).toFixed(1)} to ${(table + maximum).toFixed(1)} cm (table Z + height).`
+        : 'Complete Table Z and both height fields to see the allowed robot Z range.');
+    }
+    workspaceForm.addEventListener('input', renderWorkspaceHeight);
+    function renderWorkspace(data) {
+      if (workspaceLoaded || !data) return;
+      workspaceLoaded = true;
+      if (data.workspace) {
+        for (const [name, value] of Object.entries(data.workspace)) {
+          if (workspaceForm.elements.namedItem(name)) workspaceForm.elements.namedItem(name).value = value;
+        }
+      }
+      byId('workspace-editor').open = !data.workspace;
+      renderWorkspaceHeight();
+      setText(byId('workspace-message'), data.error || 'Saved locally. Changes pause ArUco control.');
+    }
+    workspaceForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = workspaceForm.querySelector('button');
+      workspaceSaving = true;
+      button.disabled = true;
+      try {
+        if (!dashboardSession || !workspaceForm.reportValidity()) throw new Error('Review all workspace values.');
+        const values = {version: 1};
+        for (const [name, value] of new FormData(workspaceForm)) values[name] = Number(value);
+        const response = await fetch('/api/robot-workspace', {
+          method: 'POST', headers: {'Content-Type': 'application/json', 'X-Dashboard-Session': dashboardSession},
+          body: JSON.stringify(values), signal: AbortSignal.timeout(3000)
+        });
+        if (!response.ok) throw new Error(await response.text());
+        await response.json();
+        byId('workspace-reviewed').checked = false;
+        setText(byId('workspace-message'), 'Workspace saved. Align the marker and enable control again.');
+      } catch (error) {
+        setText(byId('workspace-message'), error.message || 'Could not save workspace.');
+      } finally {
+        workspaceSaving = false;
+        button.disabled = !dashboardSession;
+      }
+    });
 
     function showValues(row, values, scale = 1, decimals = 1) {
       byId(row).querySelectorAll('td').forEach((cell, axis) => {
@@ -208,6 +300,40 @@
       setText(byId('accepted-xyz'), formatVector(feedback?.desired_xyz_m, 1000));
     }
 
+    function renderAlignment(control) {
+      const adjustment = control?.marker_adjustment_cm;
+      const outside = control?.tool_in_workspace === false;
+      const positive = ['forward', 'left', 'up'];
+      const negative = ['backward', 'right', 'down'];
+      ['x', 'y', 'z'].forEach((axis, index) => {
+        const arm = control?.measured_xyz_m?.[index];
+        const target = adjustment ? control?.target_xyz_m?.[index] : undefined;
+        const low = control?.workspace_m?.min?.[index];
+        const high = control?.workspace_m?.max?.[index];
+        setText(byId(`alignment-${axis}-arm`), formatReading(Number.isFinite(arm) ? arm * 100 : undefined));
+        setText(byId(`alignment-${axis}-target`), formatReading(Number.isFinite(target) ? target * 100 : undefined));
+        setText(byId(`alignment-${axis}-bounds`), Number.isFinite(low) && Number.isFinite(high)
+          ? `${(low * 100).toFixed(1)} to ${(high * 100).toFixed(1)}` : '—');
+        byId(`alignment-${axis}`).dataset.outside = Number.isFinite(arm) && Number.isFinite(low) && Number.isFinite(high)
+          && (arm < low || arm > high);
+        const delta = adjustment?.[index];
+        const matched = Number.isFinite(delta) && Math.abs(delta) < .05;
+        const direction = outside || control?.enabled ? '' : matched ? ' · matched' : ` · ${delta > 0 ? positive[index] : negative[index]}`;
+        setText(byId(`alignment-${axis}-adjustment`), Number.isFinite(delta)
+          ? `${matched ? '0.0' : `${delta > 0 ? '+' : ''}${delta.toFixed(1)}`}${direction}` : '—');
+      });
+      setText(byId('alignment-help'), outside
+        ? 'Marker alignment is impossible while the arm is outside the robot workspace. Reposition the arm with touchscreen control or review the bounds.'
+        : control?.enabled ? (adjustment ? 'Arm is following the mapped marker target. Differences show following error in robot centimeters.'
+          : 'Following is paused until fresh marker tracking returns.')
+        : 'Adjust the marker toward the arm: +X forward, +Y left, +Z up. Values are robot distances; marker travel depends on calibration.');
+      byId('aruco-reason').dataset.outside = outside;
+      setText(byId('aruco-target'), formatVector(adjustment ? control?.target_xyz_m : null, 100));
+      setText(byId('aruco-alignment'), formatReading(control?.alignment_cm,
+        control?.enabled ? ' cm · following error' : ' cm · total must be at most 2 cm'));
+      setText(byId('aruco-reason'), control?.reason ?? '');
+    }
+
     function render(sample, offline = false) {
       const remote = offline ? {} : sample?.remote ?? {};
       renderConnectivity(offline ? 'Telemetry unavailable' : sample ? '' : 'Waiting for telemetry', 'Dashboard offline');
@@ -224,6 +350,8 @@
       poseSection.hidden = !showPose;
       if (showInput) renderPhoneInput(remote.phone, showArm, remote.arm_status);
       if (showPose) renderPose(remote.marker_pose);
+      renderWorkspace(remote.robot_workspace);
+      renderAlignment(remote.aruco_control);
 
       if (!offline) {
         const physical = physicalModes.has(remote.mode);
@@ -242,10 +370,20 @@
       try {
         const response = await fetch('/api/telemetry', {cache: 'no-store', signal: AbortSignal.timeout(1000)});
         if (!response.ok) throw new Error('Telemetry unavailable');
+        const session = response.headers.get('X-Dashboard-Session');
+        if (loadedSession && session !== loadedSession) {
+          workspaceLoaded = false;
+          byId('workspace-reviewed').checked = false;
+        }
+        dashboardSession = session;
+        loadedSession = session;
+        workspaceForm.querySelector('button').disabled = workspaceSaving || !dashboardSession;
         const data = await response.json();
         const stale = data !== null && (!Number.isFinite(data?.age_s) || data.age_s < 0 || data.age_s > 1);
         render(data, stale);
       } catch {
+        dashboardSession = null;
+        workspaceForm.querySelector('button').disabled = true;
         render(null, true);
       } finally {
         setTimeout(poll, 75);

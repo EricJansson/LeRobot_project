@@ -1,6 +1,7 @@
 """Start and check the Pi cameras used by Phone Vision touchscreen control."""
 
 from contextlib import closing
+import hashlib
 from http.client import HTTPConnection, HTTPException
 from ipaddress import IPv4Address, IPv4Network
 import json
@@ -43,15 +44,21 @@ def _private_pi_address(pi):
     return str(address)
 
 
-def _ensure_camera_service(pi, unit, profile, existing_stream, start_command, *, data=None):
+def _ensure_camera_service(pi, unit, profile, existing_stream, start_command, *, data=None, stream_is_live=False,
+                           revision=None):
     marker = f"LEROBOT_CAMERA_PROFILE={profile}"
     reuse_manual_stream = "else exit 0; " if existing_stream else ""
+    revision_matches = (f'case " $environment " in *" LEROBOT_CAMERA_REVISION={revision} "*) exit 0;; esac '
+                        if revision else "exit 0")
+    reuse_matching = (f'case " $environment " in *" {marker} "*) {revision_matches};; esac; '
+                     if stream_is_live else "")
     # Serialize replacement of a launcher-managed unit. A manually served stream can be reused.
     _ssh(pi, 'set -eu; '
              f'exec 9>"${{XDG_RUNTIME_DIR:-/run/user/$(id -u)}}/{unit}.lock"; flock -x -w 5 9; '
-             f'if systemctl --user is-active --quiet {unit}; then '
+             f'if systemctl --user is-active --quiet {unit} || '
+             f'test "$(systemctl --user show -p ActiveState --value {unit} 2>/dev/null || true)" = activating; then '
              f'environment=$(systemctl --user show -p Environment --value {unit}); '
-             f'case " $environment " in *" {marker} "*) exit 0;; esac; '
+             f'{reuse_matching}'
              f'systemctl --user stop {unit}; '
              f'{reuse_manual_stream}fi; {start_command}', data=data)
 
@@ -96,6 +103,7 @@ def ensure_arm_camera(pi, device, profile="control"):
         'binary=$(command -v ustreamer) || { echo "Install ustreamer on the Pi first." >&2; exit 1; }; '
         f'{device_setup}systemd-run --user --collect --service-type=exec --unit={CAMERA_UNIT} '
         f'--setenv=LEROBOT_CAMERA_PROFILE={profile} --property=Nice=5 "$binary" {device_arg} {args}',
+        stream_is_live=status is True,
     )
 
     deadline = monotonic() + 5
@@ -127,24 +135,28 @@ def ensure_rpi_camera(pi, profile="control"):
     host = _private_pi_address(pi)
     width, height, fps = CAMERA_PROFILES[profile][1]
     source = Path(__file__).with_name("pi_camera_stream.py").read_bytes()
+    revision = hashlib.sha256(source).hexdigest()
+    live = _rpi_camera_is_live(host)
     _ensure_camera_service(
-        pi, RPI_CAMERA_UNIT, profile, _rpi_camera_is_live(host),
+        pi, RPI_CAMERA_UNIT, profile, live,
         '/usr/bin/python3 -c "import picamera2" || '
         '{ echo "Check python3-picamera2 is installed on the Pi." >&2; exit 1; }; '
         'dir="$HOME/.local/share/lerobot/mobile-camera"; mkdir -p -- "$dir"; '
         'tmp=$(mktemp "$dir/pi_camera_stream.XXXXXXXX"); trap \'rm -f -- "$tmp"\' EXIT; '
         'cat > "$tmp"; mv -f -- "$tmp" "$dir/pi_camera_stream.py"; '
         f"systemd-run --user --collect --service-type=exec --unit={RPI_CAMERA_UNIT} "
-        f'--setenv=LEROBOT_CAMERA_PROFILE={profile} --property=Nice=5 '
+        f'--setenv=LEROBOT_CAMERA_PROFILE={profile} --setenv=LEROBOT_CAMERA_REVISION={revision} '
+        '--property=Nice=5 --property=Restart=on-failure --property=RestartSec=2 --property=TimeoutStopSec=5 '
         f'/usr/bin/python3 "$dir/pi_camera_stream.py" {host} {RPI_CAMERA_PORT} {width} {height} {fps}',
-        data=source,
+        data=source, stream_is_live=live, revision=revision,
     )
 
     deadline = monotonic() + 5
     while not _rpi_camera_is_live(host):
         if monotonic() >= deadline:
             raise RuntimeError(f"No live frames at {host}:{RPI_CAMERA_PORT}. On the Pi, stop any manual CSI "
-                               f"capture and check journalctl --user -u {RPI_CAMERA_UNIT} -n 20.")
+                               f"capture and check journalctl _SYSTEMD_USER_UNIT={RPI_CAMERA_UNIT} -n 20 "
+                               "(or journalctl -u user@$(id -u).service -n 40).")
         sleep(.25)
 
     return f"http://{host}:{RPI_CAMERA_PORT}/stream"

@@ -47,6 +47,31 @@ def part(boundary, jpeg):
             + jpeg + b"\r\n")
 
 
+def test_capture_watchdog_allows_startup_and_fails_if_capture_stalls(monkeypatch):
+    now = 0.
+    monkeypatch.setattr(pi_camera_stream, "monotonic", lambda: now)
+    frames = pi_camera_stream.LatestFrame()
+    with pi_camera_stream.CameraServer(("127.0.0.1", 0), frames) as server:
+        now = pi_camera_stream.CAPTURE_STALL_TIMEOUT - .1
+        server.service_actions()
+        frames.write(b"\xff\xd8frame\xff\xd9")
+        now += 3.
+        assert not frames.is_live()  # HTTP health fails before the recovery deadline.
+        server.service_actions()
+        now += pi_camera_stream.CAPTURE_STALL_TIMEOUT
+        with pytest.raises(RuntimeError, match="no fresh frames"):
+            server.service_actions()
+
+
+def test_capture_watchdog_fails_if_first_jpeg_never_arrives(monkeypatch):
+    now = 0.
+    monkeypatch.setattr(pi_camera_stream, "monotonic", lambda: now)
+    with pi_camera_stream.CameraServer(("127.0.0.1", 0), pi_camera_stream.LatestFrame()) as server:
+        now = pi_camera_stream.CAPTURE_STALL_TIMEOUT
+        with pytest.raises(RuntimeError, match="no fresh frames"):
+            server.service_actions()
+
+
 @pytest.mark.parametrize("size,fps", [((640, 480), 15), ((1296, 972), 45)])
 def test_camera_module_uses_csi_and_requested_capture_configuration(monkeypatch, size, fps):
     camera_class = MagicMock()

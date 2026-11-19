@@ -1,6 +1,7 @@
 """Receive Android Cartesian intent and marker poses on Windows."""
 
 import asyncio
+import json
 from concurrent.futures import Future
 from contextlib import suppress
 from http import HTTPStatus
@@ -15,6 +16,8 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 from robot_program.remote_ik_control import LatestInput
+from robot_program.aruco_control import ArucoControl, CONTROL_HEADER, CONTROL_VERSION
+from robot_program.robot_workspace import WorkspaceStore
 from robot_program.remote_ik_protocol import OFFLINE_WATCHDOG
 
 
@@ -254,11 +257,12 @@ class MarkerPose:
 
 class MobileGateway:
     def __init__(self, host, port, feed, token, *, arm_status=lambda: "Monitoring only", release_progress=lambda: 0.,
-                 allow_legacy_input=True):
+                 allow_legacy_input=True, workspace=None):
         self.host, self.port = host, port
         self.feed = feed
         self.touchscreen = TouchscreenInput()
         self.marker_pose = MarkerPose()
+        self.aruco = ArucoControl(workspace if workspace is not None else WorkspaceStore())
         self.authorization = f"Bearer {token}".encode()
         self.arm_status = arm_status
         self.release_progress = release_progress
@@ -276,7 +280,8 @@ class MobileGateway:
         with self._session_lock:
             feed = self.touchscreen if self._phone_path == TOUCHSCREEN_PATH else self.feed
             return {"phone_mode": PHONE_MODES.get(self._phone_path), "phone": feed.telemetry(),
-                    "marker_pose": self.marker_pose.telemetry()}
+                    "marker_pose": self.marker_pose.telemetry(), "aruco_control": self.aruco.telemetry(),
+                    "robot_workspace": self.aruco.workspace.telemetry()}
 
     def _authorize(self, connection, request):
         if request.path not in PHONE_MODES or (request.path == INPUT_PATH and not self.allow_legacy_input):
@@ -291,6 +296,9 @@ class MobileGateway:
             units = request.headers.get_all(POSE_XYZ_UNITS_HEADER)
             if units and units not in ([XYZ_CM], [XYZ_NORMALIZED]):
                 return connection.respond(HTTPStatus.BAD_REQUEST, "Invalid marker pose XYZ units header\n")
+            controls = request.headers.get_all(CONTROL_HEADER)
+            if controls and controls != [CONTROL_VERSION]:
+                return connection.respond(HTTPStatus.BAD_REQUEST, "Invalid ArUco control header\n")
         if self.active:
             return connection.respond(HTTPStatus.CONFLICT, "Phone input already connected\n")
         return None
@@ -298,6 +306,9 @@ class MobileGateway:
     def _advertise_arm_controls(self, _connection, request, response):
         if request.path == ARM_INPUT_PATH and response.status_code == HTTPStatus.SWITCHING_PROTOCOLS:
             response.headers[ARM_RELEASE_HEADER] = "hold"
+        if (request.path == POSE_PATH and response.status_code == HTTPStatus.SWITCHING_PROTOCOLS
+                and request.headers.get(CONTROL_HEADER) == CONTROL_VERSION):
+            response.headers[CONTROL_HEADER] = CONTROL_VERSION
 
     async def _receive(self, connection):
         if self.active:
@@ -312,6 +323,8 @@ class MobileGateway:
                 feed = self.marker_pose
                 headers = connection.request.headers
                 feed.begin(headers.get(POSE_FRAME_HEADER, CAMERA_AXES), headers.get(POSE_XYZ_UNITS_HEADER, XYZ_CM))
+                self.aruco.begin(headers.get(POSE_FRAME_HEADER, CAMERA_AXES), headers.get(POSE_XYZ_UNITS_HEADER, XYZ_CM),
+                                 headers.get(CONTROL_HEADER) == CONTROL_VERSION)
             elif is_touchscreen:
                 feed = self.touchscreen
                 feed.begin()
@@ -323,7 +336,8 @@ class MobileGateway:
         deadline = None if is_pose else monotonic() + 2
         idle_timeout = TOUCHSCREEN_IDLE_S if is_touchscreen else FRESHNESS_S
         close_reason = None
-        status_task = asyncio.create_task(self._report_arm_status(connection)) if arm_controls else None
+        aruco_controls = is_pose and connection.request.headers.get(CONTROL_HEADER) == CONTROL_VERSION
+        status_task = asyncio.create_task(self._report_arm_status(connection, aruco=aruco_controls)) if arm_controls or aruco_controls else None
         try:
             while True:
                 remaining = None if deadline is None else deadline - monotonic()
@@ -340,7 +354,14 @@ class MobileGateway:
                     continue
                 if deadline is not None and monotonic() >= deadline:
                     raise TimeoutError("Input expired")
-                if feed.publish(frame) and not is_pose:
+                if aruco_controls and isinstance(frame, str):
+                    self.aruco.command(frame)
+                    continue
+                accepted = feed.publish(frame)
+                if accepted and is_pose:
+                    _, flags, x, y, z, *_ = POSE_FRAME.unpack(frame)
+                    self.aruco.publish_pose(bool(flags & TRACKING), (x, y, z))
+                if accepted and not is_pose:
                     deadline = monotonic() + idle_timeout
         except ConnectionClosed:
             pass
@@ -349,6 +370,8 @@ class MobileGateway:
         finally:
             with self._session_lock:
                 feed.end()
+                if is_pose:
+                    self.aruco.end()
                 self._phone_path = None
             if status_task is not None:
                 status_task.cancel()
@@ -357,12 +380,17 @@ class MobileGateway:
         if close_reason is not None:
             await connection.close(1008, close_reason)
 
-    async def _report_arm_status(self, connection):
+    async def _report_arm_status(self, connection, *, aruco=False):
         previous_progress = 0.
         while True:
             state = self.arm_status()
             progress = self.release_progress() if state == "Holding" else 0.
             await connection.send(f"arm-status:{state}")
+            if aruco:
+                status = self.aruco.telemetry()
+                if state in ("Monitoring only", "Unavailable", "Fault"):
+                    status.update(can_enable=False, can_hold=False, reason=state)
+                await connection.send("aruco-status:" + json.dumps(status, allow_nan=False))
             if progress != previous_progress:
                 await connection.send(f"arm-release-progress:{progress:.3f}")
                 previous_progress = progress
@@ -372,7 +400,7 @@ class MobileGateway:
         self.loop = asyncio.get_running_loop()
         self.stop = asyncio.Event()
         async with serve(self._receive, self.host, self.port, family=socket.AF_INET, origins=[None],
-                         compression=None, max_size=POSE_FRAME.size, max_queue=1,
+                         compression=None, max_size=256, max_queue=1,
                          open_timeout=2, close_timeout=.1, process_request=self._authorize,
                          process_response=self._advertise_arm_controls) as server:
             self.address, self.port = server.sockets[0].getsockname()

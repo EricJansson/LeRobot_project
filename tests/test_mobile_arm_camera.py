@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -103,7 +104,9 @@ def test_rpi_camera_reuses_live_service_with_matching_profile(monkeypatch):
 
     assert camera.ensure_rpi_camera(PI) == "http://192.168.0.190:8081/stream"
     command = ssh.call_args.args[1]
-    assert 'case " $environment " in *" LEROBOT_CAMERA_PROFILE=control "*) exit 0;; esac' in command
+    revision = hashlib.sha256(Path(camera.__file__).with_name("pi_camera_stream.py").read_bytes()).hexdigest()
+    assert 'case " $environment " in *" LEROBOT_CAMERA_PROFILE=control "*)' in command
+    assert f'LEROBOT_CAMERA_REVISION={revision} "*) exit 0;; esac' in command
     assert 'systemctl --user stop lerobot-rpi-camera.service; else exit 0; fi;' in command
 
 
@@ -141,6 +144,28 @@ def test_balanced_profile_preserves_the_original_feed_sizes_and_rates(monkeypatc
     assert '192.168.0.190 8081 1296 972 45' in csi_command
     assert "--setenv=LEROBOT_CAMERA_PROFILE=balanced" in usb_command
     assert "--setenv=LEROBOT_CAMERA_PROFILE=balanced" in csi_command
+
+
+def test_unhealthy_matching_csi_service_is_restarted_instead_of_reused(monkeypatch):
+    ssh = Mock(side_effect=[CONNECTION, ""])
+    monkeypatch.setattr(camera, "_ssh", ssh)
+    monkeypatch.setattr(camera, "_rpi_camera_is_live", Mock(side_effect=[False, True]))
+    assert camera.ensure_rpi_camera(PI).endswith(":8081/stream")
+    command = ssh.call_args.args[1]
+    assert 'systemctl --user stop lerobot-rpi-camera.service;' in command
+    assert '*) exit 0;; esac' not in command
+    assert '--property=Restart=on-failure --property=RestartSec=2 --property=TimeoutStopSec=5' in command
+    assert '--setenv=LEROBOT_CAMERA_REVISION=' in command
+
+
+def test_unhealthy_managed_usb_service_is_restarted_but_manual_stream_is_preserved(monkeypatch):
+    ssh = Mock(side_effect=[CONNECTION, ""])
+    monkeypatch.setattr(camera, "_ssh", ssh)
+    monkeypatch.setattr(camera, "_camera_status", Mock(side_effect=[False, True]))
+    camera.ensure_arm_camera(PI, None)
+    command = ssh.call_args.args[1]
+    assert '*) exit 0;; esac' not in command
+    assert 'systemctl --user stop lerobot-arm-camera.service; else exit 0; fi;' in command
 
 
 def test_rpi_camera_times_out_with_diagnostic_when_no_frames_arrive(monkeypatch):

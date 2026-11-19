@@ -94,6 +94,18 @@ Prerequisites: trusted noninteractive SSH, the existing Pi Python environment/us
 
 On Windows, the launcher defaults to the Pi service for the physical arm. You can select it explicitly with `--real-arm`. With `--allow-motion` in the Pi configuration, the dashboard shows **Real arm enabled**. Without that setting it shows **Observe only**. A normal exit with **Esc** or **Ctrl+C** stops the Pi service started by that launcher. If Windows or the network drops out, the Pi watchdog handles the pause. Closing the dashboard tab leaves the launcher running.
 
+Both Windows real-arm launchers now check for an idle service before deployment. A leftover service at least 10 seconds old is stopped automatically after two checks, one second apart, find no established controller connection and confirm the same service invocation/process. Startup continues only after systemd confirms a clean stop. A connected controller, recently started service, changing process, failed socket/status check, or shutdown error aborts startup. The installer itself still refuses active services. Recovery is startup-only; ordinary SSH reconnects keep the current invocation and existing re-arm rules.
+
+Support the arm before launching: automatic recovery performs the same service shutdown previously requested manually, and the old session's shutdown/torque settings still apply. The new session starts disarmed and requires the usual Holding/control-enable steps. For ArUco-only use, `--no-camera` skips optional Pi video checks and does not disable the phone camera.
+
+**OFFLINE verified:** Windows mocked launcher tests and WSL fake-systemd/socket/process tests cover idle recovery, busy and reconnecting clients, fresh or changing services, inspection failures and failed shutdown. **HARDWARE verification pending:** no physical service was stopped or restarted while implementing this change.
+
+Owner-supervised startup check, with the arm supported and no requested motion:
+
+1. Close other teleop launchers. From Windows PowerShell at the robot repository root, run `python -m scripts.main_mobile_teleop --real-arm --speed 0.1 --no-camera`. If an idle service was left behind, expect **Stopped the idle real arm service; continuing startup**, followed by the normal dashboard and Holding/Released state. Motion must remain disabled until explicitly enabled.
+2. With that session still open in Holding, run `python -m scripts.main_mobile_teleop --real-arm --speed 0.1 --no-camera --input-port 0 --dashboard-port 0` in another PowerShell window. Expect **connected controller** refusal before camera/deployment startup. The first session must remain available and Holding.
+3. Stop the first launcher with Esc/Ctrl+C. Report startup messages, arm/torque state and whether the original session remained unaffected. Do not enable movement as part of this startup check.
+
 Edit `remote_ik.hardware.conf` in the Windows checkout to change settings such as `--arm-rate`. This project config can be tracked in Git. If the file is missing, the first real-arm launch imports the existing settings from the Pi. Subsequent launches use the local file as the source of truth. Press **Esc**, edit the file, then launch again. The launcher copies changed settings to `~/.config/lerobot-remote-ik/hardware.env` on the Pi before starting the service. Service code is checked and updated automatically at launch.
 
 ```powershell

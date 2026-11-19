@@ -107,7 +107,7 @@ def issued_arm_matches(issued, target, *, rel_tol=0.):
 class ControlLoop:
     def __init__(self, worker, connect, latest_input, stop, speed, mode, *, trace=None,
                  correction_profile=None, clock=monotonic, input_name="gamepad",
-                 allow_limit_recovery=True, on_link_lost=None):
+                 allow_limit_recovery=True, on_link_lost=None, absolute_input=None):
         self.worker, self.connect, self.latest_input, self.stop = worker, connect, latest_input, stop
         self.speed, self.mode = speed, mode
         self.clock = clock
@@ -116,6 +116,7 @@ class ControlLoop:
         self.input_name = input_name
         self.allow_limit_recovery = allow_limit_recovery
         self.on_link_lost = on_link_lost
+        self.absolute_input = absolute_input
         self.status = {"connection": "Connecting", "state": "Unavailable", "reason": "", "mode": mode}
         self.error = None
 
@@ -126,6 +127,8 @@ class ControlLoop:
                     try:
                         self.session(link)
                     finally:
+                        if self.absolute_input is not None:
+                            self.absolute_input.cancel("Robot link lost. Enable control again")
                         if self.on_link_lost is not None:
                             self.on_link_lost()
                         with suppress(OSError, ValueError):
@@ -357,12 +360,29 @@ class ControlLoop:
         state = MotionState(correction=StationaryCorrection(self.correction_profile) if self.correction_profile else None)
         joint_step_limits = ([rate * period for rate in feedback["rates"]]
                              if finite_vector(feedback.get("rates"), 6) else None)
+        absolute_was_active = False
         while not self.stop.is_set():
             started = self.clock()
             # Use the command cadence, with at most two Pi cycles of input per
             # step so a slow round trip cannot turn into a large catch-up move.
             elapsed = min(2 * period, max(period, started - previous_tick))
             previous_tick = started
+            absolute_active = self.absolute_input is not None and self.absolute_input.active
+            if absolute_active != absolute_was_active:
+                if feedback["armed"]:
+                    feedback = link.request("disarm")
+                state = MotionState(correction=StationaryCorrection(self.correction_profile) if self.correction_profile else None)
+                seen = self.latest_input.sample
+                absolute_was_active = absolute_active
+            if absolute_active:
+                feedback_count += 1
+                feedback = self.absolute_input.tick(self, link, feedback, period=period, elapsed=elapsed,
+                                                    mode=mode, started=started, connected_at=connected_at,
+                                                    feedback_count=feedback_count, last_feedback=last_feedback,
+                                                    max_gap_ms=max_gap_ms)
+                max_gap_ms = self.status["feedback_max_gap_ms"]
+                last_feedback = self.clock()
+                continue
             sample = self.latest_input.sample
             arm_interrupted = sample.arm_idle != seen.arm_idle
             measured = feedback.get("measured")

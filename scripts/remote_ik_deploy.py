@@ -54,6 +54,49 @@ installation_matches() {
 }
 '''
 
+# Run under the same lifecycle lock as start/stop/deployment. A fresh service
+# may belong to a launcher that has not finished opening its SSH tunnel yet.
+RECOVER_IDLE_ARM = r'''
+unit=lerobot-remote-ik.service
+state=$(systemctl --user show -p ActiveState --value "$unit")
+case "$state" in
+    inactive|failed) echo not-running; exit 0 ;;
+    active) ;;
+    *) echo "Real arm service is $state; wait for the other launcher to finish." >&2; exit 1 ;;
+esac
+invocation=$(systemctl --user show -p InvocationID --value "$unit")
+pid=$(systemctl --user show -p MainPID --value "$unit")
+case "$pid" in ''|0|*[!0-9]*) echo 'Cannot verify the real arm service process; leaving it running.' >&2; exit 1 ;; esac
+case "$invocation" in ''|*[!a-f0-9]*) echo 'Cannot verify the real arm service invocation; leaving it running.' >&2; exit 1 ;; esac
+test "${#invocation}" = 32 || { echo 'Invalid real arm service invocation; leaving it running.' >&2; exit 1; }
+age=$(ps -p "$pid" -o etimes= | tr -d ' ')
+case "$age" in ''|*[!0-9]*) echo 'Cannot verify the real arm service age; leaving it running.' >&2; exit 1 ;; esac
+test "$age" -ge 10 || { echo 'Real arm service has just started; let its launcher connect or close that launcher first.' >&2; exit 1; }
+check_no_client() {
+    clients=$(ss -Htn state established '( sport = :__PI_PORT__ )') || {
+        echo 'Cannot check real arm controller connections; leaving the service running.' >&2; exit 1;
+    }
+    test -z "$clients" || {
+        echo 'Real arm service has a connected controller. Close its launcher before starting another session.' >&2; exit 1;
+    }
+}
+check_no_client
+# Longer than the maximum supported 500 ms motor watchdog; let a lost client settle.
+sleep 1
+test "$(systemctl --user show -p InvocationID --value "$unit")" = "$invocation" &&
+test "$(systemctl --user show -p MainPID --value "$unit")" = "$pid" || {
+    echo 'Real arm service changed during startup checks; leaving it running. Relaunch to retry.' >&2; exit 1;
+}
+check_no_client
+echo 'Stopping an idle real arm service left by an earlier session...' >&2
+systemctl --user stop "$unit"
+state=$(systemctl --user show -p ActiveState --value "$unit")
+test "$state" = inactive && test "$(systemctl --user show -p Result --value "$unit")" = success || {
+    echo 'Could not confirm clean shutdown of the idle real arm service; inspect its status before retrying.' >&2; exit 1;
+}
+echo recovered
+'''.replace("__PI_PORT__", str(PI_PORT))
+
 INSTALL = r'''
 if test "$force" = 0 && installation_matches; then
     echo current
@@ -252,3 +295,27 @@ def ensure_installed(host, *, force=False):
     print("Pi service is up to date" if status == "current" else
           f"Installed Pi service ({deployment.fingerprint[:12]})", flush=True)
     return deployment.fingerprint
+
+
+def recover_idle_arm_service(host):
+    """Startup-only recovery; never use this on a control-loop reconnect."""
+    if not re.fullmatch(r"[a-zA-Z0-9_][a-zA-Z0-9_.-]*@[a-zA-Z0-9][a-zA-Z0-9.-]*", host):
+        raise ValueError("--pi must be user@host")
+    print(f"Checking for an idle real arm service on {host}... Support the arm; startup may stop an idle prior service.",
+          flush=True)
+    try:
+        result = subprocess.run([*SSH, host, "sh -c " + shlex.quote(locked_command(RECOVER_IDLE_ARM, mode="live"))],
+                                capture_output=True, timeout=25)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Idle-service check on {host} timed out. Check the Pi service state before retrying.") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Could not check the Pi arm service on {host}: {exc}") from exc
+    detail = result.stderr.decode("utf-8", errors="replace").strip()
+    if result.returncode:
+        raise RuntimeError(f"Pi arm startup blocked on {host}: {detail or 'Could not verify the service state'}")
+    status = result.stdout.decode("utf-8", errors="replace").strip()
+    if status not in {"not-running", "recovered"}:
+        raise RuntimeError(f"Unexpected idle-service response from {host}: {status!r}")
+    if status == "recovered":
+        print("Stopped the idle real arm service; continuing startup", flush=True)
+    return status == "recovered"

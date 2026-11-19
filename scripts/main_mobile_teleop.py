@@ -11,7 +11,8 @@ import sys
 from threading import Event, Thread
 
 from robot_program.remote_ik_control import ControlLoop
-from scripts.lerobot_web_dashboard import WebDashboard
+from scripts.mobile_workspace_dashboard import MobileWorkspaceDashboard as WebDashboard
+from robot_program.robot_workspace import WorkspaceStore
 from scripts.main_teleop_remote_ik import (
     DEFAULT_WSL_PYTHON, TELEOP_ERRORS, VK_ESCAPE, PiTunnel, Worker, load_key_state, local_simulated_link,
     publish_remote_dashboard,
@@ -20,7 +21,7 @@ from scripts.mobile_arm_camera import CAMERA_PROFILES, LAN_NETWORKS, ensure_arm_
 from scripts.mobile_teleop_gateway import (
     ARM_INPUT_PATH, INPUT_PATH, POSE_PATH, TOUCHSCREEN_PATH, MobileGateway, MobileInput, mobile_arm_status,
 )
-from scripts.remote_ik_deploy import ensure_installed
+from scripts.remote_ik_deploy import ensure_installed, recover_idle_arm_service
 
 
 TOKEN_PATH = Path(__file__).resolve().parents[1] / "mobile-teleop.token"
@@ -87,6 +88,7 @@ def main():
             parser.error("Use a private LAN IPv4 address or 127.0.0.1 in real-arm mode")
 
     phone = MobileInput()
+    workspace = WorkspaceStore()
     stop = Event()
     page = Path(__file__).with_name("mobile_teleop_dashboard.html")
     control = None
@@ -107,11 +109,14 @@ def main():
         get_key_state = load_key_state()
         with ExitStack() as stack:
             gateway = stack.enter_context(MobileGateway(host, args.input_port, phone, token, arm_status=arm_status,
-                                                       release_progress=release_progress, allow_legacy_input=not uses_pi))
-            dashboard = stack.enter_context(WebDashboard(LOOPBACK, args.dashboard_port, page=page))
+                                                       release_progress=release_progress, allow_legacy_input=not uses_pi,
+                                                       workspace=workspace))
+            dashboard = stack.enter_context(WebDashboard(LOOPBACK, args.dashboard_port, page=page, workspace=workspace))
             if not args.input_only:
                 worker = stack.enter_context(Worker(args.wsl_distro, args.wsl_python))
                 if uses_pi:
+                    if real_arm:
+                        recover_idle_arm_service(args.pi)
                     fingerprint = ensure_installed(args.pi)
                     tunnel = stack.enter_context(PiTunnel(args.pi, args.pi_sim, fingerprint=fingerprint))
                     connect = tunnel.connect
@@ -119,7 +124,7 @@ def main():
                     connect = local_simulated_link(stack, worker, stop)
                 control = ControlLoop(worker, connect, phone, stop, speed, mode, input_name="phone",
                                       allow_limit_recovery=not uses_pi,
-                                      on_link_lost=phone.end if uses_pi else None)
+                                      on_link_lost=phone.end if uses_pi else None, absolute_input=gateway.aruco)
             if not args.no_camera:
                 cameras = (("Arm camera", ensure_arm_camera, (args.pi, args.camera_device)),
                            ("Raspberry Pi camera", ensure_rpi_camera, (args.pi,)))

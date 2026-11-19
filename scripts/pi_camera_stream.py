@@ -9,6 +9,7 @@ from time import monotonic
 
 
 FRAME_TIMEOUT = 2
+CAPTURE_STALL_TIMEOUT = 10
 MAX_FRAME_BYTES = 4 * 1024 * 1024
 BOUNDARY = "lerobot-rpi-camera"
 SENSOR_SIZE = (1296, 972)
@@ -33,12 +34,12 @@ class LatestFrame(BufferedIOBase):
                 self._condition.notify_all()
         return len(frame)
 
-    def _fresh(self):
-        return monotonic() - self._received_at < FRAME_TIMEOUT
+    def _fresh(self, max_age=None):
+        return monotonic() - self._received_at < (FRAME_TIMEOUT if max_age is None else max_age)
 
-    def is_live(self):
+    def is_live(self, max_age=None):
         with self._condition:
-            return self._fresh()
+            return self._fresh(max_age)
 
     def wait_for_frame(self, after):
         with self._condition:
@@ -50,7 +51,15 @@ class LatestFrame(BufferedIOBase):
 class CameraServer(ThreadingHTTPServer):
     def __init__(self, address, frames):
         self.frames = frames
+        self.started_at = monotonic()
         super().__init__(address, CameraHandler)
+
+    def service_actions(self):
+        # An HTTP thread can remain healthy after capture/encoding has stalled.
+        # Fail the process so the camera-only systemd service can recover it.
+        if (monotonic() - self.started_at >= CAPTURE_STALL_TIMEOUT
+                and not self.frames.is_live(CAPTURE_STALL_TIMEOUT)):
+            raise RuntimeError(f"CSI camera produced no fresh frames for {CAPTURE_STALL_TIMEOUT} seconds; restarting capture")
 
 
 class CameraHandler(BaseHTTPRequestHandler):

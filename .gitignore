@@ -1,5 +1,7 @@
 
 # Python
+mobile-teleop.workspace.json
+mobile-teleop.workspace.json.*.tmp
 __pycache__/
 *.py[cod]
 *$py.class

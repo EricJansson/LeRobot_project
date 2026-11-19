@@ -27,7 +27,7 @@ from robot_program.remote_ik_protocol import (
 from scripts.lerobot_web_dashboard import WebDashboard
 from scripts.remote_ik_motor_service import MotorSession, SimulatedBus, serve
 from scripts.remote_ik_deploy import (
-    PI_SIM_PORT, PI_UNIT, ROOT, SSH, ensure_installed, locked_command, release_guard,
+    PI_SIM_PORT, PI_UNIT, ROOT, SSH, ensure_installed, locked_command, release_guard, recover_idle_arm_service,
 )
 
 
@@ -131,11 +131,15 @@ class Worker:
             raise reply
         return reply
 
-    def solve(self, measured, delta, *, sent, desired_xyz_m, joint_step_limits, correction, recovery_step_m):
-        return self._request({
+    def solve(self, measured, delta, *, sent, desired_xyz_m, joint_step_limits, correction, recovery_step_m,
+              workspace_m=None):
+        request = {
             "measured": measured, "delta": delta, "sent": sent, "desired_xyz_m": desired_xyz_m,
             "joint_step_limits": joint_step_limits, "recovery_step_m": recovery_step_m, "correction": correction,
-        })
+        }
+        if workspace_m is not None:
+            request["workspace_m"] = workspace_m
+        return self._request(request)
 
     def recover(self, measured, delta, *, sent, automatic, anchor, goal, steps):
         return self._request({"op": "recover", "measured": measured, "delta": delta, "sent": sent,
@@ -470,6 +474,8 @@ def main():
             if mode == "dry-run":
                 connect = local_simulated_link(stack, worker, stop)
             else:
+                if real_arm:
+                    recover_idle_arm_service(args.pi)
                 fingerprint = ensure_installed(args.pi)
                 tunnel = stack.enter_context(PiTunnel(args.pi, mode == "pi-sim", relax_on_exit=args.relax_on_exit,
                                                       fingerprint=fingerprint))

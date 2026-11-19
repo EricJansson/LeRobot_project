@@ -64,6 +64,7 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, caps
     tunnel = SimpleNamespace(connect=Mock())
     open_tunnel = Mock(return_value=nullcontext(tunnel))
     deploy = Mock(return_value="test-fingerprint")
+    recover = Mock()
     camera = Mock(return_value="http://192.168.0.190:8080/stream?extra_headers=1")
     rpi_camera = Mock(return_value="http://192.168.0.190:8081/stream")
     local = Mock(return_value=Mock())
@@ -77,6 +78,7 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, caps
     monkeypatch.setattr(launcher, "Worker", lambda *args: nullcontext(None))
     monkeypatch.setattr(launcher, "local_simulated_link", local)
     monkeypatch.setattr(launcher, "ensure_installed", deploy)
+    monkeypatch.setattr(launcher, "recover_idle_arm_service", recover)
     monkeypatch.setattr(launcher, "ensure_arm_camera", camera)
     monkeypatch.setattr(launcher, "ensure_rpi_camera", rpi_camera)
     monkeypatch.setattr(launcher, "PiTunnel", open_tunnel)
@@ -85,6 +87,10 @@ def test_launcher_selects_motor_link_and_publishes_arm_metrics(monkeypatch, caps
     launcher.main()
 
     assert loop.call_args.args[4] == speed
+    if mode == "Observe only":
+        recover.assert_called_once_with("eric@rpi")
+    else:
+        recover.assert_not_called()
     assert open_gateway.call_args.kwargs["allow_legacy_input"] == (mode == "Local simulation")
     if mode != "Local simulation":
         deploy.assert_called_once_with("eric@rpi")
@@ -131,6 +137,7 @@ def test_input_only_camera_failure_keeps_the_launcher_running(monkeypatch, capsy
         cameras[failed_camera].side_effect = RuntimeError("No video")
     monkeypatch.setattr(launcher, "Worker", worker)
     monkeypatch.setattr(launcher, "ensure_installed", deploy)
+    monkeypatch.setattr(launcher, "recover_idle_arm_service", lambda *_: pytest.fail("Recovery in input-only mode"))
     monkeypatch.setattr(launcher, "ensure_arm_camera", camera)
     monkeypatch.setattr(launcher, "ensure_rpi_camera", rpi_camera)
 
@@ -150,6 +157,25 @@ def test_input_only_camera_failure_keeps_the_launcher_running(monkeypatch, capsy
         for name, start in cameras.items():
             assert (start.return_value in output.out) == (name != failed_camera)
     assert "Input only dashboard" in output.out
+
+
+def test_busy_real_arm_blocks_startup_before_deployment_or_cameras(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["mobile-teleop"])
+    monkeypatch.setattr(launcher, "load_phone_token", lambda _: "test-token")
+    monkeypatch.setattr(launcher, "load_key_state", lambda: lambda _: -1)
+    for name in ("MobileGateway", "WebDashboard", "Worker"):
+        monkeypatch.setattr(launcher, name, lambda *args, **kwargs: nullcontext(MagicMock()))
+    def busy(_):
+        raise RuntimeError("Real arm service has a connected controller")
+    monkeypatch.setattr(launcher, "recover_idle_arm_service", busy)
+    for name in ("ensure_installed", "ensure_arm_camera", "ensure_rpi_camera", "ControlLoop"):
+        monkeypatch.setattr(launcher, name, lambda *args, **kwargs: pytest.fail("Continued after busy service"))
+    with pytest.raises(SystemExit) as error:
+        launcher.main()
+    assert error.value.code == 1
+    captured = capsys.readouterr()
+    assert "connected controller" in captured.err
+    assert "Real arm dashboard" not in captured.out
 
 
 @pytest.mark.parametrize("flags", [[], ["--real-arm"]])

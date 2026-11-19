@@ -125,6 +125,40 @@ def test_invalid_host_is_rejected_before_build_or_ssh(monkeypatch):
         deploy.ensure_installed("user@host;bad")
 
 
+@pytest.mark.parametrize("status,recovered", [(b"not-running\n", False), (b"recovered\n", True)])
+def test_idle_recovery_runs_a_locked_startup_check(monkeypatch, status, recovered):
+    def run(command, **kwargs):
+        assert command[-2] == "test@pi"
+        assert "deployment.lock" in command[-1] and "live.lock" in command[-1]
+        assert "sleep 1" in command[-1] and "ss -Htn state established" in command[-1]
+        assert f":{deploy.PI_PORT}" in command[-1] and "__PI_PORT__" not in command[-1]
+        assert kwargs["timeout"] == 25 and kwargs["capture_output"]
+        return SimpleNamespace(returncode=0, stdout=status, stderr=b"")
+    monkeypatch.setattr(deploy.subprocess, "run", run)
+    assert deploy.recover_idle_arm_service("test@pi") is recovered
+
+
+@pytest.mark.parametrize("failure", ["busy", "timeout", "missing-ssh", "unknown-response"])
+def test_idle_recovery_never_swallows_uncertain_or_failed_checks(monkeypatch, failure):
+    def run(*args, **kwargs):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired("ssh", 25)
+        if failure == "missing-ssh":
+            raise FileNotFoundError("ssh")
+        return SimpleNamespace(returncode=0 if failure == "unknown-response" else 1,
+                               stdout=b"unexpected\n" if failure == "unknown-response" else b"",
+                               stderr=b"Connected controller; leaving service running")
+    monkeypatch.setattr(deploy.subprocess, "run", run)
+    with pytest.raises(RuntimeError):
+        deploy.recover_idle_arm_service("test@pi")
+
+
+def test_idle_recovery_validates_the_ssh_destination(monkeypatch):
+    monkeypatch.setattr(deploy.subprocess, "run", lambda *args, **kwargs: pytest.fail("SSH on invalid destination"))
+    with pytest.raises(ValueError, match="user@host"):
+        deploy.recover_idle_arm_service("test@pi;stop")
+
+
 def test_standalone_installer_forces_repair(monkeypatch):
     calls = []
     monkeypatch.setattr(installer, "ensure_installed", lambda *args, **kwargs: calls.append((args, kwargs)))
@@ -194,16 +228,17 @@ def test_launcher_modes_deployment_and_trace(monkeypatch, tmp_path, capsys, flag
 
     monkeypatch.setattr(teleop.subprocess, "run", git)
     monkeypatch.setattr(teleop, "ensure_installed", ensure)
+    monkeypatch.setattr(teleop, "recover_idle_arm_service", lambda host: events.append("recover"))
     monkeypatch.setattr(teleop, "PiTunnel", tunnel)
     monkeypatch.setattr(teleop.remote_ik_control, "ControlLoop", control)
     if capture == "deploy-failure":
         with pytest.raises(SystemExit) as error:
             teleop.main()
         assert error.value.code == 1
-        assert events == ["deploy"]
+        assert events == (["recover"] if mode == "real-arm" else []) + ["deploy"]
     else:
         teleop.main()
-        assert events == (["control"] if mode == "dry-run" else ["deploy", "tunnel", "control"])
+        assert events == (["recover"] if mode == "real-arm" else []) + (["control"] if mode == "dry-run" else ["deploy", "tunnel", "control"])
 
     if capture != "default":
         assert default_trace.read_text(encoding="utf-8") == previous
@@ -252,6 +287,7 @@ def test_reconnect_only_checks_release_without_deploying(monkeypatch, simulated,
 
     monkeypatch.setattr(tunnel, "service_command", service_command)
     monkeypatch.setattr(teleop, "ensure_installed", lambda *args: pytest.fail("Deployed on reconnect"))
+    monkeypatch.setattr(teleop, "recover_idle_arm_service", lambda *args: pytest.fail("Recovered on reconnect"))
 
     def popen(command, **kwargs):
         forwards.append(command[command.index("-L") + 1])
@@ -348,6 +384,111 @@ os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
 def assert_success(result, status=b"installed\n"):
     assert result.returncode == 0, result.stderr.decode()
     assert result.stdout == status
+
+
+@pytest.fixture
+def idle_pi(pi):
+    """Fake lifecycle and socket tools. This fixture cannot operate a real service."""
+    binaries = pi.home.parent / "bin"
+    scripts = {
+        "systemctl": '''
+import os, sys
+from pathlib import Path
+s=Path(os.environ["FAKE_STATE"])
+a=sys.argv[1:]
+with (s/"commands").open("a") as log: log.write(" ".join(a)+"\\n")
+if (s/"fail-show").exists(): sys.exit(1)
+if "show" in a:
+    prop=a[a.index("-p")+1]
+    names={"ActiveState":"state", "InvocationID":"invocation", "MainPID":"pid", "Result":"result"}
+    defaults={"state":"active", "invocation":"a"*32, "pid":"1234", "result":"success"}
+    name=names[prop]
+    p=s/name
+    print(p.read_text() if p.exists() else defaults[name])
+elif "stop" in a:
+    if (s/"fail-stop").exists(): sys.exit(1)
+    (s/"state").write_text("inactive")
+else: sys.exit(1)
+''',
+        "ss": '''
+import os, sys
+from pathlib import Path
+s=Path(os.environ["FAKE_STATE"])
+if (s/"fail-ss").exists(): sys.exit(1)
+p=s/"socket-checks"
+n=int(p.read_text())+1 if p.exists() else 1
+p.write_text(str(n))
+if (s/"busy").exists() or n>1 and (s/"busy-after-wait").exists(): print("0 0 127.0.0.1:8766 127.0.0.1:12345")
+''',
+        "ps": '''
+import os, sys
+from pathlib import Path
+s=Path(os.environ["FAKE_STATE"])
+if (s/"fail-ps").exists(): sys.exit(1)
+p=s/"age"
+print(p.read_text() if p.exists() else "100")
+''',
+        "sleep": '''
+import os
+from pathlib import Path
+s=Path(os.environ["FAKE_STATE"])
+(s/"waited").touch()
+if (s/"change-invocation").exists(): (s/"invocation").write_text("b"*32)
+if (s/"change-pid").exists(): (s/"pid").write_text("5678")
+''',
+    }
+    for name, body in scripts.items():
+        path = binaries / name
+        path.write_text(f"#!{sys.executable}\n" + body, encoding="utf-8")
+        path.chmod(0o700)
+    def recover():
+        return pi.shell(deploy.locked_command(deploy.RECOVER_IDLE_ARM, mode="live"))
+    return SimpleNamespace(state=pi.state, recover=recover)
+
+
+@pytest.mark.parametrize("state", ["inactive", "failed"])
+def test_shell_idle_recovery_ignores_nonrunning_services(idle_pi, state):
+    (idle_pi.state / "state").write_text(state)
+    result = idle_pi.recover()
+    assert_success(result, b"not-running\n")
+    assert "stop" not in (idle_pi.state / "commands").read_text()
+    assert not (idle_pi.state / "socket-checks").exists()
+
+
+def test_shell_idle_recovery_stops_only_the_stable_unused_arm_service(idle_pi):
+    assert_success(idle_pi.recover(), b"recovered\n")
+    assert (idle_pi.state / "socket-checks").read_text() == "2"
+    assert (idle_pi.state / "waited").exists()
+    commands = (idle_pi.state / "commands").read_text()
+    assert commands.count("stop lerobot-remote-ik.service") == 1
+    assert "start" not in commands and "lerobot-remote-ik-sim.service" not in commands
+
+
+@pytest.mark.parametrize("flag", ["busy", "busy-after-wait", "change-invocation", "change-pid",
+                                 "fail-show", "fail-ps", "fail-ss"])
+def test_shell_idle_recovery_refuses_clients_races_and_unknown_state(idle_pi, flag):
+    (idle_pi.state / flag).touch()
+    result = idle_pi.recover()
+    assert result.returncode != 0
+    assert b"recovered" not in result.stdout
+    assert "stop" not in (idle_pi.state / "commands").read_text()
+
+
+@pytest.mark.parametrize("field,value", [("state", "activating"), ("state", "deactivating"),
+                                       ("age", "5"), ("age", "unknown"), ("pid", "0"),
+                                       ("invocation", "")])
+def test_shell_idle_recovery_refuses_fresh_or_unverified_services(idle_pi, field, value):
+    (idle_pi.state / field).write_text(value)
+    result = idle_pi.recover()
+    assert result.returncode != 0
+    assert "stop" not in (idle_pi.state / "commands").read_text()
+
+
+@pytest.mark.parametrize("flag,value", [("fail-stop", ""), ("result", "exit-code")])
+def test_shell_idle_recovery_requires_confirmed_clean_shutdown(idle_pi, flag, value):
+    (idle_pi.state / flag).write_text(value)
+    result = idle_pi.recover()
+    assert result.returncode != 0 and b"recovered" not in result.stdout
 
 
 def test_shell_fresh_unchanged_legacy_and_repair(pi):
